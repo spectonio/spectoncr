@@ -14,6 +14,7 @@ members = [
     "crates/nebula-lazy",
     "crates/nebula-peer",
     "crates/nebula-import",
+    "crates/nebula-ephemeral",
 ]
 resolver = "3"
 
@@ -108,6 +109,7 @@ nebula-gc = { path = "crates/nebula-gc" }
 nebula-lazy = { path = "crates/nebula-lazy" }
 nebula-peer = { path = "crates/nebula-peer" }
 nebula-import = { path = "crates/nebula-import" }
+nebula-ephemeral = { path = "crates/nebula-ephemeral" }
 
 # Scanner deps
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "migrate"] }
