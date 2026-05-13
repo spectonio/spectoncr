@@ -18,6 +18,7 @@ members = [
     "crates/nebula-attest",
     "crates/nebula-artifact-types",
     "crates/nebula-cost",
+    "crates/nebula-rebuild",
 ]
 resolver = "3"
 
@@ -116,6 +117,7 @@ nebula-ephemeral = { path = "crates/nebula-ephemeral" }
 nebula-attest = { path = "crates/nebula-attest" }
 nebula-artifact-types = { path = "crates/nebula-artifact-types" }
 nebula-cost = { path = "crates/nebula-cost" }
+nebula-rebuild = { path = "crates/nebula-rebuild" }
 
 # Scanner deps
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "migrate"] }
