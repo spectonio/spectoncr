@@ -10,6 +10,7 @@ members = [
     "crates/nebula-db",
     "crates/nebula-ai",
     "crates/nebula-scanner",
+    "crates/nebula-gc",
 ]
 resolver = "3"
 
@@ -100,6 +101,7 @@ nebula-replication = { path = "crates/nebula-replication" }
 nebula-db = { path = "crates/nebula-db" }
 nebula-ai = { path = "crates/nebula-ai" }
 nebula-scanner = { path = "crates/nebula-scanner" }
+nebula-gc = { path = "crates/nebula-gc" }
 
 # Scanner deps
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "migrate"] }

@@ -2411,6 +2411,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "nebula-gc"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "nebula-common",
+ "nebula-db",
+ "object_store",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "nebula-mirror"
 version = "0.1.0"
 dependencies = [
@@ -2450,6 +2469,8 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "nebula-common",
+ "nebula-db",
+ "nebula-gc",
  "nebula-mirror",
  "nebula-replication",
  "nebula-resilience",
@@ -2548,6 +2569,7 @@ dependencies = [
  "toml",
  "tower",
  "tracing",
+ "tracing-subscriber",
  "uuid",
  "zip",
  "zstd",

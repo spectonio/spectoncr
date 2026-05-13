@@ -85,6 +85,10 @@ struct AppState {
     /// in-process (`TokioQueue`) or durable (`PostgresQueue`) depending on
     /// `NEBULACR_SCANNER__QUEUE_BACKEND`.
     scanner_queue: Option<Arc<dyn ScanQueue>>,
+    /// Online-GC refcount writer. Always present; defaults to a
+    /// no-op when `[gc.online]` / `NEBULACR_GC__ONLINE` is disabled.
+    /// Bumped on manifest push, decremented on manifest delete.
+    gc_refcounter: Arc<dyn nebula_gc::BlobRefCounter>,
     /// Registry audit log for tracking who pushed/pulled what.
     audit_log: Arc<audit::RegistryAuditLog>,
     /// Process start time for uptime tracking.
@@ -941,6 +945,28 @@ async fn put_manifest(
             .map_err(|e| RegistryError::Storage(e.to_string()))?;
     }
 
+    // Online-GC refcount bookkeeping (009). When the refcounter is the
+    // no-op impl the cost is a vtable call and an empty Vec build —
+    // negligible. When it is the Postgres impl this is one round-trip
+    // worth of UPSERTs; failures are logged but do NOT fail the push,
+    // because the reconciler (slice 3) corrects drift.
+    match nebula_gc::extract_blob_digests(&body) {
+        Ok(blobs) => {
+            if let Err(e) = state
+                .gc_refcounter
+                .add_refs(&params.tenant, &digest, &blobs)
+                .await
+            {
+                warn!(error = %e, digest = %digest, "gc refcount add_refs failed");
+            }
+        }
+        Err(e) => {
+            // The manifest was already JSON-validated above; this branch
+            // is only hit if extraction encounters an unexpected shape.
+            debug!(error = %e, digest = %digest, "gc refcount skipped: manifest parse");
+        }
+    }
+
     // Emit replication event if configured
     if let Some(ref repl) = state.replication_handle {
         let event = ReplicationEvent::manifest_push(
@@ -1074,6 +1100,14 @@ async fn delete_manifest(
         &params.reference,
     )
     .await?;
+    // Pull the manifest digest out of the resolved storage path so the
+    // GC refcount decrement (below) sees the same digest the writer
+    // recorded under `add_refs`. Layout from `manifest_path()` is
+    // `<tenant>/<project>/<repo>/manifests/<sha256:hex>`.
+    let manifest_digest = path
+        .rsplit_once('/')
+        .map(|(_, last)| last.to_string())
+        .unwrap_or_else(|| params.reference.clone());
     let store_path = StorePath::from(path);
 
     state
@@ -1094,6 +1128,16 @@ async fn delete_manifest(
         );
         let tag_store_path = StorePath::from(tag_p);
         let _ = state.store.delete(&tag_store_path).await;
+    }
+
+    // Online-GC refcount decrement (009). Failures don't fail the
+    // delete — drift is corrected by the reconciler in slice 3.
+    if let Err(e) = state
+        .gc_refcounter
+        .remove_refs(&params.tenant, &manifest_digest)
+        .await
+    {
+        warn!(error = %e, digest = %manifest_digest, "gc refcount remove_refs failed");
     }
 
     // Emit replication event if configured
@@ -2420,6 +2464,9 @@ async fn build_scanner_runtime(
         enqueue_only: env::var("NEBULACR_SCANNER__ENQUEUE_ONLY")
             .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
             .unwrap_or(false),
+        scan_dedup_enabled: env::var("NEBULACR_SCANNER__SCAN_DEDUP_ENABLED")
+            .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
+            .unwrap_or(true),
     };
 
     let rt = ScannerRuntime::build(cfg, store).await?;
@@ -2872,6 +2919,47 @@ async fn main() -> anyhow::Result<()> {
     let scanner_queue = scanner_runtime.as_ref().map(|rt| rt.queue.clone());
     let scanner_router = scanner_runtime.as_ref().map(|rt| rt.router.clone());
 
+    // ── Online-GC refcounter (009 slice 1) ───────────────────────────
+    // Enabled by `NEBULACR_GC__ONLINE=true`. When enabled, we reuse
+    // the scanner's Postgres pool (it owns the migrations); when the
+    // scanner is disabled we connect a dedicated pool. When disabled
+    // entirely the no-op refcounter keeps the manifest path unchanged
+    // and existing deployments are unaffected.
+    let gc_online_enabled = std::env::var("NEBULACR_GC__ONLINE")
+        .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
+        .unwrap_or(false);
+    let gc_refcounter: Arc<dyn nebula_gc::BlobRefCounter> = if gc_online_enabled {
+        let pool_opt = if let Some(rt) = scanner_runtime.as_ref() {
+            Some(rt.pg.clone())
+        } else if let Ok(url) = std::env::var("NEBULACR_GC__POSTGRES_URL") {
+            match nebula_db::connect(&url, 4).await {
+                Ok(p) => match nebula_db::migrate(&p).await {
+                    Ok(()) => Some(p),
+                    Err(e) => {
+                        warn!(error = %e, "gc postgres migrate failed; falling back to no-op refcounter");
+                        None
+                    }
+                },
+                Err(e) => {
+                    warn!(error = %e, "gc postgres connect failed; falling back to no-op refcounter");
+                    None
+                }
+            }
+        } else {
+            warn!("NEBULACR_GC__ONLINE=true but neither scanner nor NEBULACR_GC__POSTGRES_URL provided; using no-op refcounter");
+            None
+        };
+        match pool_opt {
+            Some(pool) => {
+                info!("online GC refcounter enabled (postgres-backed)");
+                Arc::new(nebula_gc::PgBlobRefCounter::new(pool))
+            }
+            None => Arc::new(nebula_gc::NoopBlobRefCounter),
+        }
+    } else {
+        Arc::new(nebula_gc::NoopBlobRefCounter)
+    };
+
     let state = AppState {
         store,
         config: Arc::new(config),
@@ -2884,6 +2972,7 @@ async fn main() -> anyhow::Result<()> {
         failover_manager: failover_manager.clone(),
         webhook_handle,
         scanner_queue,
+        gc_refcounter,
         audit_log: audit_log.clone(),
         start_time,
     };
