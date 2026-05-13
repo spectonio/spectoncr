@@ -2438,6 +2438,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nebula-cost"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "nebula-common",
+ "nebula-db",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "nebula-db"
 version = "0.1.0"
 dependencies = [
