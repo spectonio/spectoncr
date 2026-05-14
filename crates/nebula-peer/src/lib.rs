@@ -7,7 +7,9 @@
 pub mod local;
 pub mod mesh;
 pub mod registry_store;
+pub mod tcp_mesh;
 
 pub use local::LocalMesh;
-pub use mesh::{PeerEndpoint, PeerMesh, MeshError};
+pub use mesh::{MeshError, PeerEndpoint, PeerMesh};
 pub use registry_store::{MeshRow, NodeRow, PeerMeshStore, PgPeerMeshStore};
+pub use tcp_mesh::GossipTcpMesh;
