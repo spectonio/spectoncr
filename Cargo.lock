@@ -2638,6 +2638,7 @@ dependencies = [
  "jsonwebtoken",
  "metrics",
  "metrics-exporter-prometheus",
+ "nebula-artifact-types",
  "nebula-common",
  "nebula-cost",
  "nebula-db",

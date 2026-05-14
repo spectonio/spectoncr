@@ -99,6 +99,10 @@ struct AppState {
     /// no-op when `[usage]` / `NEBULACR_USAGE__ENABLED` is disabled.
     /// Called from blob/manifest hot paths to seed the rollup pipeline.
     usage_recorder: Arc<dyn nebula_cost::UsageRecorder>,
+    /// Typed-artifact validator registry. `None` when 016 is disabled
+    /// (the default); when populated, every put_manifest dispatches to
+    /// the matching ArtifactType impl and persists metadata.
+    artifact_registry: Option<Arc<nebula_artifact_types::ArtifactRegistry>>,
     /// Registry audit log for tracking who pushed/pulled what.
     audit_log: Arc<audit::RegistryAuditLog>,
     /// Process start time for uptime tracking.
@@ -1043,6 +1047,40 @@ async fn put_manifest(
             // is only hit if extraction encounters an unexpected shape.
             debug!(error = %e, digest = %digest, "gc refcount skipped: manifest parse");
         }
+    }
+
+    // 016 typed-artifact validation — when the registry recognises
+    // the manifest's media type as Helm/WASM/model/etc., run the
+    // matching validator and persist metadata into artifact_meta.
+    // Failures are logged but do NOT fail the push (slice 1 is
+    // advisory; strict-mode rejection lands in slice 2 with project
+    // policy plumbing).
+    if let (Some(reg), Some(pool)) =
+        (state.artifact_registry.clone(), state.gc_pool.clone())
+    {
+        let media_type = detect_manifest_media_type(&body);
+        let body_clone = body.clone();
+        let digest_clone = digest.clone();
+        tokio::spawn(async move {
+            match reg.validate(&media_type, &body_clone).await {
+                Ok(Some(meta)) => {
+                    let store = nebula_artifact_types::PgArtifactStore::new(pool);
+                    use nebula_artifact_types::ArtifactStore as _;
+                    if let Err(e) = store.upsert(&digest_clone, &meta, None).await {
+                        warn!(error = %e, digest = %digest_clone, "artifact_meta upsert failed");
+                    }
+                }
+                Ok(None) => {
+                    debug!(digest = %digest_clone, "no artifact validator matched");
+                }
+                Err(e) => {
+                    debug!(error = %e, digest = %digest_clone, "artifact validator rejected");
+                    // Slice 1: advisory only. Slice 2 will persist the
+                    // failure with validation_msg and (if strict
+                    // mode is on) reject the push.
+                }
+            }
+        });
     }
 
     // 018 lineage capture — fetch the image config blob async and
@@ -3432,6 +3470,24 @@ async fn main() -> anyhow::Result<()> {
     let usage_enabled = std::env::var("NEBULACR_USAGE__ENABLED")
         .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
         .unwrap_or(false);
+    // ── Typed artifact validators (016) ──────────────────────────────
+    // Enabled by `NEBULACR_ARTIFACT_TYPES__ENABLED=true`. Slice 1 ships
+    // the Helm validator; further types (WASM/model/Terraform) plug
+    // in here in subsequent slices. Default off → no-op manifest path.
+    let artifact_types_enabled = std::env::var("NEBULACR_ARTIFACT_TYPES__ENABLED")
+        .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
+        .unwrap_or(false);
+    let artifact_registry: Option<Arc<nebula_artifact_types::ArtifactRegistry>> =
+        if artifact_types_enabled {
+            info!("typed artifact validators enabled (helm)");
+            Some(Arc::new(
+                nebula_artifact_types::ArtifactRegistry::new()
+                    .register(nebula_artifact_types::HelmType),
+            ))
+        } else {
+            None
+        };
+
     let usage_recorder: Arc<dyn nebula_cost::UsageRecorder> = if usage_enabled {
         match gc_pool.clone() {
             Some(pool) => {
@@ -3466,6 +3522,7 @@ async fn main() -> anyhow::Result<()> {
         gc_reaper_control,
         gc_pool,
         usage_recorder,
+        artifact_registry,
         audit_log: audit_log.clone(),
         start_time,
     };
