@@ -10,13 +10,12 @@
 //! `gc_drift` with one of three classifications:
 //!
 //! - `orphan`  — refcount row exists, no edges point at the digest.
-//!               Storage may still hold bytes; reaper will pick it up
-//!               once the row's zeroed_at is older than grace.
+//!   Storage may still hold bytes; reaper will pick it up once the
+//!   row's zeroed_at is older than grace.
 //! - `missing` — edges exist but the refcount row doesn't. Bug in
-//!               the writer; reconciler creates the row at the
-//!               expected count.
+//!   the writer; reconciler creates the row at the expected count.
 //! - `underflow` — observed > expected. Bug in `remove_refs`; reset
-//!                 to expected.
+//!   to expected.
 //!
 //! Backfill (`reconcile_backfill`) is a one-shot for existing
 //! registries: walks the storage tree to populate `blob_paths` and

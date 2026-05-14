@@ -226,9 +226,8 @@ impl PeerMesh for GossipTcpMesh {
                 },
             )
             .await;
-            match resp {
-                Ok(Response::Lookup { has: true }) => found.push(peer),
-                _ => {}
+            if let Ok(Response::Lookup { has: true }) = resp {
+                found.push(peer);
             }
         }
         Ok(found)

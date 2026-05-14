@@ -73,10 +73,9 @@ impl Detector for LicenseDetector {
     async fn scan(&self, bytes: Bytes) -> Result<Vec<Finding>, DetectorError> {
         // Run the synchronous parse in a blocking task — tar+gzip is
         // CPU-bound and shouldn't tie up the worker's runtime thread.
-        let res = tokio::task::spawn_blocking(move || scan_layer_blocking(&bytes))
+        tokio::task::spawn_blocking(move || scan_layer_blocking(&bytes))
             .await
-            .map_err(|e| DetectorError::Other(format!("tar walk panicked: {e}")))?;
-        res
+            .map_err(|e| DetectorError::Other(format!("tar walk panicked: {e}")))?
     }
 }
 

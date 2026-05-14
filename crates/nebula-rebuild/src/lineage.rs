@@ -57,15 +57,17 @@ pub fn detect_lineage(image_config_bytes: &[u8]) -> Option<LineageHint> {
     let cfg: ImageConfig = serde_json::from_slice(image_config_bytes).ok()?;
 
     // 1) Label-based.
-    if let Some(labels) = cfg.config.as_ref().and_then(|c| c.labels.clone()) {
-        if let Some(base) = labels.get("org.opencontainers.image.base.name") {
-            if !base.is_empty() {
-                return Some(LineageHint {
-                    base_ref: base.clone(),
-                    confidence: LineageConfidence::Label,
-                });
-            }
-        }
+    let label = cfg
+        .config
+        .as_ref()
+        .and_then(|c| c.labels.as_ref())
+        .and_then(|labels| labels.get("org.opencontainers.image.base.name"))
+        .filter(|s| !s.is_empty());
+    if let Some(base) = label {
+        return Some(LineageHint {
+            base_ref: base.clone(),
+            confidence: LineageConfidence::Label,
+        });
     }
 
     // 2) History-based — scan `created_by` entries for a leading `FROM`.

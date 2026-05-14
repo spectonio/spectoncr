@@ -60,10 +60,8 @@ impl ImportRunner {
 
         let repos = self.source.list_repositories().await?;
         for repo in repos {
-            if let Some(prefix) = &self.config.include_prefix {
-                if !repo.name.starts_with(prefix) {
-                    continue;
-                }
+            if matches!(&self.config.include_prefix, Some(p) if !repo.name.starts_with(p)) {
+                continue;
             }
             report.repos_seen += 1;
             match self.copy_repo(&repo, &mut report).await {

@@ -196,7 +196,10 @@ fn scan_layer(bytes: &[u8]) -> Result<Vec<Finding>, DetectorError> {
             if rule.allowed_paths.is_match(&path_str) {
                 continue;
             }
-            for m in rule.pattern.find_iter(body) {
+            // One finding per (rule, file) is enough — additional matches
+            // in the same file rarely add operator value, so we stop at
+            // the first.
+            if let Some(m) = rule.pattern.find_iter(body).next() {
                 let line = body[..m.start()].matches('\n').count() as u32 + 1;
                 findings.push(Finding {
                     kind: FindingKind::Secret,
@@ -216,9 +219,6 @@ fn scan_layer(bytes: &[u8]) -> Result<Vec<Finding>, DetectorError> {
                         ),
                     }),
                 });
-                // One finding per (rule, file) is enough — additional
-                // matches in the same file rarely add operator value.
-                break;
             }
         }
     }

@@ -140,6 +140,19 @@ pub struct Worker {
     control: Arc<WorkerControl>,
 }
 
+/// Row shape returned by the queue claim CTE: `(id, layer_digest,
+/// format, attempts, tenant?, project?, repository?)`. Slice 1
+/// pre-dates the path columns; slice 2-polish made them optional.
+type ClaimedJob = (
+    Uuid,
+    String,
+    String,
+    i32,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 impl Worker {
     pub fn new(
         pool: Pool<Postgres>,
@@ -184,15 +197,7 @@ impl Worker {
     /// ran (success or failure), `Ok(false)` if the queue was empty.
     pub async fn claim_and_run_one(&self) -> Result<bool, WorkerError> {
         // Claim a queued job, transitioning it to 'running' atomically.
-        let row: Option<(
-            Uuid,
-            String,
-            String,
-            i32,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        )> = sqlx::query_as(
+        let row: Option<ClaimedJob> = sqlx::query_as(
             "WITH next AS (
                  SELECT id FROM lazy_jobs
                  WHERE status = 'queued'
@@ -415,7 +420,7 @@ mod tests {
         let src = Bytes::from_static(b"compressed-tarball-bytes");
         let out = stub.index(src.clone()).await.unwrap();
         assert!(out.indexed_layer.is_none(), "stub does not rewrite bytes");
-        assert!(out.toc_blob.len() > 0);
+        assert!(!out.toc_blob.is_empty());
         let parsed: serde_json::Value = serde_json::from_slice(&out.toc_blob).unwrap();
         assert_eq!(parsed["format"], "estargz");
         assert_eq!(parsed["stub"], true);

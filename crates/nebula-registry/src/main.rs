@@ -1866,34 +1866,31 @@ async fn complete_blob_upload(
     // worker (when present) will rewrite/extract a TOC and register
     // it as a referrer of the layer. Fire-and-forget; missing GC
     // pool or disabled feature both fall through silently.
-    if let Some(pool) = state.gc_pool.clone() {
-        if std::env::var("NEBULACR_LAZY__ENABLED")
-            .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
-            .unwrap_or(false)
-        {
-            let format =
-                std::env::var("NEBULACR_LAZY__FORMAT").unwrap_or_else(|_| "estargz".into());
-            let layer_digest = expected_digest.clone();
-            let tenant = params.tenant.clone();
-            let project = params.project.clone();
-            let repo = params.name.clone();
-            tokio::spawn(async move {
-                use nebula_lazy::LazyJobStore as _;
-                let store = nebula_lazy::PgLazyJobStore::new(pool);
-                if let Err(e) = store
-                    .enqueue(
-                        &layer_digest,
-                        &format,
-                        Some(&tenant),
-                        Some(&project),
-                        Some(&repo),
-                    )
-                    .await
-                {
-                    debug!(error = %e, %layer_digest, "lazy enqueue failed");
-                }
-            });
-        }
+    let lazy_enabled = std::env::var("NEBULACR_LAZY__ENABLED")
+        .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
+        .unwrap_or(false);
+    if let Some(pool) = state.gc_pool.clone().filter(|_| lazy_enabled) {
+        let format = std::env::var("NEBULACR_LAZY__FORMAT").unwrap_or_else(|_| "estargz".into());
+        let layer_digest = expected_digest.clone();
+        let tenant = params.tenant.clone();
+        let project = params.project.clone();
+        let repo = params.name.clone();
+        tokio::spawn(async move {
+            use nebula_lazy::LazyJobStore as _;
+            let store = nebula_lazy::PgLazyJobStore::new(pool);
+            if let Err(e) = store
+                .enqueue(
+                    &layer_digest,
+                    &format,
+                    Some(&tenant),
+                    Some(&project),
+                    Some(&repo),
+                )
+                .await
+            {
+                debug!(error = %e, %layer_digest, "lazy enqueue failed");
+            }
+        });
     }
 
     Ok((StatusCode::CREATED, headers).into_response())
@@ -2024,6 +2021,7 @@ async fn catalog(
 // Fire-and-forget — the recorder writes to the unlogged staging table so
 // failures shouldn't fail the request, but the spawned task also keeps the
 // hot path entirely off the Postgres latency.
+#[allow(clippy::too_many_arguments)]
 fn record_usage(
     state: &AppState,
     tenant: &str,
@@ -2435,10 +2433,12 @@ async fn list_referrers(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/vnd.oci.image.index.v1+json"),
     );
-    if let Some(ref t) = q.artifact_type {
-        if let Ok(hv) = HeaderValue::from_str(t) {
-            headers.insert("OCI-Filters-Applied", hv);
-        }
+    if let Some(hv) = q
+        .artifact_type
+        .as_deref()
+        .and_then(|t| HeaderValue::from_str(t).ok())
+    {
+        headers.insert("OCI-Filters-Applied", hv);
     }
 
     Ok((StatusCode::OK, headers, axum::Json(body)).into_response())
@@ -3860,34 +3860,32 @@ async fn main() -> anyhow::Result<()> {
     // ships a stub eStargz indexer that records metadata + referrers
     // without rewriting layer bytes — proves the queue plumbing end
     // to end so slice 3 can plug the real indexer in transparently.
-    if let Some(pool) = gc_pool.clone() {
-        if std::env::var("NEBULACR_LAZY__ENABLED")
-            .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
-            .unwrap_or(false)
-        {
-            // 010 polish — real ObjectStore fetcher. Jobs now carry
-            // (tenant, project, repo) so the worker can build the
-            // standard `<t>/<p>/<r>/blobs/sha256/<hex>` storage key.
-            let fetcher: Arc<dyn nebula_lazy::LayerFetcher> =
-                Arc::new(nebula_lazy::ObjectStoreLayerFetcher {
-                    store: store.clone(),
-                });
-            let indexers: Vec<Arc<dyn nebula_lazy::TocIndexer>> =
-                vec![Arc::new(nebula_lazy::StubEstargzIndexer)];
-            let worker_control = nebula_lazy::WorkerControl::new();
-            let worker = nebula_lazy::Worker::new(
-                pool.clone(),
-                fetcher,
-                indexers,
-                nebula_lazy::WorkerConfig::default(),
-                worker_control.clone(),
-            );
-            tokio::spawn(async move {
-                worker.run().await;
+    let lazy_worker_enabled = std::env::var("NEBULACR_LAZY__ENABLED")
+        .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
+        .unwrap_or(false);
+    if let Some(pool) = gc_pool.clone().filter(|_| lazy_worker_enabled) {
+        // 010 polish — real ObjectStore fetcher. Jobs now carry
+        // (tenant, project, repo) so the worker can build the
+        // standard `<t>/<p>/<r>/blobs/sha256/<hex>` storage key.
+        let fetcher: Arc<dyn nebula_lazy::LayerFetcher> =
+            Arc::new(nebula_lazy::ObjectStoreLayerFetcher {
+                store: store.clone(),
             });
-            info!("lazy-pull worker spawned (stub indexer)");
-            let _ = worker_control;
-        }
+        let indexers: Vec<Arc<dyn nebula_lazy::TocIndexer>> =
+            vec![Arc::new(nebula_lazy::StubEstargzIndexer)];
+        let worker_control = nebula_lazy::WorkerControl::new();
+        let worker = nebula_lazy::Worker::new(
+            pool.clone(),
+            fetcher,
+            indexers,
+            nebula_lazy::WorkerConfig::default(),
+            worker_control.clone(),
+        );
+        tokio::spawn(async move {
+            worker.run().await;
+        });
+        info!("lazy-pull worker spawned (stub indexer)");
+        let _ = worker_control;
     }
 
     // ── TTL reaper (013 slice 2) ─────────────────────────────────────

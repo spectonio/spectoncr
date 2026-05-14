@@ -256,10 +256,7 @@ impl ContinuousReaper {
         .fetch_optional(&mut *tx)
         .await?;
 
-        let still_zero = match still_zero {
-            Some((rc,)) if rc == 0 => true,
-            _ => false,
-        };
+        let still_zero = matches!(still_zero, Some((0,)));
         if !still_zero {
             return Ok(false);
         }
