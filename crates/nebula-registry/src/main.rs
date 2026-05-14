@@ -2295,6 +2295,133 @@ async fn list_referrers(
     Ok((StatusCode::OK, headers, axum::Json(body)).into_response())
 }
 
+// ── Attestation upload (015 slice 2) ─────────────────────────────────────────
+//
+// POST /v2/{tenant}/{project}/{name}/attestations
+//
+// Accepts a DSSE bundle (raw bytes). The body is parsed as a DSSE
+// envelope; the inner in-toto statement gives us the subject digest
+// (which must reference an existing manifest in this repo) plus the
+// predicate type. SLSA-level inference uses the configured
+// trusted-builder allowlist. We persist a row to `attestations`,
+// register the bundle as an OCI 1.1 referrer of the subject, and
+// store the raw bundle bytes so consumers can re-fetch them.
+//
+// `verified=false` for slice 2 — DSSE signature verification arrives
+// with 001 (image signing). Admission policy gating in slice 3.
+
+#[derive(Debug, serde::Deserialize, Default)]
+struct AttestationQuery {
+    /// Optional: pin to a specific subject digest. When omitted the
+    /// bundle's first subject digest is used.
+    #[serde(default)]
+    subject: Option<String>,
+}
+
+#[instrument(name = "upload_attestation", skip(state, claims, body), fields(tenant = %params.tenant, project = %params.project, name = %params.name))]
+async fn upload_attestation(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(params): Path<RepoPath>,
+    Query(q): Query<AttestationQuery>,
+    body: Bytes,
+) -> Result<Response, RegistryError> {
+    authorize(
+        &claims,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        Action::Push,
+    )?;
+
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("attestation backend not configured".into()))?;
+
+    // 1. Parse DSSE.
+    let (env, stmt) = nebula_attest::decode_envelope(&body)
+        .map_err(|e| RegistryError::ManifestInvalid {
+            reason: format!("invalid DSSE: {e}"),
+        })?;
+
+    // 2. Resolve subject digest. Caller may pin via ?subject=...; else
+    //    we use the first sha256 entry inside the in-toto statement.
+    let subject_digest = q.subject.clone().or_else(|| {
+        nebula_attest::dsse::first_subject_digest(&stmt)
+    });
+    let subject_digest = subject_digest.ok_or_else(|| RegistryError::ManifestInvalid {
+        reason: "DSSE statement has no sha256 subject digest".into(),
+    })?;
+
+    // 3. Infer SLSA level from the allowlist.
+    let trusted_csv = std::env::var("NEBULACR_ATTEST__TRUSTED_BUILDERS").unwrap_or_default();
+    let trusted: Vec<&str> = trusted_csv
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let (level, builder_id) =
+        nebula_attest::slsa::infer_slsa_level(&stmt.predicate_type, &stmt.predicate, &trusted);
+
+    // 4. Persist the bundle in object storage so consumers can fetch
+    //    it back via standard blob endpoints. The envelope's digest
+    //    (sha256 of the raw bytes) is the storage key.
+    let envelope_digest = nebula_common::storage::sha256_digest(&body);
+    let env_path = nebula_common::storage::blob_path(
+        &params.tenant,
+        &params.project,
+        &params.name,
+        &envelope_digest,
+    );
+    state
+        .store
+        .put(&StorePath::from(env_path), body.clone().into())
+        .await
+        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+
+    // 5. Persist the row + register a referrer.
+    let attestation = nebula_attest::store::Attestation {
+        id: Uuid::new_v4(),
+        subject_digest: subject_digest.clone(),
+        envelope_digest: envelope_digest.clone(),
+        predicate_type: stmt.predicate_type.clone(),
+        builder_id,
+        builder_kind: None,
+        slsa_level: Some(level.as_int()),
+        verified: false,
+        uploaded_at: chrono::Utc::now(),
+    };
+    use nebula_attest::AttestationStore as _;
+    let store = nebula_attest::PgAttestationStore::new(pool.clone());
+    let raw = serde_json::to_value(&env).map_err(|e| RegistryError::Internal(e.to_string()))?;
+    store
+        .put(&attestation, &raw)
+        .await
+        .map_err(|e| RegistryError::Internal(format!("attestation store: {e}")))?;
+
+    use nebula_lazy::ReferrerStore as _;
+    let r = nebula_lazy::Referrer {
+        subject_digest: subject_digest.clone(),
+        artifact_digest: envelope_digest.clone(),
+        artifact_type: stmt.predicate_type.clone(),
+        media_type: env.payload_type.clone(),
+        size: body.len() as i64,
+    };
+    if let Err(e) = nebula_lazy::PgReferrerStore::new(pool).register(&r).await {
+        warn!(error = %e, "attestation referrer register failed");
+    }
+
+    let resp = serde_json::json!({
+        "id":              attestation.id,
+        "subject_digest":  subject_digest,
+        "envelope_digest": envelope_digest,
+        "predicate_type":  stmt.predicate_type,
+        "slsa_level":      level.as_int(),
+    });
+    Ok((StatusCode::CREATED, axum::Json(resp)).into_response())
+}
+
 // ── Helper Functions ─────────────────────────────────────────────────────────
 
 /// Resolve a manifest reference: if it is a tag, read the tag link to get the digest,
@@ -3835,6 +3962,11 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v2/{tenant}/{project}/{name}/referrers/{digest}",
             get(list_referrers),
+        )
+        // Attestations upload — 015 slice 2
+        .route(
+            "/v2/{tenant}/{project}/{name}/attestations",
+            post(upload_attestation),
         )
         // Catalog
         .route("/v2/_catalog", get(catalog))

@@ -2642,6 +2642,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "nebula-artifact-types",
+ "nebula-attest",
  "nebula-common",
  "nebula-cost",
  "nebula-db",
