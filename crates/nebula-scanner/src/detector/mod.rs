@@ -115,8 +115,10 @@ pub trait Detector: Send + Sync {
 }
 
 pub mod license;
+pub mod secret;
 pub mod store;
 pub use license::{LicenseClass, LicenseDetector};
+pub use secret::SecretDetector;
 pub use store::{FindingsStore, PgFindingsStore};
 
 #[cfg(test)]
