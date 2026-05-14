@@ -14,6 +14,6 @@ pub use indexer::{IndexFormat, TocIndexer, TocOutput, LayerSource, LazyError};
 pub use jobs::{JobStatus, LazyJob, LazyJobStore, PgLazyJobStore};
 pub use referrers::{Referrer, ReferrerStore, PgReferrerStore};
 pub use worker::{
-    InMemoryLayerFetcher, LayerFetcher, StubEstargzIndexer, Worker, WorkerConfig,
-    WorkerControl, WorkerError,
+    InMemoryLayerFetcher, LayerFetcher, ObjectStoreLayerFetcher, StubEstargzIndexer,
+    Worker, WorkerConfig, WorkerControl, WorkerError,
 };

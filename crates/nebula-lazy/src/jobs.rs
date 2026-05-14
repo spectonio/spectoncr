@@ -40,6 +40,9 @@ pub struct LazyJob {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub attempts: i32,
+    pub tenant: Option<String>,
+    pub project: Option<String>,
+    pub repository: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -50,7 +53,17 @@ pub enum JobError {
 
 #[async_trait]
 pub trait LazyJobStore: Send + Sync {
-    async fn enqueue(&self, layer_digest: &str, format: &str) -> Result<Uuid, JobError>;
+    /// Enqueue a job. `tenant`/`project`/`repository` let the worker
+    /// rebuild the storage path; pass `None` for legacy callers, in
+    /// which case the worker treats the job as unfetchable.
+    async fn enqueue(
+        &self,
+        layer_digest: &str,
+        format: &str,
+        tenant: Option<&str>,
+        project: Option<&str>,
+        repository: Option<&str>,
+    ) -> Result<Uuid, JobError>;
     async fn get(&self, id: Uuid) -> Result<Option<LazyJob>, JobError>;
 }
 
@@ -66,16 +79,28 @@ impl PgLazyJobStore {
 
 #[async_trait]
 impl LazyJobStore for PgLazyJobStore {
-    async fn enqueue(&self, layer_digest: &str, format: &str) -> Result<Uuid, JobError> {
+    async fn enqueue(
+        &self,
+        layer_digest: &str,
+        format: &str,
+        tenant: Option<&str>,
+        project: Option<&str>,
+        repository: Option<&str>,
+    ) -> Result<Uuid, JobError> {
         let id = Uuid::new_v4();
         sqlx::query(
-            "INSERT INTO lazy_jobs (id, layer_digest, format, status, attempts)
-             VALUES ($1, $2, $3, 'queued', 0)
+            "INSERT INTO lazy_jobs
+                 (id, layer_digest, format, status, attempts,
+                  tenant, project, repository)
+             VALUES ($1, $2, $3, 'queued', 0, $4, $5, $6)
              ON CONFLICT DO NOTHING",
         )
         .bind(id)
         .bind(layer_digest)
         .bind(format)
+        .bind(tenant)
+        .bind(project)
+        .bind(repository)
         .execute(&self.pool)
         .await?;
         Ok(id)
@@ -92,33 +117,55 @@ impl LazyJobStore for PgLazyJobStore {
             Option<DateTime<Utc>>,
             Option<DateTime<Utc>>,
             i32,
+            Option<String>,
+            Option<String>,
+            Option<String>,
         )> = sqlx::query_as(
             "SELECT id, layer_digest, format, status, error,
-                    enqueued_at, started_at, finished_at, attempts
+                    enqueued_at, started_at, finished_at, attempts,
+                    tenant, project, repository
              FROM lazy_jobs WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|(id, layer, format, status, error, enq, started, finished, attempts)| {
-            let status = match status.as_str() {
-                "running" => JobStatus::Running,
-                "done" => JobStatus::Done,
-                "failed" => JobStatus::Failed,
-                _ => JobStatus::Queued,
-            };
-            LazyJob {
+        Ok(row.map(
+            |(
                 id,
-                layer_digest: layer,
+                layer,
                 format,
                 status,
                 error,
-                enqueued_at: enq,
-                started_at: started,
-                finished_at: finished,
+                enq,
+                started,
+                finished,
                 attempts,
-            }
-        }))
+                tenant,
+                project,
+                repo,
+            )| {
+                let status = match status.as_str() {
+                    "running" => JobStatus::Running,
+                    "done" => JobStatus::Done,
+                    "failed" => JobStatus::Failed,
+                    _ => JobStatus::Queued,
+                };
+                LazyJob {
+                    id,
+                    layer_digest: layer,
+                    format,
+                    status,
+                    error,
+                    enqueued_at: enq,
+                    started_at: started,
+                    finished_at: finished,
+                    attempts,
+                    tenant,
+                    project,
+                    repository: repo,
+                }
+            },
+        ))
     }
 }

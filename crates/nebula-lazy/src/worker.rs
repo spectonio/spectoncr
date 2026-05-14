@@ -64,25 +64,71 @@ impl WorkerControl {
     }
 }
 
-/// Source of layer bytes by digest. The registry's ObjectStore
-/// satisfies this once a small adapter wraps it (slice 3); for
-/// slice-2 tests an in-memory map works too.
+/// Source of layer bytes by `(tenant, project, repository, digest)`.
+/// The tuple lets a multi-tenant registry's per-repo storage layout
+/// resolve into the right object key.
 #[async_trait::async_trait]
 pub trait LayerFetcher: Send + Sync {
-    async fn fetch(&self, layer_digest: &str) -> Result<Bytes, LazyError>;
+    async fn fetch(
+        &self,
+        tenant: &str,
+        project: &str,
+        repository: &str,
+        layer_digest: &str,
+    ) -> Result<Bytes, LazyError>;
 }
 
 pub struct InMemoryLayerFetcher {
+    /// Keyed by digest only — tests pass a flat map; the (tenant,
+    /// project, repo) inputs are accepted but ignored.
     pub blobs: HashMap<String, Bytes>,
 }
 
 #[async_trait::async_trait]
 impl LayerFetcher for InMemoryLayerFetcher {
-    async fn fetch(&self, layer_digest: &str) -> Result<Bytes, LazyError> {
+    async fn fetch(
+        &self,
+        _tenant: &str,
+        _project: &str,
+        _repository: &str,
+        layer_digest: &str,
+    ) -> Result<Bytes, LazyError> {
         self.blobs
             .get(layer_digest)
             .cloned()
             .ok_or_else(|| LazyError::Storage(format!("missing layer {layer_digest}")))
+    }
+}
+
+/// Reads layer bytes from the registry's `ObjectStore`. Storage
+/// layout matches `<tenant>/<project>/<repo>/blobs/sha256/<hex>`,
+/// the same path the registry's blob handlers write through.
+pub struct ObjectStoreLayerFetcher {
+    pub store: std::sync::Arc<dyn object_store::ObjectStore>,
+}
+
+#[async_trait::async_trait]
+impl LayerFetcher for ObjectStoreLayerFetcher {
+    async fn fetch(
+        &self,
+        tenant: &str,
+        project: &str,
+        repository: &str,
+        layer_digest: &str,
+    ) -> Result<Bytes, LazyError> {
+        let hex = layer_digest.strip_prefix("sha256:").unwrap_or(layer_digest);
+        let key = format!("{tenant}/{project}/{repository}/blobs/sha256/{hex}");
+        let path = object_store::path::Path::from(key);
+        let got = self
+            .store
+            .get(&path)
+            .await
+            .map_err(|e| LazyError::Storage(format!("get {layer_digest}: {e}")))?;
+        let bytes = got
+            .bytes()
+            .await
+            .map_err(|e| LazyError::Storage(format!("read {layer_digest}: {e}")))?;
+        Ok(bytes)
     }
 }
 
@@ -141,7 +187,15 @@ impl Worker {
     /// ran (success or failure), `Ok(false)` if the queue was empty.
     pub async fn claim_and_run_one(&self) -> Result<bool, WorkerError> {
         // Claim a queued job, transitioning it to 'running' atomically.
-        let row: Option<(Uuid, String, String, i32)> = sqlx::query_as(
+        let row: Option<(
+            Uuid,
+            String,
+            String,
+            i32,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
             "WITH next AS (
                  SELECT id FROM lazy_jobs
                  WHERE status = 'queued'
@@ -155,12 +209,13 @@ impl Worker {
                  attempts = j.attempts + 1
              FROM next
              WHERE j.id = next.id
-             RETURNING j.id, j.layer_digest, j.format, j.attempts",
+             RETURNING j.id, j.layer_digest, j.format, j.attempts,
+                       j.tenant, j.project, j.repository",
         )
         .fetch_optional(&self.pool)
         .await?;
 
-        let Some((job_id, layer_digest, format, attempts)) = row else {
+        let Some((job_id, layer_digest, format, attempts, tenant, project, repo)) = row else {
             return Ok(false);
         };
 
@@ -173,11 +228,20 @@ impl Worker {
             return Ok(true);
         };
 
+        // Legacy rows (slice 1/2 enqueues) lack the path tuple; fail
+        // them out of the queue so they don't loop.
+        let (Some(t), Some(p), Some(r)) = (tenant.as_deref(), project.as_deref(), repo.as_deref())
+        else {
+            self.mark_failed(job_id, "lazy_jobs row missing tenant/project/repository")
+                .await?;
+            return Ok(true);
+        };
+
         debug!(%job_id, %layer_digest, %format, attempts, "lazy worker claimed");
 
         // Fetch + index. Failures route through max-attempts logic.
         let result = async {
-            let bytes = self.fetcher.fetch(&layer_digest).await?;
+            let bytes = self.fetcher.fetch(t, p, r, &layer_digest).await?;
             let bytes_original = bytes.len() as i64;
             let out = indexer.index(bytes).await?;
             Ok::<_, WorkerError>((bytes_original, out))

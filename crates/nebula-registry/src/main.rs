@@ -1880,10 +1880,22 @@ async fn complete_blob_upload(
             let format = std::env::var("NEBULACR_LAZY__FORMAT")
                 .unwrap_or_else(|_| "estargz".into());
             let layer_digest = expected_digest.clone();
+            let tenant = params.tenant.clone();
+            let project = params.project.clone();
+            let repo = params.name.clone();
             tokio::spawn(async move {
                 use nebula_lazy::LazyJobStore as _;
                 let store = nebula_lazy::PgLazyJobStore::new(pool);
-                if let Err(e) = store.enqueue(&layer_digest, &format).await {
+                if let Err(e) = store
+                    .enqueue(
+                        &layer_digest,
+                        &format,
+                        Some(&tenant),
+                        Some(&project),
+                        Some(&repo),
+                    )
+                    .await
+                {
                     debug!(error = %e, %layer_digest, "lazy enqueue failed");
                 }
             });
@@ -3807,12 +3819,12 @@ async fn main() -> anyhow::Result<()> {
             .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
             .unwrap_or(false)
         {
-            // Slice 2 uses a stub fetcher — slice 3 wires the
-            // registry's ObjectStore once jobs carry (tenant, project,
-            // repo) so the worker can build the right blob path.
+            // 010 polish — real ObjectStore fetcher. Jobs now carry
+            // (tenant, project, repo) so the worker can build the
+            // standard `<t>/<p>/<r>/blobs/sha256/<hex>` storage key.
             let fetcher: Arc<dyn nebula_lazy::LayerFetcher> =
-                Arc::new(nebula_lazy::InMemoryLayerFetcher {
-                    blobs: std::collections::HashMap::new(),
+                Arc::new(nebula_lazy::ObjectStoreLayerFetcher {
+                    store: store.clone(),
                 });
             let indexers: Vec<Arc<dyn nebula_lazy::TocIndexer>> =
                 vec![Arc::new(nebula_lazy::StubEstargzIndexer)];
