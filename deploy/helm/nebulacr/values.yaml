@@ -464,6 +464,15 @@ scanner:
     nodeSelector: {}
     extraEnv: []
 
+## -- Lazy pulling / TOC indexer (010) --
+## When enabled, every blob upload enqueues an indexer job that
+## records a TOC artifact + a referrer of the source layer. Slice 2
+## ships a stub indexer (records metadata only); slice 3 plugs in
+## the real eStargz / zstd-chunked / SOCI rewriters.
+lazy:
+  enabled: false
+  format: "estargz"
+
 ## -- Ephemeral repos / TTL tags (013) --
 ## When ttl.reaper.enabled=true, a continuous reaper drains
 ## expired tag rows from the `tags` table. The underlying manifest

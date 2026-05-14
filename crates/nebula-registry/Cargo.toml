@@ -15,6 +15,7 @@ nebula-ephemeral = { workspace = true }
 nebula-rebuild = { workspace = true }
 nebula-lazy = { workspace = true }
 nebula-artifact-types = { workspace = true }
+async-trait = { workspace = true }
 nebula-db = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }

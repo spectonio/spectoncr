@@ -235,6 +235,12 @@ spec:
             - name: NEBULACR_USAGE__ENABLED
               value: "true"
             {{- end }}
+            {{- if .Values.lazy.enabled }}
+            - name: NEBULACR_LAZY__ENABLED
+              value: "true"
+            - name: NEBULACR_LAZY__FORMAT
+              value: {{ .Values.lazy.format | quote }}
+            {{- end }}
             {{- if .Values.ttl.reaper.enabled }}
             - name: NEBULACR_TTL__REAPER_ENABLED
               value: "true"
