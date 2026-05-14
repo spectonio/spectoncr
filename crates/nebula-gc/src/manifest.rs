@@ -40,6 +40,20 @@ struct RawManifest {
     subject: Option<RawDescriptor>,
 }
 
+/// Pull just the config-blob digest from an image manifest, if any.
+/// Returns `None` for image indexes (which have no config blob) and
+/// for malformed JSON.
+pub fn extract_config_digest(bytes: &[u8]) -> Option<String> {
+    let raw: RawManifest = serde_json::from_slice(bytes).ok()?;
+    raw.config.and_then(|c| {
+        if c.digest.is_empty() {
+            None
+        } else {
+            Some(c.digest)
+        }
+    })
+}
+
 /// Pull every blob descriptor that should bump a refcount when the
 /// manifest is stored. For an image manifest this is the config blob
 /// plus every layer; for an image index it is each child manifest's
@@ -166,5 +180,27 @@ mod tests {
         let body = br#"{"schemaVersion": 2}"#;
         let got = extract_blob_digests(body).unwrap();
         assert!(got.is_empty());
+    }
+
+    #[test]
+    fn extracts_config_digest() {
+        let body = br#"{
+            "schemaVersion": 2,
+            "config": {"digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "size": 0},
+            "layers": []
+        }"#;
+        assert_eq!(
+            extract_config_digest(body).as_deref(),
+            Some("sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+        );
+    }
+
+    #[test]
+    fn config_digest_none_for_image_index() {
+        let body = br#"{
+            "schemaVersion": 2,
+            "manifests": [{"digest": "sha256:aaaa", "size": 1}]
+        }"#;
+        assert!(extract_config_digest(body).is_none());
     }
 }

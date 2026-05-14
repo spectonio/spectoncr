@@ -26,7 +26,9 @@ pub mod reaper;
 pub mod reconciler;
 pub mod refcount;
 
-pub use manifest::{extract_blob_digests, BlobDescriptor, ManifestParseError};
+pub use manifest::{
+    extract_blob_digests, extract_config_digest, BlobDescriptor, ManifestParseError,
+};
 pub use reaper::{
     ContinuousReaper, CycleResult, ReaperConfig, ReaperControl, ReaperStats,
 };

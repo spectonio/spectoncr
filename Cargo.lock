@@ -2644,6 +2644,7 @@ dependencies = [
  "nebula-ephemeral",
  "nebula-gc",
  "nebula-mirror",
+ "nebula-rebuild",
  "nebula-replication",
  "nebula-resilience",
  "nebula-scanner",

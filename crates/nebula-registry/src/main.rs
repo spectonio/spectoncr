@@ -1021,6 +1021,7 @@ async fn put_manifest(
     // negligible. When it is the Postgres impl this is one round-trip
     // worth of UPSERTs; failures are logged but do NOT fail the push,
     // because the reconciler (slice 3) corrects drift.
+    let parsed_config_digest = nebula_gc::extract_config_digest(&body);
     match nebula_gc::extract_blob_digests(&body) {
         Ok(blobs) => {
             if let Err(e) = state
@@ -1042,6 +1043,60 @@ async fn put_manifest(
             // is only hit if extraction encounters an unexpected shape.
             debug!(error = %e, digest = %digest, "gc refcount skipped: manifest parse");
         }
+    }
+
+    // 018 lineage capture — fetch the image config blob async and
+    // record any base-image hint into image_lineage. Fire-and-forget;
+    // failures are logged but never fail the push.
+    if let (Some(config_digest), Some(pool)) =
+        (parsed_config_digest, state.gc_pool.clone())
+    {
+        let store = state.store.clone();
+        let tenant = params.tenant.clone();
+        let project = params.project.clone();
+        let repo = params.name.clone();
+        let child_digest = digest.clone();
+        tokio::spawn(async move {
+            let cfg_path = blob_path(&tenant, &project, &repo, &config_digest);
+            let cfg_store = StorePath::from(cfg_path);
+            let cfg_bytes = match store.get(&cfg_store).await {
+                Ok(g) => match g.bytes().await {
+                    Ok(b) => b,
+                    Err(e) => {
+                        debug!(error = %e, "lineage: image config read failed");
+                        return;
+                    }
+                },
+                Err(e) => {
+                    // Some manifests reference configs in other repos
+                    // (e.g. multi-arch indexes) — that's expected; skip.
+                    debug!(error = %e, "lineage: image config not local");
+                    return;
+                }
+            };
+            let Some(hint) = nebula_rebuild::detect_lineage(&cfg_bytes) else {
+                return;
+            };
+            let r = sqlx::query(
+                "INSERT INTO image_lineage
+                     (child_digest, parent_digest, confidence)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (child_digest, parent_digest) DO NOTHING",
+            )
+            .bind(&child_digest)
+            .bind(&hint.base_ref)
+            .bind(hint.confidence.as_str())
+            .execute(&pool)
+            .await;
+            match r {
+                Ok(_) => debug!(
+                    base = %hint.base_ref,
+                    confidence = %hint.confidence.as_str(),
+                    "lineage recorded"
+                ),
+                Err(e) => warn!(error = %e, "image_lineage insert failed"),
+            }
+        });
     }
 
     // Emit replication event if configured
