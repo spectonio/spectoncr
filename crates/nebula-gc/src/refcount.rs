@@ -26,9 +26,15 @@ pub trait BlobRefCounter: Send + Sync {
     /// Bump refcount for every digest. Idempotent on
     /// `(tenant, manifest_digest, blob_digest)` — called twice for the
     /// same manifest re-pushes the same edges, which is fine.
+    ///
+    /// `project` + `repository` are recorded in `blob_paths` so the
+    /// reaper (slice 2) can locate every storage object for a digest
+    /// when its refcount drops to zero.
     async fn add_refs(
         &self,
         tenant: &str,
+        project: &str,
+        repository: &str,
         manifest_digest: &str,
         blobs: &[BlobDescriptor],
     ) -> Result<(), GcError>;
@@ -44,7 +50,14 @@ pub struct NoopBlobRefCounter;
 
 #[async_trait]
 impl BlobRefCounter for NoopBlobRefCounter {
-    async fn add_refs(&self, _: &str, _: &str, _: &[BlobDescriptor]) -> Result<(), GcError> {
+    async fn add_refs(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &[BlobDescriptor],
+    ) -> Result<(), GcError> {
         Ok(())
     }
     async fn remove_refs(&self, _: &str, _: &str) -> Result<(), GcError> {
@@ -73,6 +86,8 @@ impl BlobRefCounter for PgBlobRefCounter {
     async fn add_refs(
         &self,
         tenant: &str,
+        project: &str,
+        repository: &str,
         manifest_digest: &str,
         blobs: &[BlobDescriptor],
     ) -> Result<(), GcError> {
@@ -83,6 +98,23 @@ impl BlobRefCounter for PgBlobRefCounter {
         let mut tx = self.pool.begin().await?;
 
         for blob in blobs {
+            // Always record the storage path so the reaper can find
+            // every copy of this blob when it eventually drops to
+            // refcount=0 — even if this push is a re-push that doesn't
+            // bump the refcount.
+            sqlx::query(
+                "INSERT INTO blob_paths
+                     (tenant, project, repository, blob_digest)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(tenant)
+            .bind(project)
+            .bind(repository)
+            .bind(&blob.digest)
+            .execute(&mut *tx)
+            .await?;
+
             // Insert the edge — ON CONFLICT DO NOTHING means re-pushing
             // the same manifest is a no-op (idempotent).
             let edge_inserted: Option<(bool,)> = sqlx::query_as(

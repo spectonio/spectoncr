@@ -10,11 +10,23 @@
 //!   OCI manifest or image index without needing the registry to depend
 //!   on this crate's parser.
 //!
-//! Slices 2-4 add the continuous reaper, the reconciler, and operator
-//! surfaces (CLI / MCP / Helm). They share this trait.
+//! Slice 2 adds:
+//! - [`ContinuousReaper`] — drains zero-refcount blobs older than the
+//!   grace period, deletes their storage objects, removes the
+//!   bookkeeping rows.
+//! - [`ReaperControl`] — pause / resume / shutdown handles.
+//! - `blob_paths` table (migration 0015) so the reaper knows every
+//!   storage location for a digest.
+//!
+//! Slices 3-4 add the reconciler and operator surfaces (CLI / MCP / Helm).
+//! They share these traits.
 
 pub mod manifest;
+pub mod reaper;
 pub mod refcount;
 
 pub use manifest::{extract_blob_digests, BlobDescriptor, ManifestParseError};
+pub use reaper::{
+    ContinuousReaper, CycleResult, ReaperConfig, ReaperControl, ReaperStats,
+};
 pub use refcount::{BlobRefCounter, GcError, NoopBlobRefCounter, PgBlobRefCounter};

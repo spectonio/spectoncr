@@ -89,6 +89,9 @@ struct AppState {
     /// no-op when `[gc.online]` / `NEBULACR_GC__ONLINE` is disabled.
     /// Bumped on manifest push, decremented on manifest delete.
     gc_refcounter: Arc<dyn nebula_gc::BlobRefCounter>,
+    /// Control handle for the continuous reaper. `None` when GC is
+    /// disabled or the reaper task isn't running.
+    gc_reaper_control: Option<Arc<nebula_gc::ReaperControl>>,
     /// Registry audit log for tracking who pushed/pulled what.
     audit_log: Arc<audit::RegistryAuditLog>,
     /// Process start time for uptime tracking.
@@ -954,7 +957,13 @@ async fn put_manifest(
         Ok(blobs) => {
             if let Err(e) = state
                 .gc_refcounter
-                .add_refs(&params.tenant, &digest, &blobs)
+                .add_refs(
+                    &params.tenant,
+                    &params.project,
+                    &params.name,
+                    &digest,
+                    &blobs,
+                )
                 .await
             {
                 warn!(error = %e, digest = %digest, "gc refcount add_refs failed");
@@ -1760,6 +1769,67 @@ async fn catalog(
     let catalog_resp = nebula_common::models::Catalog { repositories };
 
     Ok((StatusCode::OK, axum::Json(catalog_resp)).into_response())
+}
+
+// ── Online-GC routes (009 slice 2) ───────────────────────────────────────────
+
+fn gc_admin_authorize(claims: &TokenClaims) -> Result<(), RegistryError> {
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "online-gc admin endpoints require Admin role".into(),
+        });
+    }
+    Ok(())
+}
+
+/// GET /v2/_gc/status — current reaper state.
+#[instrument(name = "gc_status", skip(state, claims))]
+async fn gc_status(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+) -> Result<Response, RegistryError> {
+    gc_admin_authorize(&claims)?;
+    let body = match &state.gc_reaper_control {
+        Some(c) => serde_json::json!({
+            "enabled": true,
+            "paused": c.is_paused(),
+            "stopped": c.is_stopped(),
+        }),
+        None => serde_json::json!({ "enabled": false }),
+    };
+    Ok((StatusCode::OK, axum::Json(body)).into_response())
+}
+
+/// POST /v2/_gc/pause — pause the continuous reaper. Idempotent.
+#[instrument(name = "gc_pause", skip(state, claims))]
+async fn gc_pause(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+) -> Result<Response, RegistryError> {
+    gc_admin_authorize(&claims)?;
+    match &state.gc_reaper_control {
+        Some(c) => {
+            c.pause();
+            Ok((StatusCode::OK, axum::Json(serde_json::json!({"paused": true}))).into_response())
+        }
+        None => Err(RegistryError::Internal("online-gc reaper not running".into())),
+    }
+}
+
+/// POST /v2/_gc/resume — resume the continuous reaper. Idempotent.
+#[instrument(name = "gc_resume", skip(state, claims))]
+async fn gc_resume(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+) -> Result<Response, RegistryError> {
+    gc_admin_authorize(&claims)?;
+    match &state.gc_reaper_control {
+        Some(c) => {
+            c.resume();
+            Ok((StatusCode::OK, axum::Json(serde_json::json!({"paused": false}))).into_response())
+        }
+        None => Err(RegistryError::Internal("online-gc reaper not running".into())),
+    }
 }
 
 // ── Helper Functions ─────────────────────────────────────────────────────────
@@ -2928,7 +2998,10 @@ async fn main() -> anyhow::Result<()> {
     let gc_online_enabled = std::env::var("NEBULACR_GC__ONLINE")
         .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
         .unwrap_or(false);
-    let gc_refcounter: Arc<dyn nebula_gc::BlobRefCounter> = if gc_online_enabled {
+    let (gc_refcounter, gc_reaper_control): (
+        Arc<dyn nebula_gc::BlobRefCounter>,
+        Option<Arc<nebula_gc::ReaperControl>>,
+    ) = if gc_online_enabled {
         let pool_opt = if let Some(rt) = scanner_runtime.as_ref() {
             Some(rt.pg.clone())
         } else if let Ok(url) = std::env::var("NEBULACR_GC__POSTGRES_URL") {
@@ -2952,12 +3025,60 @@ async fn main() -> anyhow::Result<()> {
         match pool_opt {
             Some(pool) => {
                 info!("online GC refcounter enabled (postgres-backed)");
-                Arc::new(nebula_gc::PgBlobRefCounter::new(pool))
+
+                // Spawn the continuous reaper unless explicitly disabled.
+                let reaper_enabled = std::env::var("NEBULACR_GC__REAPER_ENABLED")
+                    .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
+                    .unwrap_or(true);
+
+                let control = if reaper_enabled {
+                    let control = nebula_gc::ReaperControl::new();
+                    let cfg = nebula_gc::ReaperConfig {
+                        grace: std::time::Duration::from_secs(
+                            std::env::var("NEBULACR_GC__REAPER_GRACE_SECS")
+                                .ok()
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .unwrap_or(24 * 3600),
+                        ),
+                        batch_size: std::env::var("NEBULACR_GC__REAPER_BATCH")
+                            .ok()
+                            .and_then(|v| v.parse::<i64>().ok())
+                            .unwrap_or(200),
+                        idle_sleep: std::time::Duration::from_secs(
+                            std::env::var("NEBULACR_GC__REAPER_IDLE_SLEEP_SECS")
+                                .ok()
+                                .and_then(|v| v.parse::<u64>().ok())
+                                .unwrap_or(30),
+                        ),
+                        sweep_qps: std::env::var("NEBULACR_GC__REAPER_QPS")
+                            .ok()
+                            .and_then(|v| v.parse::<u32>().ok())
+                            .unwrap_or(100),
+                    };
+                    let reaper = nebula_gc::ContinuousReaper::new(
+                        pool.clone(),
+                        store.clone(),
+                        cfg,
+                        control.clone(),
+                    );
+                    tokio::spawn(async move {
+                        let _ = reaper.run().await;
+                    });
+                    info!("online GC continuous reaper spawned");
+                    Some(control)
+                } else {
+                    info!("online GC reaper disabled by config");
+                    None
+                };
+
+                let rc: Arc<dyn nebula_gc::BlobRefCounter> =
+                    Arc::new(nebula_gc::PgBlobRefCounter::new(pool));
+                (rc, control)
             }
-            None => Arc::new(nebula_gc::NoopBlobRefCounter),
+            None => (Arc::new(nebula_gc::NoopBlobRefCounter), None),
         }
     } else {
-        Arc::new(nebula_gc::NoopBlobRefCounter)
+        (Arc::new(nebula_gc::NoopBlobRefCounter), None)
     };
 
     let state = AppState {
@@ -2973,6 +3094,7 @@ async fn main() -> anyhow::Result<()> {
         webhook_handle,
         scanner_queue,
         gc_refcounter,
+        gc_reaper_control,
         audit_log: audit_log.clone(),
         start_time,
     };
@@ -3073,7 +3195,11 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/v2/{project}/{name}/tags/list", get(list_tags_2seg))
         // Catalog
-        .route("/v2/_catalog", get(catalog));
+        .route("/v2/_catalog", get(catalog))
+        // Online GC control plane (009 slice 2)
+        .route("/v2/_gc/status", get(gc_status))
+        .route("/v2/_gc/pause", post(gc_pause))
+        .route("/v2/_gc/resume", post(gc_resume));
 
     // Internal replication routes — served on both the main port (for cross-cluster
     // access via proxy) and the dedicated internal port (for intra-cluster use).
