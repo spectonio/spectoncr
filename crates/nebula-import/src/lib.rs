@@ -5,10 +5,20 @@
 //! ImportJob model, and the persistence schema. Nexus / Harbor / ACR
 //! adapters and the runner ship in later slices.
 
+pub mod acr;
+pub mod destination;
 pub mod distribution;
+pub mod harbor;
 pub mod jobs;
+pub mod nexus;
+pub mod runner;
 pub mod source;
 
+pub use acr::AcrSource;
+pub use destination::{InMemoryDestination, RegistryDestination};
 pub use distribution::DistributionSource;
+pub use harbor::HarborSource;
 pub use jobs::{ImportJobRow, ImportJobStore, ImportPhase, PgImportJobStore};
-pub use source::{ImportError, Repository, RegistrySource, Tag};
+pub use nexus::NexusSource;
+pub use runner::{ImportRunner, ImportRunReport, ImportRunnerConfig};
+pub use source::{ImportError, RegistrySource, Repository, Tag};
