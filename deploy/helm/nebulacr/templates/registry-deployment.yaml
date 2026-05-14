@@ -231,6 +231,10 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
+            {{- if .Values.usage.enabled }}
+            - name: NEBULACR_USAGE__ENABLED
+              value: "true"
+            {{- end }}
             {{- if .Values.gc.online.enabled }}
             - name: NEBULACR_GC__ONLINE
               value: "true"

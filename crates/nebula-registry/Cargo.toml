@@ -10,6 +10,7 @@ nebula-mirror = { workspace = true }
 nebula-replication = { workspace = true }
 nebula-scanner = { workspace = true }
 nebula-gc = { workspace = true }
+nebula-cost = { workspace = true }
 nebula-db = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }

@@ -95,6 +95,10 @@ struct AppState {
     /// Postgres pool used by GC's reconciler endpoint. `None` when GC
     /// is disabled.
     gc_pool: Option<sqlx::PgPool>,
+    /// Usage / cost telemetry recorder. Always present; defaults to a
+    /// no-op when `[usage]` / `NEBULACR_USAGE__ENABLED` is disabled.
+    /// Called from blob/manifest hot paths to seed the rollup pipeline.
+    usage_recorder: Arc<dyn nebula_cost::UsageRecorder>,
     /// Registry audit log for tracking who pushed/pulled what.
     audit_log: Arc<audit::RegistryAuditLog>,
     /// Process start time for uptime tracking.
@@ -888,6 +892,18 @@ async fn get_manifest(
         })
         .await;
 
+    record_usage(
+        &state,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        nebula_cost::UsageOp::ManifestGet,
+        data.len() as i64,
+        nebula_cost::UsageSrc::Origin,
+        200,
+        Some(claims.sub.clone()),
+    );
+
     Ok((StatusCode::OK, headers, data).into_response())
 }
 
@@ -1078,6 +1094,18 @@ async fn put_manifest(
         })
         .await;
 
+    record_usage(
+        &state,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        nebula_cost::UsageOp::ManifestPut,
+        body.len() as i64,
+        nebula_cost::UsageSrc::Origin,
+        201,
+        Some(claims.sub.clone()),
+    );
+
     Ok((StatusCode::CREATED, headers).into_response())
 }
 
@@ -1201,6 +1229,18 @@ async fn delete_manifest(
             duration_ms: duration.as_millis() as u64,
         })
         .await;
+
+    record_usage(
+        &state,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        nebula_cost::UsageOp::Delete,
+        0,
+        nebula_cost::UsageSrc::Origin,
+        202,
+        Some(claims.sub.clone()),
+    );
 
     Ok(StatusCode::ACCEPTED.into_response())
 }
@@ -1392,6 +1432,18 @@ async fn get_blob(
             duration_ms: duration.as_millis() as u64,
         })
         .await;
+
+    record_usage(
+        &state,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        nebula_cost::UsageOp::Pull,
+        data.len() as i64,
+        nebula_cost::UsageSrc::Origin,
+        200,
+        Some(claims.sub.clone()),
+    );
 
     Ok((StatusCode::OK, headers, data).into_response())
 }
@@ -1651,6 +1703,18 @@ async fn complete_blob_upload(
         })
         .await;
 
+    record_usage(
+        &state,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        nebula_cost::UsageOp::Push,
+        final_data_len as i64,
+        nebula_cost::UsageSrc::Origin,
+        201,
+        Some(claims.sub.clone()),
+    );
+
     Ok((StatusCode::CREATED, headers).into_response())
 }
 
@@ -1772,6 +1836,41 @@ async fn catalog(
     let catalog_resp = nebula_common::models::Catalog { repositories };
 
     Ok((StatusCode::OK, axum::Json(catalog_resp)).into_response())
+}
+
+// ── Usage telemetry helper (017 integration) ───────────────────────────────
+//
+// Fire-and-forget — the recorder writes to the unlogged staging table so
+// failures shouldn't fail the request, but the spawned task also keeps the
+// hot path entirely off the Postgres latency.
+fn record_usage(
+    state: &AppState,
+    tenant: &str,
+    project: &str,
+    repository: &str,
+    op: nebula_cost::UsageOp,
+    bytes: i64,
+    src: nebula_cost::UsageSrc,
+    status: i32,
+    sub: Option<String>,
+) {
+    let recorder = state.usage_recorder.clone();
+    let event = nebula_cost::UsageEvent {
+        at: chrono::Utc::now(),
+        tenant: tenant.to_string(),
+        project: project.to_string(),
+        repository: repository.to_string(),
+        op,
+        bytes,
+        src,
+        status,
+        sub,
+    };
+    tokio::spawn(async move {
+        if let Err(e) = recorder.record(&event).await {
+            debug!(error = %e, "usage recorder failed");
+        }
+    });
 }
 
 // ── Online-GC routes (009 slice 2) ───────────────────────────────────────────
@@ -3132,6 +3231,31 @@ async fn main() -> anyhow::Result<()> {
         (Arc::new(nebula_gc::NoopBlobRefCounter), None, None)
     };
 
+    // ── Usage recorder (017 slice 1) ─────────────────────────────────
+    // Enabled by `NEBULACR_USAGE__ENABLED=true`. Reuses the GC pool
+    // when present (both want the same Postgres). Defaults to a no-op
+    // so existing deployments are unaffected.
+    let usage_enabled = std::env::var("NEBULACR_USAGE__ENABLED")
+        .map(|v| matches!(v.as_str(), "true" | "1" | "yes"))
+        .unwrap_or(false);
+    let usage_recorder: Arc<dyn nebula_cost::UsageRecorder> = if usage_enabled {
+        match gc_pool.clone() {
+            Some(pool) => {
+                info!("usage recorder enabled (postgres-backed)");
+                Arc::new(nebula_cost::PgUsageRecorder::new(pool))
+            }
+            None => {
+                warn!(
+                    "NEBULACR_USAGE__ENABLED=true but no Postgres pool available; \
+                     enable scanner or GC to provide one. Falling back to no-op."
+                );
+                Arc::new(nebula_cost::NoopUsageRecorder)
+            }
+        }
+    } else {
+        Arc::new(nebula_cost::NoopUsageRecorder)
+    };
+
     let state = AppState {
         store,
         config: Arc::new(config),
@@ -3147,6 +3271,7 @@ async fn main() -> anyhow::Result<()> {
         gc_refcounter,
         gc_reaper_control,
         gc_pool,
+        usage_recorder,
         audit_log: audit_log.clone(),
         start_time,
     };

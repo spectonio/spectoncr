@@ -2639,6 +2639,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "nebula-common",
+ "nebula-cost",
  "nebula-db",
  "nebula-gc",
  "nebula-mirror",

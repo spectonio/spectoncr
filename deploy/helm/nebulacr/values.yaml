@@ -464,6 +464,13 @@ scanner:
     nodeSelector: {}
     extraEnv: []
 
+## -- Usage / cost telemetry (017) --
+## When enabled, every blob/manifest op writes a row to
+## usage_events_staging. The drainer + rollup loop ship in slice 2;
+## slice 1 just collects raw events. Reuses the GC Postgres pool.
+usage:
+  enabled: false
+
 ## -- Online GC (009 — refcount-based, zero read-only window) --
 ## When enabled, every manifest push records blob edges in Postgres
 ## and a continuous reaper drains zero-refcount blobs once they age
