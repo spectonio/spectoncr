@@ -1,0 +1,169 @@
+name: Deploy Observability Stack
+
+# Brings the Prometheus + Grafana sidecar stack
+# (docker-compose.observability.yml) up alongside the registry on the
+# same self-hosted runner. Default action is `up`; choose `down` to
+# stop and `restart` to refresh dashboards/datasource configuration
+# without losing volumes.
+#
+# Grafana lands on host port 13002 (admin/admin) — pick from the
+# notice on the Verify step. Prometheus on 9091.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docker-compose.observability.yml"
+      - "deploy/observability/**"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        required: true
+        default: "up"
+        type: choice
+        options:
+          - up
+          - restart
+          - down
+      pull_images:
+        description: "Pull latest Prometheus / Grafana images first"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  COMPOSE_FILE: -f docker-compose.yml -f docker-compose.observability.yml
+  GRAFANA_HOST_PORT: 13002
+  PROMETHEUS_HOST_PORT: 9091
+
+jobs:
+  deploy-observability:
+    name: ${{ github.event.inputs.action || 'up' }} observability stack
+    runs-on: [self-hosted, test]
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show docker + compose versions
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Verify compose files render cleanly
+        run: |
+          docker compose ${COMPOSE_FILE} config --services
+          echo ""
+          echo "Bound host ports:"
+          docker compose ${COMPOSE_FILE} config | awk '/^      - "/{print $2}' | tr -d '"'
+
+      - name: Pull images
+        if: ${{ github.event.inputs.action != 'down' && (github.event.inputs.pull_images == 'true' || github.event_name == 'push') }}
+        run: |
+          docker compose ${COMPOSE_FILE} pull prometheus grafana
+
+      # ── Action: down ────────────────────────────────────────────────
+      - name: Stop stack
+        if: ${{ github.event.inputs.action == 'down' }}
+        run: |
+          docker compose ${COMPOSE_FILE} stop prometheus grafana
+          docker compose ${COMPOSE_FILE} rm -f prometheus grafana
+          echo "::notice::Observability stack stopped (volumes preserved)."
+
+      # ── Action: restart ─────────────────────────────────────────────
+      # Recreates only the obs containers — the registry stack stays
+      # exactly where it is so existing connections don't blip.
+      - name: Restart stack
+        if: ${{ github.event.inputs.action == 'restart' }}
+        run: |
+          docker compose ${COMPOSE_FILE} up -d --force-recreate --no-deps prometheus grafana
+
+      # ── Action: up (default) ────────────────────────────────────────
+      - name: Bring up stack
+        if: ${{ github.event.inputs.action == 'up' || github.event_name == 'push' }}
+        run: |
+          docker compose ${COMPOSE_FILE} up -d --remove-orphans prometheus grafana
+
+      # ── Verify (skipped when stopping) ─────────────────────────────
+      - name: Wait for Grafana
+        if: ${{ github.event.inputs.action != 'down' }}
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if curl -fsS --max-time 5 "http://127.0.0.1:${GRAFANA_HOST_PORT}/api/health" >/dev/null 2>&1; then
+              echo "Grafana healthy after ${i} attempt(s)"
+              curl -fsS "http://127.0.0.1:${GRAFANA_HOST_PORT}/api/health"
+              echo
+              exit 0
+            fi
+            echo "attempt ${i}: grafana not ready yet…"
+            sleep 5
+          done
+          echo "::error::Grafana did not come up on port ${GRAFANA_HOST_PORT}"
+          docker compose ${COMPOSE_FILE} logs --tail=80 grafana
+          exit 1
+
+      - name: Wait for Prometheus
+        if: ${{ github.event.inputs.action != 'down' }}
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS --max-time 5 "http://127.0.0.1:${PROMETHEUS_HOST_PORT}/-/ready" >/dev/null 2>&1; then
+              echo "Prometheus healthy after ${i} attempt(s)"
+              exit 0
+            fi
+            echo "attempt ${i}: prometheus not ready yet…"
+            sleep 5
+          done
+          echo "::error::Prometheus did not come up on port ${PROMETHEUS_HOST_PORT}"
+          docker compose ${COMPOSE_FILE} logs --tail=80 prometheus
+          exit 1
+
+      - name: Verify dashboards loaded
+        if: ${{ github.event.inputs.action != 'down' }}
+        run: |
+          # Sidecar-provisioned dashboards land in /api/search.
+          # Authenticate with the default admin/admin so the
+          # provisioning datasource list is visible too.
+          AUTH="-u admin:admin"
+          DASHBOARDS=$(curl -fsS $AUTH \
+            "http://127.0.0.1:${GRAFANA_HOST_PORT}/api/search?type=dash-db" \
+            | python3 -c "import sys,json;print(' '.join(d['uid'] for d in json.load(sys.stdin)))" || echo "")
+          echo "Loaded dashboards: ${DASHBOARDS}"
+
+          MUST_HAVE=(nebulacr-enterprise-overview nebulacr-enterprise-detail)
+          for uid in "${MUST_HAVE[@]}"; do
+            if ! echo "$DASHBOARDS" | grep -qw "$uid"; then
+              echo "::warning::expected dashboard uid ${uid} not present — provisioning may still be loading"
+            fi
+          done
+
+          DATASOURCES=$(curl -fsS $AUTH \
+            "http://127.0.0.1:${GRAFANA_HOST_PORT}/api/datasources" \
+            | python3 -c "import sys,json;print(' '.join(d['name'] for d in json.load(sys.stdin)))" || echo "")
+          echo "Loaded datasources: ${DATASOURCES}"
+
+      - name: Render run summary
+        if: ${{ always() }}
+        run: |
+          ACTION="${{ github.event.inputs.action || 'up' }}"
+          {
+            echo "# Observability stack — \`${ACTION}\`"
+            echo ""
+            if [ "${ACTION}" = "down" ]; then
+              echo "Stopped Prometheus + Grafana. Volumes preserved."
+            else
+              echo "| Service    | Host URL                                             |"
+              echo "| ---------- | ---------------------------------------------------- |"
+              echo "| Grafana    | http://localhost:${GRAFANA_HOST_PORT}                |"
+              echo "| Prometheus | http://localhost:${PROMETHEUS_HOST_PORT}             |"
+              echo ""
+              echo "Login: \`admin\` / \`admin\` (change immediately)."
+              echo ""
+              echo "## Pre-loaded dashboards"
+              echo ""
+              echo "- [Enterprise Overview](http://localhost:${GRAFANA_HOST_PORT}/d/nebulacr-enterprise-overview/)"
+              echo "- [Operations Detail](http://localhost:${GRAFANA_HOST_PORT}/d/nebulacr-enterprise-detail/)"
+              echo "- Plus the existing fleet / mirror / replication / storage / tenants / auth dashboards from \`deploy/observability/grafana/dashboards/\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
