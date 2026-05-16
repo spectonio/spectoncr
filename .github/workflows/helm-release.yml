@@ -29,7 +29,16 @@ jobs:
         uses: azure/setup-helm@v4
 
       - name: Add Helm repos (if chart has dependencies)
-        run: helm dependency update deploy/helm/nebulacr || true
+        # chart-releaser-action runs `helm dep build` internally; that
+        # only works if every dependency repo in Chart.yaml is already
+        # registered in helm's config. Register the grafana repo
+        # explicitly (Chart.yaml pulls in grafana 8.5.x) and prime
+        # `charts/` so the action's build step is a no-op rather than
+        # a fetch — see run 25966202371.
+        run: |
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo update
+          helm dependency update deploy/helm/nebulacr
 
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.7.0
@@ -54,6 +63,15 @@ jobs:
       - name: Login to GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+      - name: Fetch chart dependencies
+        # Chart.yaml depends on grafana 8.5.x; without this `helm
+        # package` errors with `found in Chart.yaml, but missing in
+        # charts/ directory: grafana` — see run 25966202371.
+        run: |
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo update
+          helm dependency update deploy/helm/nebulacr
 
       - name: Package chart
         run: helm package deploy/helm/nebulacr -d /tmp/helm-packages
