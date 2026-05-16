@@ -25,7 +25,7 @@ docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
 | Registry    | http://localhost:5000     | -             |
 | Auth        | http://localhost:5001     | -             |
 | Prometheus  | http://localhost:9091     | -             |
-| Grafana     | http://localhost:3000     | admin / admin |
+| Grafana     | http://localhost:13002     | admin / admin |
 
 Grafana auto-loads the dashboards from `deploy/observability/grafana/dashboards/` via provisioning. Prometheus auto-loads the alert rules from `deploy/observability/prometheus/rules/`.
 
@@ -357,7 +357,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3000:3000"
+      - "13002:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin

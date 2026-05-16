@@ -6,7 +6,12 @@
 #
 # Then open:
 #   - Prometheus: http://localhost:9091
-#   - Grafana:    http://localhost:3000  (admin / admin)
+#   - Grafana:    http://localhost:13002  (admin / admin)
+#
+# Port choice: Grafana's default 3000 is squatted by every Node-flavour
+# project on a developer laptop. 13002 is in the registered/private
+# range, unlikely to clash, and easy to remember next to the
+# registry's 5000/5001/9090.
 #
 # Dashboards are auto-provisioned from deploy/observability/grafana/dashboards.
 # Alert rules are auto-loaded from deploy/observability/prometheus/rules.
@@ -45,7 +50,7 @@ services:
     image: grafana/grafana:11.3.1
     container_name: nebulacr-grafana
     ports:
-      - "3000:3000"
+      - "13002:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin

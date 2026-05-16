@@ -94,6 +94,24 @@ to scan the namespace (`grafana.sidecar.dashboards.searchNamespace:
 ALL` is the easiest mode), the dashboards appear in the **NebulaCR**
 folder within ~30s of `helm upgrade`.
 
+### docker-compose (development / demo)
+
+For a local stack:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+```
+
+Grafana lands on **port 13002** (admin / admin) — the default 3000
+is squatted by every Node-flavour project on a developer laptop.
+Prometheus on 9091. Both dashboards plus the existing fleet / mirror
+/ replication / storage / tenants / auth dashboards are auto-loaded
+via filesystem provisioning from `deploy/observability/grafana/`.
+
+The runner-driven workflow `.github/workflows/deploy-observability.yml`
+brings the same stack up on a self-hosted runner so dashboard updates
+land automatically on `main` push.
+
 ### Custom Grafana
 
 If you run Grafana with a different sidecar (`kiwigrid/k8s-sidecar`)

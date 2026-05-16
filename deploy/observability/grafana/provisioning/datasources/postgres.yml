@@ -1,0 +1,26 @@
+apiVersion: 1
+
+# Postgres datasource for the enterprise dashboards
+# (nebulacr-enterprise-{overview,detail}) which join scan / GC /
+# usage tables for cost projection, image counts, and CVE exposure.
+#
+# Read-only role recommended in production; for the docker-compose
+# stack we reuse the registry's main user since everything's local.
+datasources:
+  - name: nebulacr-postgres
+    uid: nebulacr-postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: nebulacr
+    secureJsonData:
+      password: nebulacr
+    jsonData:
+      database: nebulacr
+      sslmode: disable
+      maxOpenConns: 4
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      postgresVersion: 1600
+      timescaledb: false
+    editable: false
