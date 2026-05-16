@@ -107,15 +107,23 @@ jobs:
             --set "registry.podAnnotations.nebulacr\\.io/rolled-at=${ROLL_ID}" \
             --set "auth.podAnnotations.nebulacr\\.io/rolled-at=${ROLL_ID}" \
             > "$RENDER"
-          # Drop StatefulSet (handled in step 2) and Job (immutable
-          # spec; recreated each run anyway). Use awk to split on
-          # `---` and skip docs whose `kind:` is in the deny-list,
-          # so we don't depend on yq being available.
+          # Skip kinds that fight SSA reclaim:
+          #   - StatefulSet: handled in step 2 below.
+          #   - Job: spec is immutable, recreated each run anyway.
+          #   - PersistentVolumeClaim: `.spec.volumeName` is set by
+          #     the PV controller after binding. Reclaiming under
+          #     `helm` makes helm own that field, then the next
+          #     helm upgrade renders without it and the API rejects
+          #     with "spec is immutable after creation". Leave PVCs
+          #     under the PV controller's manager.
+          #   - CustomResourceDefinition: cluster-scoped and CR
+          #     definitions can't tolerate field churn during a
+          #     namespace-scoped reclaim cycle.
           awk '
             BEGIN { RS="---\n"; ORS="---\n" }
             {
-              if ($0 ~ /\nkind: (StatefulSet|Job)\n/) next
-              if ($0 ~ /^kind: (StatefulSet|Job)\n/) next
+              if ($0 ~ /\nkind: (StatefulSet|Job|PersistentVolumeClaim|CustomResourceDefinition)\n/) next
+              if ($0 ~ /^kind: (StatefulSet|Job|PersistentVolumeClaim|CustomResourceDefinition)\n/) next
               print
             }
           ' "$RENDER" \
