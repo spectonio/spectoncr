@@ -1966,9 +1966,18 @@ async fn catalog(
     AuthenticatedClaims(claims): AuthenticatedClaims,
     Query(pagination): Query<PaginationQuery>,
 ) -> Result<Response, RegistryError> {
-    // List repositories filtered by the tenant in the token
-    let tenant_id = claims.tenant_id.to_string();
-    let tenant_prefix = StorePath::from(tenant_id);
+    // List repositories filtered by the tenant in the token. Push
+    // routes write under `<tenant_storage_prefix>/<project>/<repo>/`,
+    // where the prefix is the literal tenant name (e.g. `demo`),
+    // not the tenant UUID. The auth service includes the prefix in
+    // the JWT as `tenant_name`. Fall back to the UUID for older
+    // tokens issued before that field existed — those will see an
+    // empty list, which is the same behaviour as before this fix.
+    let tenant_prefix_str = claims
+        .tenant_name
+        .clone()
+        .unwrap_or_else(|| claims.tenant_id.to_string());
+    let tenant_prefix = StorePath::from(tenant_prefix_str);
 
     let mut repositories: Vec<String> = Vec::new();
 

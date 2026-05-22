@@ -1300,6 +1300,7 @@ async fn post_token(
         });
     }
     let tenant_id = tenant.id;
+    let tenant_storage_prefix = tenant.storage_prefix.clone();
     drop(tenants);
 
     // Resolve project
@@ -1362,6 +1363,7 @@ async fn post_token(
         iat: now.timestamp(),
         jti: Uuid::new_v4().to_string(),
         tenant_id,
+        tenant_name: Some(tenant_storage_prefix),
         project_id,
         role,
         scopes: vec![TokenScope {
@@ -1492,6 +1494,7 @@ async fn get_token_inner(
                 tenant: requested_scope.tenant.clone(),
             })?;
     let tenant_id = tenant.id;
+    let tenant_storage_prefix = tenant.storage_prefix.clone();
     drop(tenants);
 
     // Resolve project
@@ -1521,6 +1524,7 @@ async fn get_token_inner(
         iat: now.timestamp(),
         jti: Uuid::new_v4().to_string(),
         tenant_id,
+        tenant_name: Some(tenant_storage_prefix),
         project_id,
         role,
         scopes: vec![TokenScope {
@@ -1668,6 +1672,7 @@ async fn github_actions_token(
         }
     })?;
     let tenant_id = tenant.id;
+    let tenant_storage_prefix = tenant.storage_prefix.clone();
     drop(tenants);
 
     // Resolve project
@@ -1717,6 +1722,7 @@ async fn github_actions_token(
         iat: now.timestamp(),
         jti: Uuid::new_v4().to_string(),
         tenant_id,
+        tenant_name: Some(tenant_storage_prefix),
         project_id,
         role,
         scopes: vec![TokenScope {
@@ -2198,11 +2204,11 @@ async fn oidc_callback(
 
     // Resolve tenant from group mappings or use default
     let tenants = state.tenants.read().await;
-    let (tenant_name, tenant_id) = tenants
+    let (tenant_name, tenant_id, tenant_storage_prefix) = tenants
         .iter()
         .next()
-        .map(|(name, t)| (name.clone(), t.id))
-        .unwrap_or_else(|| ("demo".to_string(), Uuid::new_v4()));
+        .map(|(name, t)| (name.clone(), t.id, t.storage_prefix.clone()))
+        .unwrap_or_else(|| ("demo".to_string(), Uuid::new_v4(), "demo".to_string()));
     drop(tenants);
 
     // Resolve role from group mappings
@@ -2219,6 +2225,7 @@ async fn oidc_callback(
         iat: now.timestamp(),
         jti: Uuid::new_v4().to_string(),
         tenant_id,
+        tenant_name: Some(tenant_storage_prefix),
         project_id: None,
         role,
         scopes: vec![],
@@ -2377,6 +2384,7 @@ async fn ci_token_exchange(
                 tenant: request.scope.tenant.clone(),
             })?;
     let tenant_id = tenant.id;
+    let tenant_storage_prefix = tenant.storage_prefix.clone();
     drop(tenants);
 
     // Resolve project
@@ -2425,6 +2433,7 @@ async fn ci_token_exchange(
         iat: now.timestamp(),
         jti: Uuid::new_v4().to_string(),
         tenant_id,
+        tenant_name: Some(tenant_storage_prefix),
         project_id,
         role,
         scopes: vec![TokenScope {
@@ -2496,6 +2505,13 @@ async fn refresh_token_handler(
     // Issue new access token
     let now = Utc::now();
     let ttl = state.config.auth.token_ttl_seconds;
+    let tenant_storage_prefix = {
+        let tenants = state.tenants.read().await;
+        tenants
+            .values()
+            .find(|t| t.id == rt.tenant_id)
+            .map(|t| t.storage_prefix.clone())
+    };
     let claims = TokenClaims {
         iss: state.config.auth.issuer.clone(),
         sub: rt.subject.clone(),
@@ -2504,6 +2520,7 @@ async fn refresh_token_handler(
         iat: now.timestamp(),
         jti: Uuid::new_v4().to_string(),
         tenant_id: rt.tenant_id,
+        tenant_name: tenant_storage_prefix,
         project_id: rt.project_id,
         role: rt.role,
         scopes: rt.scopes.clone(),
@@ -2722,6 +2739,7 @@ async fn credential_exchange(
         iat: now.timestamp(),
         jti: Uuid::new_v4().to_string(),
         tenant_id: token_data.claims.tenant_id,
+        tenant_name: token_data.claims.tenant_name.clone(),
         project_id: token_data.claims.project_id,
         role: token_data.claims.role,
         scopes: token_data.claims.scopes.clone(),

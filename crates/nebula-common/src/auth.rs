@@ -21,6 +21,14 @@ pub struct TokenClaims {
 
     /// NebulaCR-specific
     pub tenant_id: Uuid,
+    /// Tenant storage prefix (matches the first segment of pushed
+    /// blob paths). Required for routes like `/v2/_catalog` that
+    /// filter the object store by tenant without a URL path
+    /// segment to read the tenant name from. Optional for
+    /// backwards compatibility with tokens issued before this
+    /// field was added.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_name: Option<String>,
     pub project_id: Option<Uuid>,
     pub role: Role,
     pub scopes: Vec<TokenScope>,
