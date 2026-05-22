@@ -119,11 +119,18 @@ jobs:
           #   - CustomResourceDefinition: cluster-scoped and CR
           #     definitions can't tolerate field churn during a
           #     namespace-scoped reclaim cycle.
+          #   - ConfigMap / Secret: rarely have stale field-managers
+          #     (no `kubectl patch` history) and pre-creating them
+          #     here trips helm's release tracking — `helm upgrade
+          #     --wait` polls for them via its own informer cache and
+          #     intermittently sees `NotFound, context deadline
+          #     exceeded` (run 26283941945). Let helm own them
+          #     end-to-end.
           awk '
             BEGIN { RS="---\n"; ORS="---\n" }
             {
-              if ($0 ~ /\nkind: (StatefulSet|Job|PersistentVolumeClaim|CustomResourceDefinition)\n/) next
-              if ($0 ~ /^kind: (StatefulSet|Job|PersistentVolumeClaim|CustomResourceDefinition)\n/) next
+              if ($0 ~ /\nkind: (StatefulSet|Job|PersistentVolumeClaim|CustomResourceDefinition|ConfigMap|Secret)\n/) next
+              if ($0 ~ /^kind: (StatefulSet|Job|PersistentVolumeClaim|CustomResourceDefinition|ConfigMap|Secret)\n/) next
               print
             }
           ' "$RENDER" \
