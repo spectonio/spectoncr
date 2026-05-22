@@ -23,6 +23,12 @@ POLL_TIMEOUT_SECS=${POLL_TIMEOUT_SECS:-600}
 POLL_INTERVAL_SECS=${POLL_INTERVAL_SECS:-5}
 CATALOG_PAGE_SIZE=${CATALOG_PAGE_SIZE:-10000}
 FAIL_ON_CRITICAL=${FAIL_ON_CRITICAL:-false}
+# The catalog endpoint filters by the JWT's tenant_id claim, which the
+# auth service derives from the *scope* string (parse_docker_scope:
+# 1-segment scopes like `catalog` map to the default `_` tenant). Set
+# CATALOG_TENANT to the tenant whose images you want to enumerate;
+# defaults to the seed tenant used by the workflow (`demo`).
+CATALOG_TENANT=${CATALOG_TENANT:-demo}
 
 mkdir -p scan-reports scan-reports/.digests
 : > scan-reports/summary.txt
@@ -46,9 +52,15 @@ get_token() {
     | jq -r '.token'
 }
 
-# The catalog handler filters by the admin token's tenant claim, not by the
-# scope string, so any parseable pull scope is enough to mint a valid JWT.
-CATALOG_TOK=$(get_token "repository:catalog:*")
+# The catalog handler filters by the JWT's tenant claim. The auth
+# service derives that claim from the *scope* string: 3 segments
+# `tenant/project/repo` selects the named tenant; 1-segment scopes
+# fall back to the default `_` tenant and the catalog walks an empty
+# prefix (see osterley/nebulacr run 26018779128). Use a 3-segment
+# scope so the issued token's tenant_id matches where seeded images
+# live. The repo/project parts are placeholders — only the tenant
+# segment matters for the catalog handler.
+CATALOG_TOK=$(get_token "repository:${CATALOG_TENANT}/_/_:pull")
 
 CATALOG_JSON=$(curl -sf -H "Authorization: Bearer ${CATALOG_TOK}" \
   "${SCHEME}://${REGISTRY}/v2/_catalog?n=${CATALOG_PAGE_SIZE}")
