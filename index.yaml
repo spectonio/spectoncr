@@ -4,6 +4,45 @@ entries:
   - annotations:
       artifacthub.io/changes: |
         - kind: added
+          description: In-chart Grafana subchart with pre-provisioned Prometheus + Postgres datasources and auto-loaded enterprise dashboards
+        - kind: changed
+          description: Renamed grafana.dashboards.* control to nebulacrDashboards.* so the grafana.* tree belongs entirely to the new subchart
+        - kind: added
+          description: Pull-through cache with pre-configured upstream registries
+        - kind: added
+          description: Helm chart publishing to GitHub Pages and GHCR OCI
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/signKey: ""
+    apiVersion: v2
+    appVersion: 0.3.0
+    created: "2026-05-22T10:36:05.806273574Z"
+    dependencies:
+    - condition: grafana.enabled
+      name: grafana
+      repository: https://grafana.github.io/helm-charts
+      version: 8.5.x
+    description: A cloud-native Docker/OCI container registry with multi-tenancy and
+      zero-trust authentication
+    digest: 041fc4bd43eb1e0e898f161bf6b1895aefb4336f189a77e7c1a9b70e0d81ce74
+    home: https://github.com/bwalia/nebulacr
+    keywords:
+    - container-registry
+    - oci
+    - docker
+    - multi-tenancy
+    - zero-trust
+    kubeVersion: '>=1.25.0-0'
+    maintainers:
+    - name: NebulaCR Maintainers
+    name: nebulacr
+    type: application
+    urls:
+    - https://github.com/osterley/nebulacr/releases/download/helm-nebulacr-0.4.0/nebulacr-0.4.0.tgz
+    version: 0.4.0
+  - annotations:
+      artifacthub.io/changes: |
+        - kind: added
           description: Pull-through cache with pre-configured upstream registries
         - kind: added
           description: Helm chart publishing to GitHub Pages and GHCR OCI
@@ -61,4 +100,4 @@ entries:
     urls:
     - https://github.com/bwalia/nebulacr/releases/download/helm-nebulacr-0.2.0/nebulacr-0.2.0.tgz
     version: 0.2.0
-generated: "2026-03-28T21:13:37.505040311Z"
+generated: "2026-05-22T10:36:05.806289824Z"
