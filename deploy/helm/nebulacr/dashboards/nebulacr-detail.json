@@ -29,6 +29,18 @@
       "tooltip": "Top-line storage / cost / CVE summary",
       "type": "link",
       "url": "/d/nebulacr-overview/nebulacr-enterprise-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "doc",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": ["nebulacr"],
+      "targetBlank": false,
+      "title": "NebulaCR CVE Reports",
+      "tooltip": "Full CVE / vulnerability scan results, recent scans, top CVEs, trends",
+      "type": "link",
+      "url": "/d/nebulacr-cves/nebulacr-cve-reports"
     }
   ],
   "liveNow": false,
