@@ -173,6 +173,33 @@ jobs:
             --take-ownership \
             --wait --timeout 10m
 
+      - name: Diagnose on deploy failure
+        if: failure()
+        run: |
+          NS="${{ steps.values.outputs.namespace }}"
+          echo "=== Pod status ==="
+          kubectl get pods -n "$NS" -l app.kubernetes.io/part-of=nebulacr -o wide || true
+          echo ""
+          echo "=== Deployment status ==="
+          kubectl get deploy -n "$NS" -l app.kubernetes.io/part-of=nebulacr -o wide || true
+          echo ""
+          echo "=== Recent events ==="
+          kubectl get events -n "$NS" --sort-by=.lastTimestamp | tail -40 || true
+          echo ""
+          for kind in registry auth; do
+            POD=$(kubectl get pods -n "$NS" \
+              -l "app.kubernetes.io/component=$kind,app.kubernetes.io/instance=nebulacr" \
+              -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            if [ -n "$POD" ]; then
+              echo "=== describe $POD ==="
+              kubectl describe pod -n "$NS" "$POD" | tail -60 || true
+              echo ""
+              echo "=== logs $POD (last 80) ==="
+              kubectl logs -n "$NS" "$POD" --tail=80 --all-containers=true 2>&1 || true
+              echo ""
+            fi
+          done
+
       - name: Verify deployment
         run: |
           echo "=== Pod status ==="
