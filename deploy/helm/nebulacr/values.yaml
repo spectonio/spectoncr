@@ -41,7 +41,7 @@ dashboardAuth:
 ## -- Registry service --
 registry:
   image:
-    repository: ghcr.io/bwalia/nebulacr
+    repository: ghcr.io/osterley/nebulacr
     tag: ""  # Defaults to appVersion
     pullPolicy: Always
   replicas: 2
@@ -85,7 +85,7 @@ registry:
 ## -- Auth service --
 auth:
   image:
-    repository: ghcr.io/bwalia/nebulacr
+    repository: ghcr.io/osterley/nebulacr
     tag: ""  # Defaults to appVersion
     pullPolicy: Always
   replicas: 2

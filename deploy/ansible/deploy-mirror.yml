@@ -17,7 +17,7 @@
   hosts: mirror
   become: true
   vars:
-    nebulacr_image: "ghcr.io/bwalia/nebulacr:latest"
+    nebulacr_image: "ghcr.io/osterley/nebulacr:latest"
     nebulacr_version: "latest"
     nebulacr_user: nebulacr
     nebulacr_group: nebulacr

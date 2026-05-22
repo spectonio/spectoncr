@@ -12,7 +12,7 @@ services:
   # also isn't what's actually shipped. We test the artifact that k3s +
   # mirror consume.
   registry:
-    image: ghcr.io/bwalia/nebulacr:latest
+    image: ghcr.io/osterley/nebulacr:latest
     pull_policy: always
     build: !reset null
     environment:
@@ -20,6 +20,6 @@ services:
       NEBULACR_SCANNER__INGEST_ENABLED: "false"
       NEBULACR_SCANNER__AI_ENABLED: "false"
   auth:
-    image: ghcr.io/bwalia/nebulacr:latest
+    image: ghcr.io/osterley/nebulacr:latest
     pull_policy: always
     build: !reset null
