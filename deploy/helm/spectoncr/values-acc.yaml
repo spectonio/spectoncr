@@ -42,7 +42,7 @@ ingress:
   authPath: /auth
   className: wslproxy
   enabled: true
-  host: acc-spectoncr.diytaxreturn.co.uk
+  host: registry.specton.io
   registryPath: /v2
   tls:
     enabled: true
@@ -105,13 +105,13 @@ multiRegion:
     sweepIntervalSecs: 10
   regions:
     - name: "k3s0-primary"
-      endpoint: "https://acc-spectoncr.diytaxreturn.co.uk"
+      endpoint: "https://registry.specton.io"
       internalEndpoint: "http://spectoncr-registry.acc.svc.cluster.local:5002"
       isPrimary: true
       priority: 1
     - name: "srv1423968-mirror"
-      endpoint: "https://acc-spectoncr-mirror.diytaxreturn.co.uk"
-      internalEndpoint: "https://acc-spectoncr-mirror.diytaxreturn.co.uk"
+      endpoint: "https://registry-mirror.specton.io"
+      internalEndpoint: "https://registry-mirror.specton.io"
       isPrimary: false
       priority: 2
 scanner:
@@ -147,7 +147,7 @@ storage:
 spectoncrDashboards:
   enabled: true
 
-# In-chart Grafana — published at acc-spectoncr-grafana.diytaxreturn.co.uk
+# In-chart Grafana — published at grafana.diytaxreturn.co.uk
 # with the same TLS/class as the registry ingress.
 grafana:
   enabled: true
@@ -177,11 +177,11 @@ grafana:
     annotations:
       cert-manager.io/cluster-issuer: main-issuer
     hosts:
-      - acc-spectoncr-grafana.diytaxreturn.co.uk
+      - grafana.diytaxreturn.co.uk
     tls:
       - secretName: spectoncr-grafana-tls
         hosts:
-          - acc-spectoncr-grafana.diytaxreturn.co.uk
+          - grafana.diytaxreturn.co.uk
 
 # Default URLs for the parent-chart-rendered datasources. The actual
 # kube-prometheus-stack release in this cluster is named

@@ -22,7 +22,7 @@ autoscaling:
 ingress:
   enabled: true
   className: nginx
-  host: acc-spectoncr-mirror.diytaxreturn.co.uk
+  host: registry-mirror.specton.io
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "0"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
@@ -71,7 +71,7 @@ pullThroughCache:
     # Primary SpectonCR instance — pull-through cache for images
     # pushed to the primary registry at k3s0
     primary-spectoncr:
-      url: "https://acc-spectoncr.diytaxreturn.co.uk"
+      url: "https://registry.specton.io"
       username: ""
       password: ""
 
@@ -110,12 +110,12 @@ multiRegion:
     sweepIntervalSecs: 10
   regions:
     - name: "k3s0-primary"
-      endpoint: "https://acc-spectoncr.diytaxreturn.co.uk"
-      internalEndpoint: "https://acc-spectoncr.diytaxreturn.co.uk"
+      endpoint: "https://registry.specton.io"
+      internalEndpoint: "https://registry.specton.io"
       isPrimary: true
       priority: 1
     - name: "srv1423968-mirror"
-      endpoint: "https://acc-spectoncr-mirror.diytaxreturn.co.uk"
+      endpoint: "https://registry-mirror.specton.io"
       internalEndpoint: "http://localhost:5002"
       isPrimary: false
       priority: 2
