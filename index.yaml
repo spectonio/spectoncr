@@ -100,4 +100,47 @@ entries:
     urls:
     - https://github.com/bwalia/nebulacr/releases/download/helm-nebulacr-0.2.0/nebulacr-0.2.0.tgz
     version: 0.2.0
-generated: "2026-05-22T10:36:05.806289824Z"
+  spectoncr:
+  - annotations:
+      artifacthub.io/changes: |
+        - kind: added
+          description: In-chart Grafana subchart with pre-provisioned Prometheus + Postgres datasources and auto-loaded enterprise dashboards
+        - kind: changed
+          description: Renamed grafana.dashboards.* control to spectoncrDashboards.* so the grafana.* tree belongs entirely to the new subchart
+        - kind: added
+          description: Pull-through cache with pre-configured upstream registries
+        - kind: added
+          description: Helm chart publishing to GitHub Pages and GHCR OCI
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/signKey: ""
+    apiVersion: v2
+    appVersion: 0.3.0
+    created: "2026-05-23T07:19:35.763232918Z"
+    dependencies:
+    - condition: grafana.enabled
+      name: grafana
+      repository: https://grafana.github.io/helm-charts
+      version: 8.5.x
+    description: A cloud-native Docker/OCI container registry with multi-tenancy and
+      zero-trust authentication
+    digest: 443460a5bd1d7ddef89f1cdd886fb92f42d5489cc342f64f6384db67569093a6
+    home: https://specton.io
+    keywords:
+    - container-registry
+    - oci
+    - docker
+    - multi-tenancy
+    - zero-trust
+    kubeVersion: '>=1.25.0-0'
+    maintainers:
+    - name: Specton
+      url: https://specton.io
+    name: spectoncr
+    sources:
+    - https://github.com/spectonio/spectoncr
+    type: application
+    urls:
+    - https://github.com/spectonio/spectoncr/releases/download/helm-spectoncr-0.4.0/spectoncr-0.4.0.tgz
+    version: 0.4.0
+generated: "2026-05-23T07:19:35.763248361Z"
