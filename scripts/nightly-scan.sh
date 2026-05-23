@@ -29,7 +29,7 @@ mkdir -p scan-reports
 get_scan_token() {
   local scope="$1"
   curl -sf -u "${REGISTRY_USER}:${REGISTRY_PASS}" \
-    "http://${REGISTRY}/auth/token?service=nebulacr-registry&scope=${scope}" \
+    "http://${REGISTRY}/auth/token?service=spectoncr-registry&scope=${scope}" \
     | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])"
 }
 
@@ -137,7 +137,7 @@ for p in reports:
 
 ts = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 emoji = "🚨" if any_fail else ("⚠️" if totals["critical"]+totals["high"]>0 else "✅")
-header = f"{emoji} NebulaCR nightly CVE scan — {ts}"
+header = f"{emoji} SpectonCR nightly CVE scan — {ts}"
 table = "\n".join(
     f"• `{r['image']}` — *{r['verdict']}* "
     f"(C:{r['critical']} H:{r['high']} M:{r['medium']} L:{r['low']})"

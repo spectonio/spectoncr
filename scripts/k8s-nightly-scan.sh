@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # k8s-nightly-scan.sh — in-cluster nightly CVE scan.
 #
-# For each image in $TARGET_IMAGES: copy it into NebulaCR with skopeo (no
+# For each image in $TARGET_IMAGES: copy it into SpectonCR with skopeo (no
 # docker daemon needed), resolve the pushed digest, poll
 # /v2/scan/live/{digest} until completed/failed/timeout, then POST a
 # Slack Blocks summary to $SLACK_WEBHOOK_URL.
@@ -11,7 +11,7 @@
 # by default. Cross-cluster use would need REGISTRY_SCHEME=https.
 set -euo pipefail
 
-REGISTRY="${REGISTRY_HOST:-nebulacr-registry.acc.svc.cluster.local:5000}"
+REGISTRY="${REGISTRY_HOST:-spectoncr-registry.acc.svc.cluster.local:5000}"
 SCHEME="${REGISTRY_SCHEME:-http}"
 TENANT="${TENANT:-demo}"
 PROJECT="${PROJECT:-default}"
@@ -43,7 +43,7 @@ cd "$WORK_DIR"
 
 get_token() {
   curl -fsS -u "${REGISTRY_USER}:${REGISTRY_PASS}" \
-    "${SCHEME}://${REGISTRY}/auth/token?service=nebulacr-registry&scope=$1" \
+    "${SCHEME}://${REGISTRY}/auth/token?service=spectoncr-registry&scope=$1" \
     | jq -r .token
 }
 
@@ -119,7 +119,7 @@ shopt -u nullglob
 
 if [ ${#reports[@]} -eq 0 ]; then
   payload=$(jq -n --arg ts "$ts" \
-    '{text: ("NebulaCR nightly CVE scan — " + $ts + " (no images scanned)")}')
+    '{text: ("SpectonCR nightly CVE scan — " + $ts + " (no images scanned)")}')
 else
   # Per-image block = one row line + up to TOP_N lines of critical/high
   # CVEs (CRITICAL first, then HIGH; suppressed excluded). Cap keeps the
@@ -147,7 +147,7 @@ else
       if $detail == "" then $row else "\($row)\n\($detail)" end
     ) | join("\n")) as $table |
     (if $anyfail then "🚨" elif ($c + $h) > 0 then "⚠️" else "✅" end) as $emoji |
-    ("\($emoji) NebulaCR nightly CVE scan — \($ts)") as $hdr |
+    ("\($emoji) SpectonCR nightly CVE scan — \($ts)") as $hdr |
     {
       text: $hdr,
       blocks: [

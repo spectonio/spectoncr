@@ -1,5 +1,5 @@
 # ============================================================================
-# NebulaCR Observability Stack — Prometheus + Grafana
+# SpectonCR Observability Stack — Prometheus + Grafana
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
@@ -20,7 +20,7 @@
 services:
   prometheus:
     image: prom/prometheus:v2.55.1
-    container_name: nebulacr-prometheus
+    container_name: spectoncr-prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -39,7 +39,7 @@ services:
       - auth
     restart: unless-stopped
     networks:
-      - nebulacr
+      - spectoncr
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/ready"]
       interval: 15s
@@ -48,7 +48,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.3.1
-    container_name: nebulacr-grafana
+    container_name: spectoncr-grafana
     ports:
       - "13002:3000"
     environment:
@@ -66,7 +66,7 @@ services:
       - prometheus
     restart: unless-stopped
     networks:
-      - nebulacr
+      - spectoncr
 
 volumes:
   prometheus-data:

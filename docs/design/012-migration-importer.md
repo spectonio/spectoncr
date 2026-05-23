@@ -2,8 +2,8 @@
 
 > **Summary.** A streaming importer that mirrors a source registry's
 > repositories, tags, manifests, blobs, retention rules, and
-> permissions into NebulaCR with content-addressable dedup, restartable
-> jobs, and a per-source adapter trait. One command (`nebulacr
+> permissions into SpectonCR with content-addressable dedup, restartable
+> jobs, and a per-source adapter trait. One command (`spectoncr
 > import nexus://… → tenant/project/`) gets a Nexus-locked team off
 > their stagnant registry without rebuilding images.
 
@@ -15,16 +15,16 @@ accounts, and CI references all break the day they cut over. ACR
 offers `acr import` for cross-registry copy but only between ACRs.
 Harbor offers replication which is tag-by-tag and stops on first
 failure. Nothing in OSS ships a "give me your old registry, I'll
-take it from here" path. NebulaCR has the unfair advantage of being
+take it from here" path. SpectonCR has the unfair advantage of being
 a fresh registry where every blob is content-addressed in our
 storage anyway — the importer just has to translate metadata.
 
 ## b. Proposed approach
 
-New crate `nebula-import`. One trait, one importer per source:
+New crate `specton-import`. One trait, one importer per source:
 
 ```rust
-// crates/nebula-import/src/source.rs
+// crates/specton-import/src/source.rs
 #[async_trait]
 pub trait RegistrySource: Send + Sync {
     fn id(&self) -> &'static str;                  // "nexus" | "harbor" | "acr" | "distribution"
@@ -52,10 +52,10 @@ pub struct DistributionSource { client: DistributionClient, /* ... */ }
 The importer runner:
 
 ```rust
-// crates/nebula-import/src/runner.rs
+// crates/specton-import/src/runner.rs
 pub struct ImportRunner {
     src: Arc<dyn RegistrySource>,
-    dst: NebulaCrClient,
+    dst: SpectonCrClient,
     db: PgPool,
     parallel: usize,            // default 8
 }
@@ -78,21 +78,21 @@ Pipeline (per repository, parallelised):
    absent, stream from source → registry's `chunked upload` API.
 4. After all blobs land, `PUT /v2/<dst>/manifests/<tag>`.
 5. Translate retention rules + permissions via the source's
-   adapter, write to NebulaCR's `RetentionPolicy` + `AccessPolicy`
+   adapter, write to SpectonCR's `RetentionPolicy` + `AccessPolicy`
    CRDs (no overwrite — the runner emits a YAML diff and asks
    for confirmation unless `--accept-policies` is passed).
 
 Why not skopeo: skopeo handles step 1-4 well, but it can't
 restart against state, can't translate retention rules, has no
-notion of NebulaCR tenants. The runner shells skopeo behaviour
-into Rust and adds the bookkeeping NebulaCR needs.
+notion of SpectonCR tenants. The runner shells skopeo behaviour
+into Rust and adds the bookkeeping SpectonCR needs.
 
 Path translation:
 
 ```bash
 # Nexus repo "docker-prod-hosted/myorg/api"
 #   → tenant=acme, project=prod, repo=myorg/api, tag=*
-nebulacr import \
+spectoncr import \
   nexus://nexus.example.com/docker-prod-hosted \
   --to acme/prod/ \
   --include 'myorg/*' \
@@ -102,7 +102,7 @@ nebulacr import \
 
 # ACR repo "myacr.azurecr.io/team/svc"
 #   → tenant=acme, project=prod, repo=team/svc, tag=*
-nebulacr import \
+spectoncr import \
   acr://myacr.azurecr.io \
   --to acme/prod/ \
   --auth azure-cli
@@ -111,14 +111,14 @@ nebulacr import \
 `--dry-run` reports what would be copied; `--resume <job-id>`
 restarts.
 
-CLI: `nebulacr import …`, `nebulacr import status <job-id>`,
-`nebulacr import abort <job-id>`. MCP: `start_import`,
+CLI: `spectoncr import …`, `spectoncr import status <job-id>`,
+`spectoncr import abort <job-id>`. MCP: `start_import`,
 `get_import_status`, `abort_import`, `list_import_sources`.
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: ImportJob
 metadata:
   name: nexus-cutover
@@ -190,7 +190,7 @@ CREATE TABLE import_jobs (
 );
 CREATE INDEX import_jobs_phase_idx ON import_jobs (phase, started_at DESC);
 
--- Per-tag idempotency: source-side digest → NebulaCR digest.
+-- Per-tag idempotency: source-side digest → SpectonCR digest.
 -- Avoids re-fetching when a tag is moved to an already-known digest.
 CREATE TABLE import_tag_state (
     job_id          UUID NOT NULL REFERENCES import_jobs(id) ON DELETE CASCADE,
@@ -229,16 +229,16 @@ CREATE TABLE import_blob_seen (
   session id and resumes. Storage backend (S3) handles partial
   upload cleanup via lifecycle rule.
 - **Source has manifest list / OCI Index variants we can't represent.**
-  Currently we copy as-is — NebulaCR already supports image indexes.
+  Currently we copy as-is — SpectonCR already supports image indexes.
   If a source emits a vendor-specific manifest type (e.g. ACR helm
   v3 OCI), we copy bytes verbatim; clients that pull need to
   understand it.
 - **Permission translation lossy.** Nexus has fine-grained access
-  rules NebulaCR's RBAC doesn't model 1:1. Runner emits a YAML
+  rules SpectonCR's RBAC doesn't model 1:1. Runner emits a YAML
   delta and refuses to apply unless `--accept-policies` is set.
 - **Long-running mirror diverges from source.** Schedule runs detect
   deletions in source (manifest GET → 404). By default the importer
-  is **additive** — it never deletes from NebulaCR. `--mirror-deletes`
+  is **additive** — it never deletes from SpectonCR. `--mirror-deletes`
   flag is opt-in and hard-gated behind a confirmation prompt.
 
 ## g. Migration story
@@ -255,12 +255,12 @@ later is a new module, not a schema change.
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| Nexus adapter      | `crates/nebula-import/tests/nexus_adapter.rs`          | Recorded fixtures; full repo walk           |
-| Harbor adapter     | `crates/nebula-import/tests/harbor_adapter.rs`         | Recorded fixtures                           |
-| ACR adapter        | `crates/nebula-import/tests/acr_adapter.rs`            | Recorded fixtures + Azure SDK mock          |
-| Resume cursor      | `crates/nebula-import/tests/resume.rs`                 | Postgres testcontainer; kill mid-run        |
-| Blob dedup         | `crates/nebula-import/tests/blob_dedup.rs`             | Same digest in 2 tags; only 1 fetch         |
-| Policy translation | `crates/nebula-import/tests/policy_translate.rs`       | Round-trip Nexus rule → AccessPolicy YAML   |
+| Nexus adapter      | `crates/specton-import/tests/nexus_adapter.rs`          | Recorded fixtures; full repo walk           |
+| Harbor adapter     | `crates/specton-import/tests/harbor_adapter.rs`         | Recorded fixtures                           |
+| ACR adapter        | `crates/specton-import/tests/acr_adapter.rs`            | Recorded fixtures + Azure SDK mock          |
+| Resume cursor      | `crates/specton-import/tests/resume.rs`                 | Postgres testcontainer; kill mid-run        |
+| Blob dedup         | `crates/specton-import/tests/blob_dedup.rs`             | Same digest in 2 tags; only 1 fetch         |
+| Policy translation | `crates/specton-import/tests/policy_translate.rs`       | Round-trip Nexus rule → AccessPolicy YAML   |
 | End-to-end         | `tests/e2e/import_nexus_e2e.sh`                        | Bring up Nexus container + run real import  |
 
 External test deps: `sonatype/nexus3`, `goharbor/harbor` containers
@@ -270,7 +270,7 @@ in CI for end-to-end. Recorded JSON fixtures keep unit tests fast.
 
 5 slices, ~5 weeks (each adapter is non-trivial):
 
-1. `nebula-import` crate scaffold + `RegistrySource` trait +
+1. `specton-import` crate scaffold + `RegistrySource` trait +
    `DistributionSource` (the simplest — vanilla Distribution v2 API)
    + runner + schema.
 2. Nexus adapter (handles `docker-hosted`, `docker-group`,

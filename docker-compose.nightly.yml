@@ -1,6 +1,6 @@
 # Compose override used by the nightly CVE scan workflow.
 #
-# The baseline docker-compose.yml hard-codes vulndb=nebula, ingest_enabled=true,
+# The baseline docker-compose.yml hard-codes vulndb=specton, ingest_enabled=true,
 # and ai_enabled=true — fine for local dev with a GPU host and a patient
 # operator, but a CI run can't afford the 300MB OSV zip download or the
 # Ollama dependency. This file flips the scanner to the on-demand OSV HTTP
@@ -12,14 +12,14 @@ services:
   # also isn't what's actually shipped. We test the artifact that k3s +
   # mirror consume.
   registry:
-    image: ghcr.io/osterley/nebulacr:latest
+    image: ghcr.io/spectonio/spectoncr:latest
     pull_policy: always
     build: !reset null
     environment:
-      NEBULACR_SCANNER__VULNDB: "osv"
-      NEBULACR_SCANNER__INGEST_ENABLED: "false"
-      NEBULACR_SCANNER__AI_ENABLED: "false"
+      SPECTONCR_SCANNER__VULNDB: "osv"
+      SPECTONCR_SCANNER__INGEST_ENABLED: "false"
+      SPECTONCR_SCANNER__AI_ENABLED: "false"
   auth:
-    image: ghcr.io/osterley/nebulacr:latest
+    image: ghcr.io/spectonio/spectoncr:latest
     pull_policy: always
     build: !reset null

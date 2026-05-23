@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "deploy/helm/nebulacr/**"
+      - "deploy/helm/spectoncr/**"
 
 permissions:
   contents: write
@@ -38,7 +38,7 @@ jobs:
         run: |
           helm repo add grafana https://grafana.github.io/helm-charts
           helm repo update
-          helm dependency update deploy/helm/nebulacr
+          helm dependency update deploy/helm/spectoncr
 
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.7.0
@@ -71,10 +71,10 @@ jobs:
         run: |
           helm repo add grafana https://grafana.github.io/helm-charts
           helm repo update
-          helm dependency update deploy/helm/nebulacr
+          helm dependency update deploy/helm/spectoncr
 
       - name: Package chart
-        run: helm package deploy/helm/nebulacr -d /tmp/helm-packages
+        run: helm package deploy/helm/spectoncr -d /tmp/helm-packages
 
       - name: Push chart to GHCR (OCI)
-        run: helm push /tmp/helm-packages/nebulacr-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+        run: helm push /tmp/helm-packages/spectoncr-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts

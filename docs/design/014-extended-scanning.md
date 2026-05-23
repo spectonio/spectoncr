@@ -6,7 +6,7 @@
 > detects leaked credentials in image filesystems; and a malware
 > scanner backed by `clamav-rs` (or a swappable engine via the
 > existing scanner-trait pattern). All three reuse the layer-walking
-> pipeline already in `nebula-scanner`, store findings in Postgres,
+> pipeline already in `specton-scanner`, store findings in Postgres,
 > and feed verdicts into the 002 admission gate.
 
 ## a. Problem statement
@@ -28,7 +28,7 @@ behind a trait `Detector`, mirroring the existing `VulnDb` trait
 shape:
 
 ```rust
-// crates/nebula-scanner/src/detector/mod.rs
+// crates/specton-scanner/src/detector/mod.rs
 #[async_trait]
 pub trait Detector: Send + Sync {
     fn id(&self) -> &'static str;                  // "cve" | "license" | "secret" | "malware"
@@ -79,7 +79,7 @@ Embedded ruleset based on the `gitleaks` ruleset (regex + entropy
 gate). Walks every text-mode file in the tarball with size cap of
 2 MiB. False-positive control: per-rule `allowed_paths` regex,
 per-tenant suppressions reusing the existing
-`crates/nebula-scanner/src/suppress.rs` table. Critical severity
+`crates/specton-scanner/src/suppress.rs` table. Critical severity
 for high-confidence keys (AWS, GCP, Stripe, GitHub PAT); medium for
 generic high-entropy strings.
 
@@ -90,7 +90,7 @@ auto-update via the same `ingest_cursor` table the vulndb already
 uses (one row per engine). Engine binary is heavy (~150 MB)
 — gated behind a feature flag (`features = ["malware-clamav"]`); the
 default registry image does NOT include it. Operators wanting
-malware scanning use the `nebulacr-scanner-full` image, which is a
+malware scanning use the `spectoncr-scanner-full` image, which is a
 separate Dockerfile target. Future engines (YARA-only, Windows
 Defender ATP API, etc.) plug in behind the same trait.
 
@@ -100,8 +100,8 @@ field. Findings land in a single `findings` table; the existing
 `PolicyEvaluation` becomes a multi-kind evaluator with per-kind
 thresholds.
 
-CLI: `nebulacr scan run <ref> --kind license,secret`,
-`nebulacr findings list <ref>`, `nebulacr findings suppress <id>`.
+CLI: `spectoncr scan run <ref> --kind license,secret`,
+`spectoncr findings list <ref>`, `spectoncr findings suppress <id>`.
 MCP: `list_findings`, `suppress_finding` (already exists for CVE;
 extended to all kinds).
 
@@ -111,7 +111,7 @@ The existing scanner config + `AdmissionPolicy` (002) gain per-kind
 thresholds:
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: AdmissionPolicy
 metadata:
   name: prod-block-criticals
@@ -136,7 +136,7 @@ spec:
 ```
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Project
 spec:
   scanning:
@@ -229,7 +229,7 @@ A scan row joins to many findings of mixed kinds.
 
 `[scanning.detectors]` config defaults to `["cve"]` (current
 behaviour). Operators add `"license"` / `"secret"` per project. The
-`malware` detector requires the `nebulacr-scanner-full` image and
+`malware` detector requires the `spectoncr-scanner-full` image and
 is opt-in even when configured.
 
 `AdmissionPolicy` CRDs without the new blocks behave as today (CVE
@@ -240,12 +240,12 @@ the next pull-time evaluation.
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| License classifier | `crates/nebula-scanner/tests/license_classify.rs`      | Golden SPDX → class map                     |
-| License text match | `crates/nebula-scanner/tests/license_text.rs`          | LICENSE files → SPDX id                     |
-| Secret rules       | `crates/nebula-scanner/tests/secret_rules.rs`          | gitleaks fixture corpus                     |
-| Secret allowlist   | `crates/nebula-scanner/tests/secret_allowlist.rs`      | testdata/ exclusion                         |
-| Malware EICAR      | `crates/nebula-scanner/tests/malware_eicar.rs`         | Standard EICAR test string                  |
-| Findings query     | `crates/nebula-scanner/tests/findings_search.rs`       | Cross-detector filter                       |
+| License classifier | `crates/specton-scanner/tests/license_classify.rs`      | Golden SPDX → class map                     |
+| License text match | `crates/specton-scanner/tests/license_text.rs`          | LICENSE files → SPDX id                     |
+| Secret rules       | `crates/specton-scanner/tests/secret_rules.rs`          | gitleaks fixture corpus                     |
+| Secret allowlist   | `crates/specton-scanner/tests/secret_allowlist.rs`      | testdata/ exclusion                         |
+| Malware EICAR      | `crates/specton-scanner/tests/malware_eicar.rs`         | Standard EICAR test string                  |
+| Findings query     | `crates/specton-scanner/tests/findings_search.rs`       | Cross-detector filter                       |
 | End-to-end         | `tests/e2e/extended_scan_e2e.sh`                       | Push image with all 3 issues; verify counts |
 
 EICAR is a standard malware test signature — never a real binary.

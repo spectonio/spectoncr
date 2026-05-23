@@ -115,7 +115,7 @@ def _upload(token: str, channel: str, pdf_path: str) -> int:
         print(f"PDF PUT failed: http {code}: {body!r}", file=sys.stderr)
         return 1
 
-    title = os.environ.get("SLACK_TITLE") or "NebulaCR nightly CVE scan"
+    title = os.environ.get("SLACK_TITLE") or "SpectonCR nightly CVE scan"
     initial_comment = (
         os.environ.get("SLACK_INITIAL_COMMENT")
         or f":shield: {title} — PDF report attached."
@@ -162,7 +162,7 @@ def main() -> int:
         )
         return _webhook_fallback(
             webhook,
-            ":shield: NebulaCR nightly CVE scan finished. "
+            ":shield: SpectonCR nightly CVE scan finished. "
             "PDF report is in the workflow artifacts "
             "(set SLACK_BOT_TOKEN + SLACK_CHANNEL_ID to get it attached here).",
         )

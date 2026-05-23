@@ -1,0 +1,75 @@
+[package]
+name = "specton-scanner"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Internal
+specton-common.workspace = true
+specton-db.workspace = true
+specton-ai.workspace = true
+
+# Async + web
+tokio.workspace = true
+axum.workspace = true
+axum-extra.workspace = true
+tower.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+async-stream.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+toml.workspace = true
+
+# Storage
+object_store.workspace = true
+bytes.workspace = true
+
+# HTTP + Redis + SQL
+reqwest.workspace = true
+redis.workspace = true
+deadpool-redis.workspace = true
+sqlx.workspace = true
+
+# OCI + archive
+oci-spec.workspace = true
+tar.workspace = true
+flate2.workspace = true
+zstd.workspace = true
+zip.workspace = true
+tempfile.workspace = true
+
+# Vuln matching
+purl.workspace = true
+semver.workspace = true
+regex.workspace = true
+
+# Utilities
+chrono.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+hex.workspace = true
+rand.workspace = true
+governor.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+metrics.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+# Standalone worker binary. Shares the same crate's library so the
+# ScannerRuntime code path is identical to the in-registry one; this bin
+# just loads config + storage and runs workers (no Axum server needed —
+# the /v2/scan/* routes still live in the registry process).
+[[bin]]
+name = "specton-scanner"
+path = "src/bin/specton-scanner.rs"

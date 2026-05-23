@@ -48,7 +48,7 @@ fi
 get_token() {
   local scope="$1"
   curl -sf -u "${REGISTRY_USER}:${REGISTRY_PASS}" \
-    "${SCHEME}://${REGISTRY}/auth/token?service=nebulacr-registry&scope=${scope}" \
+    "${SCHEME}://${REGISTRY}/auth/token?service=spectoncr-registry&scope=${scope}" \
     | jq -r '.token'
 }
 
@@ -56,7 +56,7 @@ get_token() {
 # service derives that claim from the *scope* string: 3 segments
 # `tenant/project/repo` selects the named tenant; 1-segment scopes
 # fall back to the default `_` tenant and the catalog walks an empty
-# prefix (see osterley/nebulacr run 26018779128). Use a 3-segment
+# prefix (see spectonio/spectoncr run 26018779128). Use a 3-segment
 # scope so the issued token's tenant_id matches where seeded images
 # live. The repo/project parts are placeholders — only the tenant
 # segment matters for the catalog handler.

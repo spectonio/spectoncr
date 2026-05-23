@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="NebulaCR API Reference — OCI Registry, Authentication, SCIM, and Enterprise Identity APIs" />
-  <title>NebulaCR API Reference</title>
+  <meta name="description" content="SpectonCR API Reference — OCI Registry, Authentication, SCIM, and Enterprise Identity APIs" />
+  <title>SpectonCR API Reference</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -91,7 +91,7 @@
 <body>
 
 <nav class="nav">
-  <a href="index.html" class="nav-logo"><span class="nav-logo-icon">&#x25C8;</span> NebulaCR</a>
+  <a href="index.html" class="nav-logo"><span class="nav-logo-icon">&#x25C8;</span> SpectonCR</a>
   <div class="nav-links">
     <a href="index.html">Home</a>
     <a href="index.html#features">Features</a>
@@ -99,7 +99,7 @@
     <a href="#auth">Auth API</a>
     <a href="#scim">SCIM</a>
     <a href="#guides">Guides</a>
-    <a href="https://github.com/bwalia/nebulacr">GitHub</a>
+    <a href="https://github.com/spectonio/spectoncr">GitHub</a>
   </div>
 </nav>
 
@@ -107,7 +107,7 @@
 
 <div class="page-header">
   <h1>API Reference</h1>
-  <p>Complete API documentation for NebulaCR covering OCI Distribution, Authentication, SCIM 2.0 Provisioning, Enterprise Identity, and Management endpoints.</p>
+  <p>Complete API documentation for SpectonCR covering OCI Distribution, Authentication, SCIM 2.0 Provisioning, Enterprise Identity, and Management endpoints.</p>
 </div>
 
 <div class="toc">
@@ -231,7 +231,7 @@ Docker-Upload-UUID: {uuid}</div></div>
   <div class="endpoint">
     <div class="endpoint-header" onclick="toggle(this)">
       <span class="endpoint-method method-get">GET</span>
-      <span class="endpoint-path">/auth/token?service=nebulacr-registry&amp;scope=repository:t/p/n:pull</span>
+      <span class="endpoint-path">/auth/token?service=spectoncr-registry&amp;scope=repository:t/p/n:pull</span>
       <span class="endpoint-desc">Docker-compatible token exchange (Basic auth)</span>
     </div>
     <div class="endpoint-body">
@@ -334,7 +334,7 @@ Docker-Upload-UUID: {uuid}</div></div>
     </div>
     <div class="endpoint-body">
       <div class="endpoint-detail"><h4>Flow</h4>
-      <p style="font-size:0.8rem;color:var(--text-secondary);">1. Validates state against stored session<br>2. Exchanges authorization code for ID token<br>3. Extracts sub, email, groups from ID token<br>4. Auto-provisions user if new<br>5. Applies group-to-role mappings<br>6. Issues NebulaCR JWT<br>7. Redirects to <code>redirect_uri?token=eyJ...</code></p></div>
+      <p style="font-size:0.8rem;color:var(--text-secondary);">1. Validates state against stored session<br>2. Exchanges authorization code for ID token<br>3. Extracts sub, email, groups from ID token<br>4. Auto-provisions user if new<br>5. Applies group-to-role mappings<br>6. Issues SpectonCR JWT<br>7. Redirects to <code>redirect_uri?token=eyJ...</code></p></div>
     </div>
   </div>
 </div>
@@ -350,7 +350,7 @@ Docker-Upload-UUID: {uuid}</div></div>
     <div class="endpoint-header" onclick="toggle(this)">
       <span class="endpoint-method method-post">POST</span>
       <span class="endpoint-path">/auth/ci/token</span>
-      <span class="endpoint-desc">Exchange a CI OIDC token for a NebulaCR token</span>
+      <span class="endpoint-desc">Exchange a CI OIDC token for a SpectonCR token</span>
     </div>
     <div class="endpoint-body">
       <div class="endpoint-detail"><h4>Request Body</h4>
@@ -380,7 +380,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: |
           TOKEN=$(curl -sH "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebulacr-registry" | jq -r .value)
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=spectoncr-registry" | jq -r .value)
           REGISTRY_TOKEN=$(curl -sX POST https://registry.example.com/auth/ci/token \
             -H "Content-Type: application/json" \
             -d "{\"token\":\"$TOKEN\",\"provider\":\"github\",\"scope\":{\"tenant\":\"_\",\"project\":\"myproj\",\"actions\":[\"pull\",\"push\"]}}" \
@@ -427,7 +427,7 @@ jobs:
     {"schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
      "id": "john.doe", "userName": "john.doe", "active": true,
      "emails": [{"value": "john@example.com", "primary": true}],
-     "groups": [{"value": "nebulacr-devs", "display": "nebulacr-devs"}]}
+     "groups": [{"value": "spectoncr-devs", "display": "spectoncr-devs"}]}
   ]
 }</div></div>
     </div>
@@ -447,7 +447,7 @@ jobs:
   "displayName": "John Doe",
   "active": true,
   "emails": [{"value": "john@example.com", "type": "work", "primary": true}],
-  "groups": [{"value": "nebulacr-devs", "display": "nebulacr-devs"}]
+  "groups": [{"value": "spectoncr-devs", "display": "spectoncr-devs"}]
 }</div></div>
     </div>
   </div>
@@ -490,7 +490,7 @@ jobs:
       <div class="endpoint-detail"><h4>Request Body</h4>
 <div class="code-block">{
   "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
-  "displayName": "nebulacr-devs",
+  "displayName": "spectoncr-devs",
   "members": [{"value": "john.doe", "display": "John Doe"}]
 }</div></div>
     </div>
@@ -595,7 +595,7 @@ jobs:
     <h2>Internal Replication</h2>
     <span class="api-section-badge badge-internal">Internal Only</span>
   </div>
-  <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:16px;">These endpoints are used for cross-region replication between NebulaCR instances. They are served on both the main port and the internal port (5002).</p>
+  <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:16px;">These endpoints are used for cross-region replication between SpectonCR instances. They are served on both the main port and the internal port (5002).</p>
   <div class="endpoint"><div class="endpoint-header"><span class="endpoint-method method-post">POST</span><span class="endpoint-path">/internal/replicate/manifest</span><span class="endpoint-desc">Receive a replicated manifest from another region</span></div></div>
   <div class="endpoint"><div class="endpoint-header"><span class="endpoint-method method-post">POST</span><span class="endpoint-path">/internal/replicate/blob</span><span class="endpoint-desc">Receive a replicated blob from another region</span></div></div>
   <div class="endpoint"><div class="endpoint-header"><span class="endpoint-method method-post">POST</span><span class="endpoint-path">/internal/replicate/delete</span><span class="endpoint-desc">Receive a delete event from another region</span></div></div>
@@ -610,27 +610,27 @@ jobs:
 
   <div class="guide-card">
     <h3>Azure AD / Entra ID Setup</h3>
-    <p>Connect NebulaCR to Azure AD for SSO and SCIM provisioning.</p>
+    <p>Connect SpectonCR to Azure AD for SSO and SCIM provisioning.</p>
     <ol class="guide-steps">
       <li>Register an application in Azure AD &rarr; App Registrations &rarr; New Registration</li>
       <li>Set redirect URI to <code>https://registry.example.com/auth/oidc/callback</code></li>
       <li>Note the Application (client) ID and create a client secret</li>
-      <li>Configure OIDC provider in NebulaCR config:<br><code style="display:block;margin-top:4px;">oidc_providers: [{issuer_url: "https://login.microsoftonline.com/{tenant}/v2.0", client_id: "...", client_secret: "...", groups_claim: "groups"}]</code></li>
+      <li>Configure OIDC provider in SpectonCR config:<br><code style="display:block;margin-top:4px;">oidc_providers: [{issuer_url: "https://login.microsoftonline.com/{tenant}/v2.0", client_id: "...", client_secret: "...", groups_claim: "groups"}]</code></li>
       <li>Enable SCIM: In Azure AD &rarr; Enterprise Applications &rarr; your app &rarr; Provisioning &rarr; Set Tenant URL to <code>https://registry.example.com/scim/v2</code> and enter the SCIM bearer token</li>
-      <li>Map AD groups to roles: <code>group_role_mappings: [{group: "nebulacr-admins", tenant: "_", role: "admin"}]</code></li>
+      <li>Map AD groups to roles: <code>group_role_mappings: [{group: "spectoncr-admins", tenant: "_", role: "admin"}]</code></li>
       <li>Test: Click "Login with Azure AD" on the dashboard or run <code>docker login</code></li>
     </ol>
   </div>
 
   <div class="guide-card">
     <h3>Okta SCIM Setup</h3>
-    <p>Configure Okta to auto-provision and deprovision NebulaCR users.</p>
+    <p>Configure Okta to auto-provision and deprovision SpectonCR users.</p>
     <ol class="guide-steps">
       <li>In Okta Admin &rarr; Applications &rarr; Create App Integration &rarr; SCIM 2.0</li>
       <li>Set SCIM connector base URL to <code>https://registry.example.com/scim/v2</code></li>
       <li>Authentication: Bearer token (use <code>enterprise.scim.bearer_token</code> from config)</li>
       <li>Enable provisioning actions: Create Users, Update User Attributes, Deactivate Users</li>
-      <li>Map Okta groups to push groups &rarr; these sync to NebulaCR group-role mappings</li>
+      <li>Map Okta groups to push groups &rarr; these sync to SpectonCR group-role mappings</li>
       <li>Assign users/groups to the application &rarr; Okta pushes SCIM events immediately</li>
     </ol>
   </div>
@@ -639,9 +639,9 @@ jobs:
     <h3>GitHub Actions OIDC (Zero Secrets)</h3>
     <p>Push images from GitHub Actions without storing registry credentials.</p>
     <ol class="guide-steps">
-      <li>Configure GitHub OIDC in NebulaCR: <code>github_oidc: {allowed_orgs: ["your-org"], default_role: "maintainer"}</code></li>
+      <li>Configure GitHub OIDC in SpectonCR: <code>github_oidc: {allowed_orgs: ["your-org"], default_role: "maintainer"}</code></li>
       <li>Add <code>id-token: write</code> permission to your workflow</li>
-      <li>Request OIDC token: <code>curl "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebulacr-registry"</code></li>
+      <li>Request OIDC token: <code>curl "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=spectoncr-registry"</code></li>
       <li>Exchange for registry token: <code>POST /auth/ci/token</code> with the OIDC JWT</li>
       <li>Use the token with <code>docker login</code> &rarr; <code>docker push</code></li>
     </ol>
@@ -649,11 +649,11 @@ jobs:
 
   <div class="guide-card">
     <h3>Kubernetes ImagePullSecrets</h3>
-    <p>Configure Kubernetes pods to pull images from NebulaCR.</p>
+    <p>Configure Kubernetes pods to pull images from SpectonCR.</p>
     <ol class="guide-steps">
       <li>Create a robot account: <code>POST /api/v1/robot-accounts</code> with desired scope</li>
-      <li>Create the k8s secret: <code>kubectl create secret docker-registry nebulacr-secret --docker-server=registry.example.com --docker-username=robot:ci-pipeline --docker-password=nrc_...</code></li>
-      <li>Reference in your deployment: <code>imagePullSecrets: [{name: nebulacr-secret}]</code></li>
+      <li>Create the k8s secret: <code>kubectl create secret docker-registry spectoncr-secret --docker-server=registry.example.com --docker-username=robot:ci-pipeline --docker-password=nrc_...</code></li>
+      <li>Reference in your deployment: <code>imagePullSecrets: [{name: spectoncr-secret}]</code></li>
       <li>For auto-rotation, use External Secrets Operator to call <code>/auth/credential-exchange</code></li>
     </ol>
   </div>
@@ -662,7 +662,7 @@ jobs:
 </div>
 
 <footer class="footer">
-  <div>&copy; 2026 NebulaCR &mdash; <a href="index.html">Home</a> &middot; <a href="https://github.com/bwalia/nebulacr">GitHub</a> &middot; <a href="https://github.com/bwalia/nebulacr/issues">Issues</a></div>
+  <div>&copy; 2026 <a href="https://specton.io">specton.io</a> &mdash; <a href="index.html">Home</a> &middot; <a href="https://github.com/spectonio/spectoncr">GitHub</a> &middot; <a href="https://github.com/spectonio/spectoncr/issues">Issues</a></div>
 </footer>
 
 <script>

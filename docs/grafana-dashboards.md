@@ -1,14 +1,14 @@
 # Grafana Dashboards
 
-NebulaCR ships two Grafana dashboards aimed at enterprise operators
+SpectonCR ships two Grafana dashboards aimed at enterprise operators
 and decision-makers:
 
 | Dashboard                | UID                | Audience              |
 | ------------------------ | ------------------ | --------------------- |
-| **Enterprise Overview**  | `nebulacr-overview`| Execs, finance, security leads |
-| **Operations Detail**    | `nebulacr-detail`  | SREs, platform engineers |
+| **Enterprise Overview**  | `spectoncr-overview`| Execs, finance, security leads |
+| **Operations Detail**    | `spectoncr-detail`  | SREs, platform engineers |
 
-Both are version-controlled JSON in `deploy/helm/nebulacr/dashboards/`
+Both are version-controlled JSON in `deploy/helm/spectoncr/dashboards/`
 and render through the Helm chart as `grafana_dashboard`-labelled
 ConfigMaps so the [kube-prometheus-stack][kps] / [grafana-helm][gh]
 sidecar auto-loads them.
@@ -18,7 +18,7 @@ sidecar auto-loads them.
 
 ## What you get
 
-### Overview (`nebulacr-overview`)
+### Overview (`spectoncr-overview`)
 
 Top stat row:
 
@@ -29,13 +29,13 @@ Top stat row:
 | Average image size           | `manifest_blob_refs` × `blob_refcounts` | yellow > 500 MiB, red > 2 GiB |
 | Projected monthly cost (USD) | `usage_daily` + `cost_models` | yellow > $500, red > $5 000 |
 | Open Critical+High CVEs      | `findings` − `suppressions` | yellow ≥ 1, red ≥ 10 |
-| Mirror cache hit ratio       | `nebulacr_mirror_*` Prometheus | yellow < 85 %, red < 50 % |
+| Mirror cache hit ratio       | `spectoncr_mirror_*` Prometheus | yellow < 85 %, red < 50 % |
 
 Plus stacked storage- and egress-trend timeseries for the last 30 days,
 and two top-10 tables: "tenants by storage / cost" and "tenants by
 CVE exposure".
 
-### Detail (`nebulacr-detail`)
+### Detail (`spectoncr-detail`)
 
 Six rows:
 
@@ -71,7 +71,7 @@ A dedicated read-only role:
 
 ```sql
 CREATE ROLE grafana_ro LOGIN PASSWORD '<...>';
-GRANT CONNECT ON DATABASE nebulacr TO grafana_ro;
+GRANT CONNECT ON DATABASE spectoncr TO grafana_ro;
 GRANT USAGE ON SCHEMA public TO grafana_ro;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO grafana_ro;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
@@ -83,7 +83,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 ### Default — alongside kube-prometheus-stack
 
 ```yaml
-# values.yaml for the parent chart / the nebulacr release
+# values.yaml for the parent chart / the spectoncr release
 grafana:
   dashboards:
     enabled: true
@@ -91,7 +91,7 @@ grafana:
 
 When the standard kube-prometheus-stack Grafana sidecar is configured
 to scan the namespace (`grafana.sidecar.dashboards.searchNamespace:
-ALL` is the easiest mode), the dashboards appear in the **NebulaCR**
+ALL` is the easiest mode), the dashboards appear in the **SpectonCR**
 folder within ~30s of `helm upgrade`.
 
 ### docker-compose (development / demo)
@@ -126,7 +126,7 @@ grafana:
 
 ### Without the sidecar (manual import)
 
-Both JSON files live at `deploy/helm/nebulacr/dashboards/*.json` and
+Both JSON files live at `deploy/helm/spectoncr/dashboards/*.json` and
 import cleanly into Grafana via **Dashboards → Import**.
 
 ## Cost-projection details
@@ -158,7 +158,7 @@ full historical record.
 ## Customising
 
 Dashboards are just JSON. Edit
-`deploy/helm/nebulacr/dashboards/nebulacr-{overview,detail}.json`
+`deploy/helm/spectoncr/dashboards/spectoncr-{overview,detail}.json`
 locally, run `python3 -m json.tool ... > /dev/null` to validate, then
 `helm upgrade` — the sidecar reloads the new payload.
 

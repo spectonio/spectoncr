@@ -1,6 +1,6 @@
 # Troubleshooting
 
-This guide covers common issues when operating NebulaCR, with diagnostic steps and solutions.
+This guide covers common issues when operating SpectonCR, with diagnostic steps and solutions.
 
 ## Table of Contents
 
@@ -36,8 +36,8 @@ This guide covers common issues when operating NebulaCR, with diagnostic steps a
 3. **Auth service unreachable from registry**: The registry must be able to reach the auth service to validate tokens. Check connectivity:
    ```bash
    # From inside the registry pod
-   kubectl exec -it deploy/nebulacr-registry -n nebulacr -- \
-     curl -f http://nebulacr-auth:5001/health
+   kubectl exec -it deploy/spectoncr-registry -n spectoncr -- \
+     curl -f http://spectoncr-auth:5001/health
    ```
 
 4. **Key mismatch**: The auth service signs tokens with the private key, and the registry verifies with the public key. Both must correspond:
@@ -49,10 +49,10 @@ This guide covers common issues when operating NebulaCR, with diagnostic steps a
 5. **Wrong audience or issuer**: The `issuer` and `audience` values must match between auth and registry:
    ```bash
    # Check auth service config
-   kubectl exec -it deploy/nebulacr-auth -n nebulacr -- env | grep NEBULACR_AUTH
+   kubectl exec -it deploy/spectoncr-auth -n spectoncr -- env | grep SPECTONCR_AUTH
 
    # Check registry config
-   kubectl exec -it deploy/nebulacr-registry -n nebulacr -- env | grep NEBULACR_AUTH
+   kubectl exec -it deploy/spectoncr-registry -n spectoncr -- env | grep SPECTONCR_AUTH
    ```
 
 ### 404 Not Found on Push
@@ -61,7 +61,7 @@ This guide covers common issues when operating NebulaCR, with diagnostic steps a
 
 **Possible causes and fixes**:
 
-1. **Wrong image path format**: NebulaCR uses 3-segment paths (`tenant/project/repository`):
+1. **Wrong image path format**: SpectonCR uses 3-segment paths (`tenant/project/repository`):
    ```bash
    # Wrong (1 segment)
    docker push registry.example.com/myimage:latest
@@ -78,7 +78,7 @@ This guide covers common issues when operating NebulaCR, with diagnostic steps a
 3. **Tenant or project does not exist**: If using CRDs, the tenant and project must be created first:
    ```bash
    kubectl get tenants
-   kubectl get projects -n nebulacr
+   kubectl get projects -n spectoncr
    ```
 
 ### 502 Bad Gateway
@@ -89,19 +89,19 @@ This guide covers common issues when operating NebulaCR, with diagnostic steps a
 
 1. **Registry pod not ready**: Check pod status:
    ```bash
-   kubectl get pods -n nebulacr -l app=nebulacr-registry
-   kubectl describe pod -n nebulacr -l app=nebulacr-registry
+   kubectl get pods -n spectoncr -l app=spectoncr-registry
+   kubectl describe pod -n spectoncr -l app=spectoncr-registry
    ```
 
 2. **Health check failing**: Verify the health endpoint directly:
    ```bash
-   kubectl port-forward svc/nebulacr-registry 5000:5000 -n nebulacr
+   kubectl port-forward svc/spectoncr-registry 5000:5000 -n spectoncr
    curl http://localhost:5000/health
    ```
 
 3. **Resource limits too low**: The pod may be OOMKilled. Check events:
    ```bash
-   kubectl get events -n nebulacr --sort-by='.lastTimestamp' | grep -i oom
+   kubectl get events -n spectoncr --sort-by='.lastTimestamp' | grep -i oom
    ```
 
 4. **Ingress timeout**: Large layer uploads can exceed default timeouts. See [Network and Ingress Issues](#network-and-ingress-issues).
@@ -116,7 +116,7 @@ This guide covers common issues when operating NebulaCR, with diagnostic steps a
 
 1. Check current rate limit settings:
    ```bash
-   kubectl exec -it deploy/nebulacr-registry -n nebulacr -- \
+   kubectl exec -it deploy/spectoncr-registry -n spectoncr -- \
      env | grep RATE_LIMIT
    ```
 
@@ -128,7 +128,7 @@ This guide covers common issues when operating NebulaCR, with diagnostic steps a
 
 3. Or increase global defaults:
    ```bash
-   NEBULACR_RATE_LIMIT__DEFAULT_RPS=200
+   SPECTONCR_RATE_LIMIT__DEFAULT_RPS=200
    ```
 
 ### 413 Request Entity Too Large
@@ -170,13 +170,13 @@ curl -v http://localhost:5000/v2/ 2>&1 | grep -i www-authenticate
 
 Expected output:
 ```
-Www-Authenticate: Bearer realm="http://localhost:5001/auth/token",service="nebulacr-registry"
+Www-Authenticate: Bearer realm="http://localhost:5001/auth/token",service="spectoncr-registry"
 ```
 
 ```bash
 # Step 2: Request a token from the auth service
 curl -v -u admin:admin \
-  "http://localhost:5001/auth/token?service=nebulacr-registry&scope=repository:demo/default/myimage:push,pull"
+  "http://localhost:5001/auth/token?service=spectoncr-registry&scope=repository:demo/default/myimage:push,pull"
 ```
 
 ```bash
@@ -220,8 +220,8 @@ echo "$TOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | jq .
 Expected output:
 ```json
 {
-  "iss": "nebulacr",
-  "aud": "nebulacr-registry",
+  "iss": "spectoncr",
+  "aud": "spectoncr-registry",
   "sub": "admin",
   "exp": 1705312500,
   "iat": 1705312200,
@@ -246,7 +246,7 @@ date -r 1705312500     # macOS
 
 If tokens expire too quickly, increase the TTL:
 ```bash
-NEBULACR_AUTH__TOKEN_TTL_SECONDS=600
+SPECTONCR_AUTH__TOKEN_TTL_SECONDS=600
 ```
 
 ### Token Scope Mismatch
@@ -256,7 +256,7 @@ The `access` claim must include the correct repository path and actions. If you 
 ```bash
 # Request a token with the correct scope
 curl -u admin:admin \
-  "http://localhost:5001/auth/token?service=nebulacr-registry&scope=repository:acme/backend/myimage:push,pull"
+  "http://localhost:5001/auth/token?service=spectoncr-registry&scope=repository:acme/backend/myimage:push,pull"
 ```
 
 ### Key Rotation
@@ -274,14 +274,14 @@ openssl genrsa -out private-new.pem 4096
 openssl rsa -in private-new.pem -pubout -out public-new.pem
 
 # Update the Kubernetes secret
-kubectl create secret generic nebulacr-jwt-keys \
+kubectl create secret generic spectoncr-jwt-keys \
   --from-file=private.pem=private-new.pem \
   --from-file=public.pem=public-new.pem \
-  --namespace nebulacr \
+  --namespace spectoncr \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # Restart services to pick up new keys
-kubectl rollout restart deploy/nebulacr-auth deploy/nebulacr-registry -n nebulacr
+kubectl rollout restart deploy/spectoncr-auth deploy/spectoncr-registry -n spectoncr
 ```
 
 ---
@@ -293,20 +293,20 @@ kubectl rollout restart deploy/nebulacr-auth deploy/nebulacr-registry -n nebulac
 Check disk space and permissions:
 ```bash
 # Inside the container
-kubectl exec -it deploy/nebulacr-registry -n nebulacr -- df -h /var/lib/nebulacr/data
-kubectl exec -it deploy/nebulacr-registry -n nebulacr -- ls -la /var/lib/nebulacr/data
+kubectl exec -it deploy/spectoncr-registry -n spectoncr -- df -h /var/lib/spectoncr/data
+kubectl exec -it deploy/spectoncr-registry -n spectoncr -- ls -la /var/lib/spectoncr/data
 ```
 
 Check if the PersistentVolumeClaim is bound:
 ```bash
-kubectl get pvc -n nebulacr
+kubectl get pvc -n spectoncr
 ```
 
 ### S3
 
 Verify connectivity from the pod:
 ```bash
-kubectl exec -it deploy/nebulacr-registry -n nebulacr -- \
+kubectl exec -it deploy/spectoncr-registry -n spectoncr -- \
   curl -s -o /dev/null -w "%{http_code}" https://s3.us-east-1.amazonaws.com
 ```
 
@@ -318,7 +318,7 @@ Common S3 issues:
 
 For MinIO:
 ```bash
-kubectl exec -it deploy/nebulacr-registry -n nebulacr -- \
+kubectl exec -it deploy/spectoncr-registry -n spectoncr -- \
   curl -s http://minio:9000/minio/health/live
 ```
 
@@ -326,7 +326,7 @@ kubectl exec -it deploy/nebulacr-registry -n nebulacr -- \
 
 Verify workload identity or service account key:
 ```bash
-kubectl exec -it deploy/nebulacr-registry -n nebulacr -- \
+kubectl exec -it deploy/spectoncr-registry -n spectoncr -- \
   env | grep GOOGLE
 ```
 
@@ -334,8 +334,8 @@ kubectl exec -it deploy/nebulacr-registry -n nebulacr -- \
 
 Verify the container exists and credentials are correct:
 ```bash
-kubectl exec -it deploy/nebulacr-registry -n nebulacr -- \
-  env | grep NEBULACR_STORAGE
+kubectl exec -it deploy/spectoncr-registry -n spectoncr -- \
+  env | grep SPECTONCR_STORAGE
 ```
 
 ### Storage Metrics
@@ -355,13 +355,13 @@ If the circuit breaker is open (value `2`), the storage backend has been experie
 
 Verify the ingress resource:
 ```bash
-kubectl get ingress -n nebulacr -o yaml
+kubectl get ingress -n spectoncr -o yaml
 ```
 
 Check that the ingress controller sees the backends:
 ```bash
 # For nginx ingress
-kubectl logs deploy/ingress-nginx-controller -n ingress-nginx | grep nebulacr
+kubectl logs deploy/ingress-nginx-controller -n ingress-nginx | grep spectoncr
 ```
 
 ### Large Push Timeouts
@@ -382,8 +382,8 @@ nginx.ingress.kubernetes.io/proxy-buffering: "off"
 openssl s_client -connect registry.example.com:443 -servername registry.example.com </dev/null 2>/dev/null | openssl x509 -noout -dates -subject
 
 # If using cert-manager, check the Certificate resource
-kubectl get certificates -n nebulacr
-kubectl describe certificate registry-tls -n nebulacr
+kubectl get certificates -n spectoncr
+kubectl describe certificate registry-tls -n spectoncr
 ```
 
 For self-signed certificates, configure Docker to trust them:
@@ -398,11 +398,11 @@ sudo systemctl restart docker
 
 The registry must be able to reach the auth service. Verify internal DNS resolution and connectivity:
 ```bash
-kubectl exec -it deploy/nebulacr-registry -n nebulacr -- \
-  nslookup nebulacr-auth.nebulacr.svc.cluster.local
+kubectl exec -it deploy/spectoncr-registry -n spectoncr -- \
+  nslookup spectoncr-auth.spectoncr.svc.cluster.local
 
-kubectl exec -it deploy/nebulacr-registry -n nebulacr -- \
-  curl -s http://nebulacr-auth:5001/health
+kubectl exec -it deploy/spectoncr-registry -n spectoncr -- \
+  curl -s http://spectoncr-auth:5001/health
 ```
 
 ### Network Policies
@@ -414,7 +414,7 @@ If NetworkPolicy is enabled, ensure the rules allow:
 - Registry to reach the storage backend (S3, GCS, etc.)
 
 ```bash
-kubectl get networkpolicy -n nebulacr -o yaml
+kubectl get networkpolicy -n spectoncr -o yaml
 ```
 
 ---
@@ -425,35 +425,35 @@ kubectl get networkpolicy -n nebulacr -o yaml
 
 ```bash
 # Registry logs
-kubectl logs deploy/nebulacr-registry -n nebulacr -f
+kubectl logs deploy/spectoncr-registry -n spectoncr -f
 
 # Auth logs
-kubectl logs deploy/nebulacr-auth -n nebulacr -f
+kubectl logs deploy/spectoncr-auth -n spectoncr -f
 
 # Previous container (after crash)
-kubectl logs deploy/nebulacr-registry -n nebulacr --previous
+kubectl logs deploy/spectoncr-registry -n spectoncr --previous
 
 # All pods for a service
-kubectl logs -l app=nebulacr-registry -n nebulacr --tail=100
+kubectl logs -l app=spectoncr-registry -n spectoncr --tail=100
 ```
 
 ### Filter JSON Logs with jq
 
 ```bash
 # Show only errors
-kubectl logs deploy/nebulacr-registry -n nebulacr | jq 'select(.level == "ERROR")'
+kubectl logs deploy/spectoncr-registry -n spectoncr | jq 'select(.level == "ERROR")'
 
 # Show push events
-kubectl logs deploy/nebulacr-registry -n nebulacr | jq 'select(.message == "manifest pushed")'
+kubectl logs deploy/spectoncr-registry -n spectoncr | jq 'select(.message == "manifest pushed")'
 
 # Show requests for a specific tenant
-kubectl logs deploy/nebulacr-registry -n nebulacr | jq 'select(.span.tenant == "acme")'
+kubectl logs deploy/spectoncr-registry -n spectoncr | jq 'select(.span.tenant == "acme")'
 
 # Show slow requests (over 1 second)
-kubectl logs deploy/nebulacr-registry -n nebulacr | jq 'select(.fields.duration_ms > 1000)'
+kubectl logs deploy/spectoncr-registry -n spectoncr | jq 'select(.fields.duration_ms > 1000)'
 
 # Show auth failures
-kubectl logs deploy/nebulacr-auth -n nebulacr | jq 'select(.level == "WARN" or .level == "ERROR")'
+kubectl logs deploy/spectoncr-auth -n spectoncr | jq 'select(.level == "WARN" or .level == "ERROR")'
 ```
 
 ### Docker Compose Logs
@@ -487,17 +487,17 @@ docker compose logs -f --since 5m registry
 ### Pod and Service Status
 
 ```bash
-# Overview of all NebulaCR resources
-kubectl get all -n nebulacr
+# Overview of all SpectonCR resources
+kubectl get all -n spectoncr
 
 # Detailed pod information
-kubectl describe pod -n nebulacr -l app=nebulacr-registry
+kubectl describe pod -n spectoncr -l app=spectoncr-registry
 
 # Check events (sorted by time)
-kubectl get events -n nebulacr --sort-by='.lastTimestamp'
+kubectl get events -n spectoncr --sort-by='.lastTimestamp'
 
 # Check resource usage
-kubectl top pods -n nebulacr
+kubectl top pods -n spectoncr
 ```
 
 ### CRD Status
@@ -507,85 +507,85 @@ kubectl top pods -n nebulacr
 kubectl get tenants -o wide
 
 # List all projects
-kubectl get projects -n nebulacr -o wide
+kubectl get projects -n spectoncr -o wide
 
 # List access policies
-kubectl get accesspolicies -n nebulacr -o wide
+kubectl get accesspolicies -n spectoncr -o wide
 
 # List token policies
-kubectl get tokenpolicies -n nebulacr -o wide
+kubectl get tokenpolicies -n spectoncr -o wide
 
 # Describe a specific tenant with conditions
 kubectl describe tenant acme
 
 # Check controller logs
-kubectl logs deploy/nebula-controller -n nebulacr -f
+kubectl logs deploy/specton-controller -n spectoncr -f
 ```
 
 ### Network Debugging
 
 ```bash
 # Check services
-kubectl get svc -n nebulacr
+kubectl get svc -n spectoncr
 
 # Check endpoints (are pods registered?)
-kubectl get endpoints -n nebulacr
+kubectl get endpoints -n spectoncr
 
 # DNS resolution test
 kubectl run dns-test --rm -it --image=busybox --restart=Never -- \
-  nslookup nebulacr-registry.nebulacr.svc.cluster.local
+  nslookup spectoncr-registry.spectoncr.svc.cluster.local
 
 # Port-forward for direct access
-kubectl port-forward svc/nebulacr-registry 5000:5000 -n nebulacr
-kubectl port-forward svc/nebulacr-auth 5001:5001 -n nebulacr
+kubectl port-forward svc/spectoncr-registry 5000:5000 -n spectoncr
+kubectl port-forward svc/spectoncr-auth 5001:5001 -n spectoncr
 ```
 
 ### Storage Debugging
 
 ```bash
 # Check PVC status
-kubectl get pvc -n nebulacr
+kubectl get pvc -n spectoncr
 
 # Check PV details
-kubectl get pv | grep nebulacr
+kubectl get pv | grep spectoncr
 
 # Check disk usage inside the pod
-kubectl exec -it deploy/nebulacr-registry -n nebulacr -- df -h
+kubectl exec -it deploy/spectoncr-registry -n spectoncr -- df -h
 
 # List stored data
-kubectl exec -it deploy/nebulacr-registry -n nebulacr -- \
-  ls -la /var/lib/nebulacr/data/
+kubectl exec -it deploy/spectoncr-registry -n spectoncr -- \
+  ls -la /var/lib/spectoncr/data/
 ```
 
 ### Helm Debugging
 
 ```bash
 # Check installed release
-helm list -n nebulacr
+helm list -n spectoncr
 
 # Show computed values
-helm get values nebulacr -n nebulacr
+helm get values spectoncr -n spectoncr
 
 # Show all values (including defaults)
-helm get values nebulacr -n nebulacr --all
+helm get values spectoncr -n spectoncr --all
 
 # Show the rendered templates
-helm template nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
+helm template spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
   --values production-values.yaml
 
 # Check release history
-helm history nebulacr -n nebulacr
+helm history spectoncr -n spectoncr
 
 # Rollback to a previous release
-helm rollback nebulacr 1 -n nebulacr
+helm rollback spectoncr 1 -n spectoncr
 ```
 
 ### Quick Health Check Script
 
 ```bash
 #!/bin/bash
-# nebulacr-healthcheck.sh
-NAMESPACE=${1:-nebulacr}
+# spectoncr-healthcheck.sh
+NAMESPACE=${1:-spectoncr}
 
 echo "=== Pod Status ==="
 kubectl get pods -n "$NAMESPACE" -o wide
@@ -609,8 +609,8 @@ kubectl get projects -n "$NAMESPACE" 2>/dev/null || echo "No Project CRDs found"
 
 echo ""
 echo "=== Health Checks ==="
-kubectl exec -it deploy/nebulacr-registry -n "$NAMESPACE" -- \
+kubectl exec -it deploy/spectoncr-registry -n "$NAMESPACE" -- \
   curl -s -o /dev/null -w "Registry: %{http_code}\n" http://localhost:5000/health 2>/dev/null
-kubectl exec -it deploy/nebulacr-auth -n "$NAMESPACE" -- \
+kubectl exec -it deploy/spectoncr-auth -n "$NAMESPACE" -- \
   curl -s -o /dev/null -w "Auth: %{http_code}\n" http://localhost:5001/health 2>/dev/null
 ```

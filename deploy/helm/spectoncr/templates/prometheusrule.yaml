@@ -1,0 +1,162 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "spectoncr.fullname" . }}
+  namespace: {{ default .Release.Namespace .Values.prometheusRule.namespace }}
+  labels:
+    {{- include "spectoncr.registry.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: spectoncr.availability
+      rules:
+        - alert: SpectonCRTargetDown
+          expr: up{job=~"spectoncr-.*"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{`{{ $labels.job }}`}} target is down"
+            description: |
+              Prometheus has been unable to scrape {{`{{ $labels.instance }}`}} for >2m.
+              Check pod readiness, /health, and crashloop status.
+
+        - alert: SpectonCRHigh5xxRate
+          expr: |
+            sum by (route) (rate(spectoncr_http_requests_total{status_class="5xx"}[5m]))
+              /
+            clamp_min(sum by (route) (rate(spectoncr_http_requests_total[5m])), 1e-9)
+              > {{ .Values.prometheusRule.thresholds.http5xxRatio }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Registry route {{`{{ $labels.route }}`}} 5xx rate above threshold"
+
+        - alert: SpectonCRP99LatencyHigh
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le, route) (rate(spectoncr_http_request_duration_seconds_bucket[5m]))
+            ) > {{ .Values.prometheusRule.thresholds.httpP99LatencySeconds }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "p99 latency on {{`{{ $labels.route }}`}} exceeds SLO"
+
+    - name: spectoncr.storage
+      rules:
+        - alert: SpectonCRStorageErrorRate
+          expr: |
+            sum by (operation) (rate(spectoncr_storage_operation_errors_total[5m]))
+              > {{ .Values.prometheusRule.thresholds.storageErrorRate }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Storage backend errors on {{`{{ $labels.operation }}`}}"
+
+        - alert: SpectonCRStorageP99Slow
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le, operation) (rate(spectoncr_storage_operation_duration_seconds_bucket[5m]))
+            ) > {{ .Values.prometheusRule.thresholds.storageP99LatencySeconds }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Storage op {{`{{ $labels.operation }}`}} p99 above SLO"
+
+        - alert: SpectonCRCircuitBreakerOpen
+          expr: spectoncr_circuit_breaker_state >= 2
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Circuit breaker {{`{{ $labels.breaker }}`}} OPEN"
+
+        - alert: SpectonCRRetryStorm
+          expr: |
+            sum(rate(spectoncr_retry_attempts_total{outcome="exhausted"}[5m]))
+              > {{ .Values.prometheusRule.thresholds.retryExhaustionRate }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Storage retry exhaustion above threshold"
+
+    - name: spectoncr.mirror
+      rules:
+        - alert: SpectonCRMirrorUpstreamErrors
+          expr: |
+            sum by (upstream) (
+              rate(spectoncr_mirror_upstream_requests_total{outcome=~"error|upstream_5xx|breaker_open"}[5m])
+            ) > {{ .Values.prometheusRule.thresholds.mirrorUpstreamErrorRate }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Upstream {{`{{ $labels.upstream }}`}} unhealthy"
+
+    - name: spectoncr.replication
+      rules:
+        - alert: SpectonCRReplicationLag
+          expr: spectoncr_replication_lag_seconds > {{ .Values.prometheusRule.thresholds.replicationLagSeconds }}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Replication lag above threshold for {{`{{ $labels.source_region }}`}}"
+
+        - alert: SpectonCRReplicationQueueBacklog
+          expr: spectoncr_replication_queue_depth > {{ .Values.prometheusRule.thresholds.replicationQueueDepth }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Replication queue depth backlog"
+
+        - alert: SpectonCRReplicationFailures
+          expr: |
+            sum by (region) (
+              rate(spectoncr_replication_events_total{outcome!="success"}[5m])
+            ) > {{ .Values.prometheusRule.thresholds.replicationFailureRate }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Replication to {{`{{ $labels.region }}`}} failing"
+
+        - alert: SpectonCRRegionUnhealthy
+          expr: spectoncr_region_healthy == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Region {{`{{ $labels.region }}`}} unhealthy"
+
+    - name: spectoncr.auth
+      rules:
+        - alert: SpectonCRAuthFailureSpike
+          expr: sum(rate(registry_auth_failures_total[5m])) > {{ .Values.prometheusRule.thresholds.authFailureRate }}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Auth failure rate elevated"
+
+    - name: spectoncr.webhook
+      rules:
+        - alert: SpectonCRWebhookDeliveryFailing
+          expr: |
+            sum by (endpoint) (rate(spectoncr_webhook_deliveries_total{outcome="failed"}[10m]))
+              > {{ .Values.prometheusRule.thresholds.webhookFailureRate }}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Webhook endpoint {{`{{ $labels.endpoint }}`}} failing"
+{{- end }}

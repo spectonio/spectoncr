@@ -1,4 +1,4 @@
-# NebulaCR System Architecture
+# SpectonCR System Architecture
 
 > Comprehensive design document covering system topology, authentication flows,
 > data models, deployment patterns, security boundaries, and observability.
@@ -27,9 +27,9 @@
 
 ## 1. System Overview
 
-NebulaCR is a multi-tenant, zero-trust container registry built in Rust.
-It consists of two stateless services (`nebula-auth` on port 5001 and
-`nebula-registry` on port 5000), a shared library (`nebula-common`), a
+SpectonCR is a multi-tenant, zero-trust container registry built in Rust.
+It consists of two stateless services (`specton-auth` on port 5001 and
+`specton-registry` on port 5000), a shared library (`specton-common`), a
 Kubernetes controller that manages CRDs, and pluggable object storage.
 External dependencies include OIDC identity providers, HashiCorp Vault
 (optional, for key management), and a Prometheus/Grafana observability stack.
@@ -52,15 +52,15 @@ External dependencies include OIDC identity providers, HashiCorp Vault
  │                                                                                          │
  │   TLS termination  ──  Path-based routing  ──  Rate limiting  ──  WAF (optional)         │
  │                                                                                          │
- │   /v2/*        ──────►  nebulacr-registry service                                        │
- │   /auth/*      ──────►  nebulacr-auth service                                            │
- │   /.well-known ──────►  nebulacr-auth service                                            │
+ │   /v2/*        ──────►  spectoncr-registry service                                        │
+ │   /auth/*      ──────►  spectoncr-auth service                                            │
+ │   /.well-known ──────►  spectoncr-auth service                                            │
  └────────┬───────────────────────┬─────────────────────────────────────────────────────────┘
           │                       │
           ▼                       ▼
  ┌─────────────────────┐  ┌─────────────────────┐     ┌──────────────────────────────────┐
  │                     │  │                     │     │       OIDC PROVIDERS              │
- │   nebula-registry   │  │    nebula-auth      │     │                                  │
+ │   specton-registry   │  │    specton-auth      │     │                                  │
  │   :5000             │  │    :5001            │◄───►│  ┌────────────┐ ┌────────────┐   │
  │                     │  │                     │     │  │  GitHub    │ │  Google     │   │
  │  ┌───────────────┐  │  │  ┌───────────────┐  │     │  │  Actions   │ │  Workspace  │   │
@@ -96,7 +96,7 @@ External dependencies include OIDC identity providers, HashiCorp Vault
  │                           KUBERNETES CONTROL PLANE                                       │
  │                                                                                          │
  │   ┌───────────────────┐    ┌────────────────────────────────────────┐                    │
- │   │  K8s API Server   │◄──►│  nebula-controller                    │                    │
+ │   │  K8s API Server   │◄──►│  specton-controller                    │                    │
  │   │                   │    │  (watches CRDs, reconciles state)     │                    │
  │   └───────────────────┘    └────────────────────────────────────────┘                    │
  │                                                                                          │
@@ -118,9 +118,9 @@ External dependencies include OIDC identity providers, HashiCorp Vault
 
 | Component           | Type         | Port(s)     | Scaling        | State                           |
 |---------------------|------------- |-------------|----------------|---------------------------------|
-| nebula-registry     | Deployment   | 5000, 9090  | HPA 2-10       | Stateless (object store)        |
-| nebula-auth         | Deployment   | 5001, 9091  | HPA 2-6        | Stateless (in-mem + future DB)  |
-| nebula-controller   | Deployment   | 8080        | 1 active (leader) | Watches K8s API              |
+| specton-registry     | Deployment   | 5000, 9090  | HPA 2-10       | Stateless (object store)        |
+| specton-auth         | Deployment   | 5001, 9091  | HPA 2-6        | Stateless (in-mem + future DB)  |
+| specton-controller   | Deployment   | 8080        | 1 active (leader) | Watches K8s API              |
 | Object Storage      | External     | N/A         | Managed (S3)   | Persistent, cross-AZ           |
 | Ingress             | Ingress      | 443         | LB-managed     | Stateless                       |
 | Vault               | External     | 8200        | HA cluster     | Persistent (Raft/Consul)        |
@@ -130,7 +130,7 @@ External dependencies include OIDC identity providers, HashiCorp Vault
 
 ## 2. Zero-Trust Auth Flow
 
-NebulaCR implements zero-trust authentication: no long-lived secrets are stored
+SpectonCR implements zero-trust authentication: no long-lived secrets are stored
 or transmitted. CI/CD systems authenticate using OIDC identity tokens issued by
 trusted providers. The auth service validates the identity token cryptographically,
 resolves RBAC policies, and issues a short-lived (5-minute default) access JWT.
@@ -139,7 +139,7 @@ resolves RBAC policies, and issues a short-lived (5-minute default) access JWT.
 
 ```
  ┌──────────┐          ┌──────────────┐          ┌──────────────┐          ┌──────────────┐
- │ CI Runner│          │ GitHub OIDC  │          │ nebula-auth  │          │nebula-registry│
+ │ CI Runner│          │ GitHub OIDC  │          │ specton-auth  │          │specton-registry│
  │ (GH Act.)│          │ Provider     │          │ :5001        │          │ :5000         │
  └────┬─────┘          └──────┬───────┘          └──────┬───────┘          └──────┬───────┘
       │                       │                         │                         │
@@ -147,7 +147,7 @@ resolves RBAC policies, and issues a short-lived (5-minute default) access JWT.
       │                       │                         │                         │
       │  GET https://token.   │                         │                         │
       │   actions.githubusercontent.com/                │                         │
-      │   ?audience=nebulacr  │                         │                         │
+      │   ?audience=spectoncr  │                         │                         │
       │──────────────────────►│                         │                         │
       │                       │                         │                         │
       │  200 OK               │                         │                         │
@@ -162,7 +162,7 @@ resolves RBAC policies, and issues a short-lived (5-minute default) access JWT.
       │  │         githubusercontent.com"          │     │                         │
       │  │   sub: "repo:acme/api:ref:refs/        │     │                         │
       │  │         heads/main"                    │     │                         │
-      │  │   aud: "nebulacr"                      │     │                         │
+      │  │   aud: "spectoncr"                      │     │                         │
       │  │   repository: "acme/api"               │     │                         │
       │  │   repository_owner: "acme"             │     │                         │
       │  │   workflow: "build-and-push"            │     │                         │
@@ -235,18 +235,18 @@ resolves RBAC policies, and issues a short-lived (5-minute default) access JWT.
       │                       │                         │                         │
       │  200 OK                                         │                         │
       │  {                                              │                         │
-      │    "token": "<NebulaCR Access JWT>",            │                         │
+      │    "token": "<SpectonCR Access JWT>",            │                         │
       │    "expires_in": 300,                           │                         │
       │    "issued_at": "2026-03-25T12:00:00Z"          │                         │
       │  }                                              │                         │
       │◄────────────────────────────────────────────────│                         │
       │                       │                         │                         │
       │  ┌────────────────────────────────────────┐     │                         │
-      │  │ NebulaCR Access JWT Claims:            │     │                         │
-      │  │   iss: "nebulacr"                      │     │                         │
+      │  │ SpectonCR Access JWT Claims:            │     │                         │
+      │  │   iss: "spectoncr"                      │     │                         │
       │  │   sub: "repo:acme/api:ref:refs/        │     │                         │
       │  │         heads/main"                    │     │                         │
-      │  │   aud: "nebulacr-registry"             │     │                         │
+      │  │   aud: "spectoncr-registry"             │     │                         │
       │  │   exp: 1711360500  (now + 300s)        │     │                         │
       │  │   iat: 1711360200                      │     │                         │
       │  │   jti: "f47ac10b-..."                  │     │                         │
@@ -262,7 +262,7 @@ resolves RBAC policies, and issues a short-lived (5-minute default) access JWT.
       │  ── Step 5: Push image using access token ──                              │
       │                       │                         │                         │
       │  POST /v2/acme/backend/api/blobs/uploads/ HTTP/1.1                        │
-      │  Authorization: Bearer <NebulaCR Access JWT>                              │
+      │  Authorization: Bearer <SpectonCR Access JWT>                              │
       │─────────────────────────────────────────────────────────────────────────►  │
       │                       │                         │                         │
       │                       │                         │   ┌──────────────────┐   │
@@ -285,7 +285,7 @@ resolves RBAC policies, and issues a short-lived (5-minute default) access JWT.
 - **No shared secrets**: CI runners never possess long-lived registry credentials.
 - **Short-lived tokens**: Access JWTs expire in 300 seconds (configurable).
 - **Scope-bound**: Each token is scoped to a specific tenant/project/repo + actions.
-- **Cryptographic chain**: GitHub signs the OIDC JWT; NebulaCR validates it via JWKS
+- **Cryptographic chain**: GitHub signs the OIDC JWT; SpectonCR validates it via JWKS
   and issues its own JWT signed with a separate RSA key.
 - **Audit trail**: Every token issuance generates an `AuditEvent` with subject, tenant,
   action, decision, reason, request_id, and source_ip.
@@ -299,7 +299,7 @@ the Docker-compatible `GET /auth/token` endpoint.
 
 ```
                             ┌─────────────────────────────────────────────┐
-                            │          nebula-auth :5001                  │
+                            │          specton-auth :5001                  │
                             │                                             │
   Incoming Request          │                                             │
  ───────────────────────►   │  ┌─────────────────────────────────────┐    │
@@ -395,9 +395,9 @@ the Docker-compatible `GET /auth/token` endpoint.
                             │  │  6. JWT SIGNING                     │    │
                             │  │                                     │    │
                             │  │  Build TokenClaims:                 │    │
-                            │  │    iss: "nebulacr"                  │    │
+                            │  │    iss: "spectoncr"                  │    │
                             │  │    sub: <authenticated subject>     │    │
-                            │  │    aud: "nebulacr-registry"         │    │
+                            │  │    aud: "spectoncr-registry"         │    │
                             │  │    exp: now + token_ttl_seconds     │    │
                             │  │    iat: now                         │    │
                             │  │    jti: UUID v4 (unique token ID)   │    │
@@ -433,14 +433,14 @@ the Docker-compatible `GET /auth/token` endpoint.
 ## 4. Docker Login + Push Flow
 
 Standard Docker clients use the [Token Authentication Specification](https://docs.docker.com/registry/spec/auth/token/).
-NebulaCR implements both the challenge-response handshake (401 → token fetch → retry)
+SpectonCR implements both the challenge-response handshake (401 → token fetch → retry)
 and the OCI Distribution blob/manifest upload protocol.
 
 ### 4.1 Docker Login and Pull
 
 ```
  ┌──────────┐                 ┌──────────────┐                 ┌──────────────┐
- │  Docker  │                 │nebula-registry│                 │ nebula-auth  │
+ │  Docker  │                 │specton-registry│                 │ specton-auth  │
  │  Client  │                 │ :5000         │                 │ :5001        │
  └────┬─────┘                 └──────┬───────┘                 └──────┬───────┘
       │                              │                                │
@@ -454,14 +454,14 @@ and the OCI Distribution blob/manifest upload protocol.
       │        example.com/          │                                │
       │        auth/token",          │                                │
       │       service=               │                                │
-      │       "nebulacr-registry",   │                                │
+      │       "spectoncr-registry",   │                                │
       │       scope=                 │                                │
       │       "repository:acme/      │                                │
       │        backend/api:pull"     │                                │
       │◄─────────────────────────────│                                │
       │                              │                                │
       │  3. GET /auth/token                                           │
-      │     ?service=nebulacr-registry                                │
+      │     ?service=spectoncr-registry                                │
       │     &scope=repository:acme/backend/api:pull                   │
       │     Authorization: Basic base64("admin:admin")                │
       │──────────────────────────────────────────────────────────────►│
@@ -517,7 +517,7 @@ and the OCI Distribution blob/manifest upload protocol.
 
 ```
  ┌──────────┐                 ┌──────────────┐
- │  Docker  │                 │nebula-registry│
+ │  Docker  │                 │specton-registry│
  │  Client  │                 │ :5000         │
  └────┬─────┘                 └──────┬───────┘
       │                              │
@@ -778,7 +778,7 @@ and the OCI Distribution blob/manifest upload protocol.
   Isolation Dimension     How It Works
   ─────────────────────   ──────────────────────────────────────────────────────
   Storage                 Tenant name is the root path prefix. Storage paths
-                          are constructed by nebula-common::storage functions
+                          are constructed by specton-common::storage functions
                           that require explicit (tenant, project, repo) params.
                           A bug in one tenant's query cannot traverse to
                           another tenant's path because the prefix differs.
@@ -807,14 +807,14 @@ and the OCI Distribution blob/manifest upload protocol.
 
 ## 6. Kubernetes Controller Reconciliation Loop
 
-The nebula-controller watches four CRDs (`Tenant`, `Project`, `AccessPolicy`,
+The specton-controller watches four CRDs (`Tenant`, `Project`, `AccessPolicy`,
 `TokenPolicy`) and reconciles their desired state into the auth/registry services.
 
 ### 6.1 Controller Architecture
 
 ```
  ┌──────────────────────────────────────────────────────────────────────────────┐
- │                        nebula-controller                                     │
+ │                        specton-controller                                     │
  │                                                                              │
  │  ┌────────────────────────────────────────────────────────────────────────┐  │
  │  │                     Controller Manager                                 │  │
@@ -839,7 +839,7 @@ The nebula-controller watches four CRDs (`Tenant`, `Project`, `AccessPolicy`,
 ### 6.2 Tenant Reconciliation Loop
 
 ```
-  K8s API Server                        nebula-controller                nebula-auth
+  K8s API Server                        specton-controller                specton-auth
   ──────────────                        ─────────────────                ───────────
        │                                       │                              │
        │  Watch event: Tenant "acme"           │                              │
@@ -907,7 +907,7 @@ The nebula-controller watches four CRDs (`Tenant`, `Project`, `AccessPolicy`,
 ```
   ┌──────────────┐
   │    Tenant    │ ◄──── Cluster-scoped
-  │  (nebulacr.io│       Must exist before Projects
+  │  (spectoncr.io│       Must exist before Projects
   │   /v1alpha1) │
   └──────┬───────┘
          │
@@ -998,9 +998,9 @@ The nebula-controller watches four CRDs (`Tenant`, `Project`, `AccessPolicy`,
 
 | Component         | Kind         | Reason                                                           |
 |-------------------|------------- |------------------------------------------------------------------|
-| nebula-registry   | Deployment   | Stateless. No local data. All state in object store.             |
-| nebula-auth       | Deployment   | Stateless. Signing key mounted from Secret/Vault.                |
-| nebula-controller | Deployment   | Single active via leader election. No persistent local state.    |
+| specton-registry   | Deployment   | Stateless. No local data. All state in object store.             |
+| specton-auth       | Deployment   | Stateless. Signing key mounted from Secret/Vault.                |
+| specton-controller | Deployment   | Single active via leader election. No persistent local state.    |
 | Vault             | StatefulSet  | Raft consensus requires stable network identities and storage.   |
 | PostgreSQL        | StatefulSet  | Requires persistent volumes and stable pod identities.           |
 | Prometheus        | StatefulSet  | TSDB on persistent volume. Stable identity for scrape targets.   |
@@ -1105,7 +1105,7 @@ The nebula-controller watches four CRDs (`Tenant`, `Project`, `AccessPolicy`,
  │   │    │   └──────────────────────────────────────────────────────────────────┘    │    │  │
  │   │    │                                                                          │    │  │
  │   │    │         ┌────────────────┐  ┌────────────────┐  ┌────────────────┐       │    │  │
- │   │    │         │ nebula-registry│  │  nebula-auth   │  │  nebula-      │       │    │  │
+ │   │    │         │ specton-registry│  │  specton-auth   │  │  specton-     │       │    │  │
  │   │    │         │ :5000          │  │  :5001         │  │  controller   │       │    │  │
  │   │    │         │                │  │                │  │  :8080        │       │    │  │
  │   │    │         │ mTLS (future)  │◄─┤ mTLS (future)  │  │               │       │    │  │
@@ -1145,7 +1145,7 @@ The nebula-controller watches four CRDs (`Tenant`, `Project`, `AccessPolicy`,
 
 ### 8.3 Pod Security Standards
 
-All NebulaCR pods run with hardened security contexts (from `values.yaml`):
+All SpectonCR pods run with hardened security contexts (from `values.yaml`):
 
 ```yaml
 securityContext:
@@ -1184,10 +1184,10 @@ containerSecurityContext:
   │      with:                                                               │
   │        script: |                                                         │
   │          const token = await core                                        │
-  │            .getIDToken('nebulacr');                                       │
+  │            .getIDToken('spectoncr');                                       │
   │          core.setOutput('token', token);                                 │
   │                                                                          │
-  │    - name: Login to NebulaCR                                             │
+  │    - name: Login to SpectonCR                                             │
   │      run: |                                                              │
   │        TOKEN=$(curl -s -X POST \                                         │
   │          https://registry.example.com/auth/token \                       │
@@ -1214,11 +1214,11 @@ containerSecurityContext:
     GitHub OIDC Provider ──signs──► ID Token (sub=repo:acme/api:...)
                                          │
                                          ▼
-    nebula-auth ──validates via JWKS──► Extracts subject
+    specton-auth ──validates via JWKS──► Extracts subject
                 ──checks RBAC──────────► Issues access JWT
                                          │
                                          ▼
-    nebula-registry ──validates JWT──► Authorizes push
+    specton-registry ──validates JWT──► Authorizes push
 ```
 
 ### 9.2 GitLab CI OIDC Flow
@@ -1230,15 +1230,15 @@ containerSecurityContext:
   │  push-image:                                                             │
   │    image: docker:24                                                      │
   │    id_tokens:                                                            │
-  │      NEBULA_TOKEN:                                                       │
-  │        aud: nebulacr                                                     │
+  │      SPECTON_TOKEN:                                                       │
+  │        aud: spectoncr                                                     │
   │    script:                                                               │
   │      - |                                                                 │
   │        ACCESS_TOKEN=$(curl -s -X POST \                                  │
   │          https://registry.example.com/auth/token \                       │
   │          -H "Content-Type: application/json" \                           │
   │          -d "{                                                           │
-  │            \"identity_token\": \"$NEBULA_TOKEN\",                        │
+  │            \"identity_token\": \"$SPECTON_TOKEN\",                        │
   │            \"scope\": {                                                  │
   │              \"tenant\": \"acme\",                                       │
   │              \"project\": \"backend\",                                   │
@@ -1269,7 +1269,7 @@ containerSecurityContext:
   │          // Jenkins has no native OIDC. Use Vault for identity.          │
   │          withVault(                                                      │
   │            vaultSecrets: [[                                               │
-  │              path: 'nebulacr/creds/jenkins',                             │
+  │              path: 'spectoncr/creds/jenkins',                             │
   │              secretValues: [                                              │
   │                [envVar: 'IDENTITY_TOKEN',                                │
   │                 vaultKey: 'token']                                        │
@@ -1292,7 +1292,7 @@ containerSecurityContext:
 
   Trust chain:
     Vault ──issues short-lived identity token──► Jenkins
-    nebula-auth ──validates Vault-signed JWT──► Issues access JWT
+    specton-auth ──validates Vault-signed JWT──► Issues access JWT
 ```
 
 ### 9.4 ArgoCD + Kubernetes ServiceAccount Flow
@@ -1302,20 +1302,20 @@ containerSecurityContext:
   │  ArgoCD Application (pull-only)                                          │
   │                                                                          │
   │  ArgoCD runs as a K8s ServiceAccount with projected                      │
-  │  OIDC token (audience: nebulacr).                                        │
+  │  OIDC token (audience: spectoncr).                                        │
   │                                                                          │
   │  Flow:                                                                   │
   │    1. ArgoCD pod mounts projected service account token:                 │
-  │       /var/run/secrets/tokens/nebulacr-token                             │
-  │       (audience: "nebulacr", expiry: 10m)                                │
+  │       /var/run/secrets/tokens/spectoncr-token                             │
+  │       (audience: "spectoncr", expiry: 10m)                                │
   │                                                                          │
   │    2. Image pull uses this token as identity_token                       │
   │       in POST /auth/token request                                        │
   │                                                                          │
-  │    3. nebula-auth validates the K8s-issued JWT:                          │
+  │    3. specton-auth validates the K8s-issued JWT:                          │
   │       iss: https://kubernetes.default.svc                                │
   │       sub: system:serviceaccount:argocd:argocd-server                    │
-  │       aud: nebulacr                                                      │
+  │       aud: spectoncr                                                      │
   │                                                                          │
   │    4. AccessPolicy grants Reader role to                                 │
   │       "system:serviceaccount:argocd:argocd-server"                       │
@@ -1323,11 +1323,11 @@ containerSecurityContext:
   │                                                                          │
   │  K8s ServiceAccount token spec:                                          │
   │    volumes:                                                              │
-  │      - name: nebulacr-token                                              │
+  │      - name: spectoncr-token                                              │
   │        projected:                                                        │
   │          sources:                                                         │
   │            - serviceAccountToken:                                         │
-  │                audience: nebulacr                                         │
+  │                audience: spectoncr                                         │
   │                expirationSeconds: 600                                     │
   │                path: token                                                │
   └──────────────────────────────────────────────────────────────────────────┘
@@ -1352,7 +1352,7 @@ containerSecurityContext:
 
 ```
   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-  │nebula-registry│     │ nebula-auth  │     │nebula-controller│
+  │specton-registry│     │ specton-auth  │     │specton-controller│
   │  :9090/metrics│     │  :9091/metrics│     │  :8080/metrics│
   └──────┬───────┘     └──────┬───────┘     └──────┬───────┘
          │                    │                    │
@@ -1421,7 +1421,7 @@ containerSecurityContext:
 
 ```
   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-  │nebula-registry│     │ nebula-auth  │     │nebula-controller│
+  │specton-registry│     │ specton-auth  │     │specton-controller│
   │ (JSON stdout) │     │ (JSON stdout) │     │ (JSON stdout) │
   └──────┬───────┘     └──────┬───────┘     └──────┬───────┘
          │                    │                    │
@@ -1444,10 +1444,10 @@ containerSecurityContext:
   │              ELASTICSEARCH / OPENSEARCH                    │
   │                                                           │
   │  Indices:                                                 │
-  │  - nebulacr-auth-YYYY.MM.DD                               │
-  │  - nebulacr-registry-YYYY.MM.DD                           │
-  │  - nebulacr-controller-YYYY.MM.DD                         │
-  │  - nebulacr-audit-YYYY.MM.DD  (audit events)              │
+  │  - spectoncr-auth-YYYY.MM.DD                               │
+  │  - spectoncr-registry-YYYY.MM.DD                           │
+  │  - spectoncr-controller-YYYY.MM.DD                         │
+  │  - spectoncr-audit-YYYY.MM.DD  (audit events)              │
   │                                                           │
   │  Retention: 30 days (configurable)                        │
   └──────────────────────┬───────────────────────────────────┘
@@ -1463,11 +1463,11 @@ containerSecurityContext:
   │  - Rate limit events                                      │
   └──────────────────────────────────────────────────────────┘
 
-  Log format (nebula-auth example):
+  Log format (specton-auth example):
   {
     "timestamp": "2026-03-25T12:00:00.000Z",
     "level": "INFO",
-    "target": "nebula_auth::handlers",
+    "target": "specton_auth::handlers",
     "message": "token issued",
     "request_id": "a1b2c3d4-...",
     "subject": "repo:acme/api:ref:refs/heads/main",
@@ -1482,7 +1482,7 @@ containerSecurityContext:
 
 ```
   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-  │nebula-registry│     │ nebula-auth  │     │nebula-controller│
+  │specton-registry│     │ specton-auth  │     │specton-controller│
   │ (OTLP gRPC)  │     │ (OTLP gRPC)  │     │ (OTLP gRPC)  │
   └──────┬───────┘     └──────┬───────┘     └──────┬───────┘
          │                    │                    │
@@ -1641,8 +1641,8 @@ Information Disclosure, Denial of Service, Elevation of Privilege).
                                                                     JWKS pinning. Audit log flags unusual
                                                                     issuer patterns.
 
-  T13   Tampering   Attacker with K8s access modifies CRDs          RBAC on K8s API: only nebula-controller
-                    to escalate their NebulaCR permissions.         SA can watch/update CRDs. Webhook
+  T13   Tampering   Attacker with K8s access modifies CRDs          RBAC on K8s API: only specton-controller
+                    to escalate their SpectonCR permissions.         SA can watch/update CRDs. Webhook
                                                                     validation (future) rejects invalid
                                                                     CRD changes. Audit log in K8s tracks
                                                                     all CRD mutations.
@@ -1681,7 +1681,7 @@ Information Disclosure, Denial of Service, Elevation of Privilege).
 
 ## Appendix A: Configuration Reference
 
-Key configuration values from `RegistryConfig` (see `nebula-common/src/config.rs`):
+Key configuration values from `RegistryConfig` (see `specton-common/src/config.rs`):
 
 | Section         | Field                   | Default                          | Description                          |
 |-----------------|-------------------------|----------------------------------|--------------------------------------|
@@ -1689,13 +1689,13 @@ Key configuration values from `RegistryConfig` (see `nebula-common/src/config.rs
 | server          | auth_listen_addr        | 0.0.0.0:5001                     | Auth service bind address            |
 | server          | metrics_addr            | 0.0.0.0:9090                     | Metrics endpoint bind address        |
 | auth            | signing_algorithm       | RS256                            | JWT signing algorithm                |
-| auth            | signing_key_path        | /etc/nebulacr/keys/private.pem   | RSA private key for signing          |
-| auth            | verification_key_path   | /etc/nebulacr/keys/public.pem    | RSA public key for verification      |
+| auth            | signing_key_path        | /etc/spectoncr/keys/private.pem   | RSA private key for signing          |
+| auth            | verification_key_path   | /etc/spectoncr/keys/public.pem    | RSA public key for verification      |
 | auth            | token_ttl_seconds       | 300                              | Access token lifetime (5 min)        |
-| auth            | issuer                  | nebulacr                         | JWT `iss` claim value                |
-| auth            | audience                | nebulacr-registry                | JWT `aud` claim value                |
+| auth            | issuer                  | spectoncr                         | JWT `iss` claim value                |
+| auth            | audience                | spectoncr-registry                | JWT `aud` claim value                |
 | storage         | backend                 | filesystem                       | Storage backend type                 |
-| storage         | root                    | /var/lib/nebulacr/data           | Root path or bucket name             |
+| storage         | root                    | /var/lib/spectoncr/data           | Root path or bucket name             |
 | rate_limit      | default_rps             | 100                              | Per-tenant requests/second           |
 | rate_limit      | ip_rps                  | 50                               | Per-IP requests/second (unauthed)    |
 | rate_limit      | token_issue_rpm         | 60                               | Token issuance requests/minute       |
@@ -1705,7 +1705,7 @@ Key configuration values from `RegistryConfig` (see `nebula-common/src/config.rs
 
 ## Appendix B: CRD API Group
 
-All CRDs belong to the `nebulacr.io` API group, version `v1alpha1`.
+All CRDs belong to the `spectoncr.io` API group, version `v1alpha1`.
 
 | CRD            | Scope      | Short Name | Key Fields                                          |
 |----------------|------------|------------|-----------------------------------------------------|
@@ -1716,7 +1716,7 @@ All CRDs belong to the `nebulacr.io` API group, version `v1alpha1`.
 
 ## Appendix C: Error Code Mapping
 
-NebulaCR maps internal errors to OCI Distribution error codes (from `nebula-common/src/errors.rs`):
+SpectonCR maps internal errors to OCI Distribution error codes (from `specton-common/src/errors.rs`):
 
 | Internal Error       | OCI Code              | HTTP Status | Description                        |
 |---------------------|-----------------------|-------------|------------------------------------|

@@ -4,22 +4,22 @@
 > first-class object with a state machine: `pending → scanning →
 > approved | quarantined → promoted`. Immutability is a per-Project
 > setting (the field already exists at
-> `crates/nebula-controller/src/main.rs:109`). Quarantine blocks pulls
+> `crates/specton-controller/src/main.rs:109`). Quarantine blocks pulls
 > for everyone except holders of the new `BypassQuarantine` permission.
 
 ## a. Problem statement
 
 ACR has tag immutability via repository policies; Nexus has the
-quarantine workflow as part of Sonatype Lifecycle. NebulaCR's
+quarantine workflow as part of Sonatype Lifecycle. SpectonCR's
 `put_manifest` blindly overwrites tag links
-(`crates/nebula-registry/src/main.rs:929-942`) — a vulnerable rebuild
+(`crates/specton-registry/src/main.rs:929-942`) — a vulnerable rebuild
 under the same tag pollutes downstream pulls. There is no concept of
 "this tag is awaiting review". Without a state machine, the admission
 gate can only block at pull time, not at push.
 
 ## b. Proposed approach
 
-New module `crates/nebula-registry/src/tagstate.rs`. Owning struct:
+New module `crates/specton-registry/src/tagstate.rs`. Owning struct:
 
 ```rust
 pub struct TagStateService { db: PgPool, redis: RedisClient }
@@ -59,27 +59,27 @@ admission gate (002) is the body of "approved"; this layer is the
 state-machine wrapper.
 
 Worker side: the existing scanner worker
-(`crates/nebula-scanner/src/worker.rs`) gets a callback hook so a
+(`crates/specton-scanner/src/worker.rs`) gets a callback hook so a
 completed scan transitions the tag — `Pending → Scanning → Approved`
 (if policy passes) or `→ Quarantined`. The transition writes an audit
 row.
 
 `BypassQuarantine` is a new `Action` variant in
-`crates/nebula-common/src/models.rs:95`. Granted only to roles with
+`crates/specton-common/src/models.rs:95`. Granted only to roles with
 explicit `bypass-quarantine` access policy (no role gets it by default,
 not even Admin — admins can grant to themselves, which is auditable).
 
-CLI: `nebulacr tag list --state quarantined`,
-`nebulacr tag approve <ref>`, `nebulacr tag quarantine <ref> --reason
+CLI: `spectoncr tag list --state quarantined`,
+`spectoncr tag approve <ref>`, `spectoncr tag quarantine <ref> --reason
 "..."`. MCP: `transition_tag_state`, `list_tag_state`.
 
 ## c. New/changed CRDs
 
 No new CRD. The `Project` CRD already exposes `immutable_tags` at
-`crates/nebula-controller/src/main.rs:109`. We add one optional field:
+`crates/specton-controller/src/main.rs:109`. We add one optional field:
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Project
 metadata:
   name: prod
@@ -106,7 +106,7 @@ spec:
 
 2-segment paths mirror these. Existing `PUT manifests/{tag}` returns
 `409 MANIFEST_TAG_IMMUTABLE` (new error variant in
-`crates/nebula-common/src/errors.rs`) when the immutability check fails.
+`crates/specton-common/src/errors.rs`) when the immutability check fails.
 
 ## e. Storage / Postgres schema
 
@@ -159,7 +159,7 @@ mirrored into the audit log — but kept here for cheap UI rendering).
   by `UNIQUE (tenant, project, repository, tag)` + an `ON CONFLICT DO
   NOTHING` insert + post-hoc digest comparison. Loser sees 409.
 - **Bypass abuse.** Every bypass is audited (005). Rate-limited per
-  subject in `crates/nebula-registry/src/main.rs:331` (existing rate
+  subject in `crates/specton-registry/src/main.rs:331` (existing rate
   limiter), 5/hour by default.
 
 ## g. Migration story
@@ -174,11 +174,11 @@ the controller backfills `tag_records` for existing tags as `Approved`
 
 | Layer                | Where                                                  | Notes                                |
 | -------------------- | ------------------------------------------------------ | ------------------------------------ |
-| State machine        | `crates/nebula-registry/tests/tagstate_unit.rs`        | Postgres testcontainer               |
-| Immutability check   | `crates/nebula-registry/tests/immutable_push.rs`       | Real registry, two PUTs              |
-| Quarantine pull-block | `crates/nebula-registry/tests/quarantine_pull.rs`     | Real pull, with and without bypass   |
-| Scan→approve         | `crates/nebula-scanner/tests/worker_transition.rs`     | Mock scanner result, assert callback |
-| Stuck-state sweeper  | `crates/nebula-controller/tests/tag_sweeper.rs`        | Time-skip, assert recovery           |
+| State machine        | `crates/specton-registry/tests/tagstate_unit.rs`        | Postgres testcontainer               |
+| Immutability check   | `crates/specton-registry/tests/immutable_push.rs`       | Real registry, two PUTs              |
+| Quarantine pull-block | `crates/specton-registry/tests/quarantine_pull.rs`     | Real pull, with and without bypass   |
+| Scan→approve         | `crates/specton-scanner/tests/worker_transition.rs`     | Mock scanner result, assert callback |
+| Stuck-state sweeper  | `crates/specton-controller/tests/tag_sweeper.rs`        | Time-skip, assert recovery           |
 
 ## i. Implementation slice count
 

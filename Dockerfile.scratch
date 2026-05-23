@@ -1,5 +1,5 @@
 # ============================================================================
-# NebulaCR Distroless Dockerfile
+# SpectonCR Distroless Dockerfile
 # ============================================================================
 #
 # An optimized container image variant using Google's distroless base.
@@ -22,7 +22,7 @@
 #       image alongside for debug pods if needed
 #
 # Build:
-#   docker build -f Dockerfile.scratch -t bwalia/nebulacr:distroless .
+#   docker build -f Dockerfile.scratch -t specton/spectoncr:distroless .
 #
 # ============================================================================
 
@@ -37,37 +37,37 @@ WORKDIR /build
 # project so that changing application source does not invalidate the
 # dependency layer.
 COPY Cargo.toml Cargo.lock ./
-COPY crates/nebula-common/Cargo.toml      crates/nebula-common/Cargo.toml
-COPY crates/nebula-auth/Cargo.toml        crates/nebula-auth/Cargo.toml
-COPY crates/nebula-registry/Cargo.toml    crates/nebula-registry/Cargo.toml
-COPY crates/nebula-controller/Cargo.toml  crates/nebula-controller/Cargo.toml
-COPY crates/nebula-resilience/Cargo.toml  crates/nebula-resilience/Cargo.toml
-COPY crates/nebula-mirror/Cargo.toml      crates/nebula-mirror/Cargo.toml
-COPY crates/nebula-replication/Cargo.toml crates/nebula-replication/Cargo.toml
+COPY crates/specton-common/Cargo.toml      crates/specton-common/Cargo.toml
+COPY crates/specton-auth/Cargo.toml        crates/specton-auth/Cargo.toml
+COPY crates/specton-registry/Cargo.toml    crates/specton-registry/Cargo.toml
+COPY crates/specton-controller/Cargo.toml  crates/specton-controller/Cargo.toml
+COPY crates/specton-resilience/Cargo.toml  crates/specton-resilience/Cargo.toml
+COPY crates/specton-mirror/Cargo.toml      crates/specton-mirror/Cargo.toml
+COPY crates/specton-replication/Cargo.toml crates/specton-replication/Cargo.toml
 
 # Create stub source files so Cargo can resolve the workspace
-RUN mkdir -p crates/nebula-common/src      && echo "pub fn _stub(){}" > crates/nebula-common/src/lib.rs \
- && mkdir -p crates/nebula-auth/src        && echo "fn main(){}" > crates/nebula-auth/src/main.rs \
- && mkdir -p crates/nebula-registry/src    && echo "fn main(){}" > crates/nebula-registry/src/main.rs \
- && mkdir -p crates/nebula-controller/src  && echo "fn main(){}" > crates/nebula-controller/src/main.rs \
- && mkdir -p crates/nebula-resilience/src  && echo "pub fn _stub(){}" > crates/nebula-resilience/src/lib.rs \
- && mkdir -p crates/nebula-mirror/src      && echo "pub fn _stub(){}" > crates/nebula-mirror/src/lib.rs \
- && mkdir -p crates/nebula-replication/src && echo "pub fn _stub(){}" > crates/nebula-replication/src/lib.rs
+RUN mkdir -p crates/specton-common/src      && echo "pub fn _stub(){}" > crates/specton-common/src/lib.rs \
+ && mkdir -p crates/specton-auth/src        && echo "fn main(){}" > crates/specton-auth/src/main.rs \
+ && mkdir -p crates/specton-registry/src    && echo "fn main(){}" > crates/specton-registry/src/main.rs \
+ && mkdir -p crates/specton-controller/src  && echo "fn main(){}" > crates/specton-controller/src/main.rs \
+ && mkdir -p crates/specton-resilience/src  && echo "pub fn _stub(){}" > crates/specton-resilience/src/lib.rs \
+ && mkdir -p crates/specton-mirror/src      && echo "pub fn _stub(){}" > crates/specton-mirror/src/lib.rs \
+ && mkdir -p crates/specton-replication/src && echo "pub fn _stub(){}" > crates/specton-replication/src/lib.rs
 
 # Build dependencies only (this layer is cached unless Cargo.toml/lock change)
 RUN cargo build --release --workspace 2>&1 || true
 
 # Remove the stub artifacts so the real source gets compiled
-RUN rm -rf crates/nebula-common/src crates/nebula-auth/src crates/nebula-registry/src \
-    crates/nebula-controller/src crates/nebula-resilience/src crates/nebula-mirror/src \
-    crates/nebula-replication/src \
- && rm -rf target/release/.fingerprint/nebula-*
+RUN rm -rf crates/specton-common/src crates/specton-auth/src crates/specton-registry/src \
+    crates/specton-controller/src crates/specton-resilience/src crates/specton-mirror/src \
+    crates/specton-replication/src \
+ && rm -rf target/release/.fingerprint/specton-*
 
 # Copy the actual source code
 COPY crates/ crates/
 
 # Build the real binaries
-RUN cargo build --release --bin nebula-auth --bin nebula-registry
+RUN cargo build --release --bin specton-auth --bin specton-registry
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
 # distroless/cc-debian12 includes glibc and libgcc -- the minimum needed to
@@ -77,8 +77,8 @@ RUN cargo build --release --bin nebula-auth --bin nebula-registry
 FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
 # Copy only the two compiled binaries. No shell, no curl, no tini.
-COPY --from=builder /build/target/release/nebula-auth     /usr/local/bin/nebula-auth
-COPY --from=builder /build/target/release/nebula-registry /usr/local/bin/nebula-registry
+COPY --from=builder /build/target/release/specton-auth     /usr/local/bin/specton-auth
+COPY --from=builder /build/target/release/specton-registry /usr/local/bin/specton-registry
 
 # Expose ports:
 #   5000 - OCI Registry API (Docker Registry HTTP API V2)
@@ -94,6 +94,6 @@ EXPOSE 5000 5001 9090
 # as expected.
 
 # Default: run the registry service.
-# Override with ["nebula-auth"] to run the auth service:
-#   docker run bwalia/nebulacr:distroless nebula-auth
-ENTRYPOINT ["nebula-registry"]
+# Override with ["specton-auth"] to run the auth service:
+#   docker run specton/spectoncr:distroless specton-auth
+ENTRYPOINT ["specton-registry"]

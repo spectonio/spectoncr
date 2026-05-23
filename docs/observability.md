@@ -1,6 +1,6 @@
 # Observability
 
-NebulaCR ships an enterprise-grade observability bundle: Prometheus metrics across every layer (HTTP, storage, mirror, replication, webhooks, auth), structured JSON logs, OpenTelemetry tracing, six pre-built Grafana dashboards, and a PrometheusRule with SLO-style alerts.
+SpectonCR ships an enterprise-grade observability bundle: Prometheus metrics across every layer (HTTP, storage, mirror, replication, webhooks, auth), structured JSON logs, OpenTelemetry tracing, six pre-built Grafana dashboards, and a PrometheusRule with SLO-style alerts.
 
 The bundled artifacts live under [`deploy/observability/`](../deploy/observability/) and are wired up by `docker-compose.observability.yml` for local development; for Kubernetes use the chart's `serviceMonitor.enabled` and `prometheusRule.enabled` toggles.
 
@@ -33,26 +33,26 @@ Grafana auto-loads the dashboards from `deploy/observability/grafana/dashboards/
 
 | File | UID | Audience | What it shows |
 |---|---|---|---|
-| `nebulacr-overview.json` | `nebulacr-overview` | Ops on-call | Golden signals: request rate, error rate, p50/p95/p99 latency, push/pull throughput, in-flight requests, rate-limit rejections |
-| `nebulacr-storage.json` | `nebulacr-storage` | Ops / SRE | Storage backend ops/sec, error rate, p95/p99 latency by op, retry attempts, circuit breaker state & transitions |
-| `nebulacr-auth.json` | `nebulacr-auth` | Ops / SecOps | Token issuance, auth failures broken down by reason, OIDC outcomes by provider, robot/group activity, auth-route latency |
-| `nebulacr-mirror.json` | `nebulacr-mirror` | Ops | Mirror cache miss rate, upstream request outcomes, p95 upstream latency, upstream circuit breakers, cache population bytes |
-| `nebulacr-replication.json` | `nebulacr-replication` | Ops / Platform | Replication queue depth, lag by source region, success/error per region, region health, failover transitions, replication throughput |
-| `nebulacr-tenants.json` | `nebulacr-tenants` | Developers / Tenants | Per-tenant push/pull bytes, top 10 tenants by usage, tenant rate-limit pressure, webhook delivery |
-| `nebulacr-fleet.json` | `nebulacr-fleet` | Leadership / SLO | Availability SLO (24h non-5xx ratio), p99 latency SLO, active circuit breakers, error budget burn, uptime |
+| `spectoncr-overview.json` | `spectoncr-overview` | Ops on-call | Golden signals: request rate, error rate, p50/p95/p99 latency, push/pull throughput, in-flight requests, rate-limit rejections |
+| `spectoncr-storage.json` | `spectoncr-storage` | Ops / SRE | Storage backend ops/sec, error rate, p95/p99 latency by op, retry attempts, circuit breaker state & transitions |
+| `spectoncr-auth.json` | `spectoncr-auth` | Ops / SecOps | Token issuance, auth failures broken down by reason, OIDC outcomes by provider, robot/group activity, auth-route latency |
+| `spectoncr-mirror.json` | `spectoncr-mirror` | Ops | Mirror cache miss rate, upstream request outcomes, p95 upstream latency, upstream circuit breakers, cache population bytes |
+| `spectoncr-replication.json` | `spectoncr-replication` | Ops / Platform | Replication queue depth, lag by source region, success/error per region, region health, failover transitions, replication throughput |
+| `spectoncr-tenants.json` | `spectoncr-tenants` | Developers / Tenants | Per-tenant push/pull bytes, top 10 tenants by usage, tenant rate-limit pressure, webhook delivery |
+| `spectoncr-fleet.json` | `spectoncr-fleet` | Leadership / SLO | Availability SLO (24h non-5xx ratio), p99 latency SLO, active circuit breakers, error budget burn, uptime |
 
 ## Bundled alert rules
 
-The Prometheus rule file at [`deploy/observability/prometheus/rules/nebulacr-alerts.yml`](../deploy/observability/prometheus/rules/nebulacr-alerts.yml) defines six rule groups:
+The Prometheus rule file at [`deploy/observability/prometheus/rules/spectoncr-alerts.yml`](../deploy/observability/prometheus/rules/spectoncr-alerts.yml) defines six rule groups:
 
 | Group | Highlights |
 |---|---|
-| `nebulacr.availability` | `NebulaCRTargetDown`, `NebulaCRHigh5xxRate`, `NebulaCRP99LatencyHigh` |
-| `nebulacr.storage` | `NebulaCRStorageErrorRate`, `NebulaCRStorageP99Slow`, `NebulaCRCircuitBreakerOpen`, `NebulaCRRetryStorm` |
-| `nebulacr.mirror` | `NebulaCRMirrorUpstreamErrors`, `NebulaCRMirrorCacheHitRatioLow` |
-| `nebulacr.replication` | `NebulaCRReplicationLag`, `NebulaCRReplicationQueueBacklog`, `NebulaCRReplicationFailures`, `NebulaCRRegionUnhealthy` |
-| `nebulacr.auth` | `NebulaCRAuthFailureSpike`, `NebulaCRTokenIssuanceStopped` |
-| `nebulacr.webhook` | `NebulaCRWebhookDeliveryFailing` |
+| `spectoncr.availability` | `SpectonCRTargetDown`, `SpectonCRHigh5xxRate`, `SpectonCRP99LatencyHigh` |
+| `spectoncr.storage` | `SpectonCRStorageErrorRate`, `SpectonCRStorageP99Slow`, `SpectonCRCircuitBreakerOpen`, `SpectonCRRetryStorm` |
+| `spectoncr.mirror` | `SpectonCRMirrorUpstreamErrors`, `SpectonCRMirrorCacheHitRatioLow` |
+| `spectoncr.replication` | `SpectonCRReplicationLag`, `SpectonCRReplicationQueueBacklog`, `SpectonCRReplicationFailures`, `SpectonCRRegionUnhealthy` |
+| `spectoncr.auth` | `SpectonCRAuthFailureSpike`, `SpectonCRTokenIssuanceStopped` |
+| `spectoncr.webhook` | `SpectonCRWebhookDeliveryFailing` |
 
 The same rules ship as a Helm `PrometheusRule` template. Enable in `values.yaml`:
 
@@ -70,33 +70,33 @@ prometheusRule:
 
 ## Metric reference
 
-NebulaCR exposes Prometheus metrics from both services on `/metrics`. The registry can also bind a dedicated `metrics_addr` (default `:9090`) for out-of-band scraping. All new instrumentation uses the `nebulacr_*` namespace; the legacy per-operation counters keep the `registry_*` prefix for backwards compatibility with older dashboards.
+SpectonCR exposes Prometheus metrics from both services on `/metrics`. The registry can also bind a dedicated `metrics_addr` (default `:9090`) for out-of-band scraping. All new instrumentation uses the `spectoncr_*` namespace; the legacy per-operation counters keep the `registry_*` prefix for backwards compatibility with older dashboards.
 
 ### HTTP / Service-level (registry + auth)
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `nebulacr_http_requests_total` | Counter | `route`, `method`, `status_class` | Registry HTTP requests, route is a low-cardinality classifier (manifest_get, blob_get, blob_upload_chunk, …) |
-| `nebulacr_http_request_duration_seconds` | Histogram | `route`, `method` | Registry HTTP request latency |
-| `nebulacr_http_requests_in_flight` | Gauge | `route` | Currently in-flight registry requests |
-| `nebulacr_auth_http_requests_total` | Counter | `route`, `method`, `status_class` | Auth-service HTTP requests |
-| `nebulacr_auth_http_request_duration_seconds` | Histogram | `route`, `method` | Auth-service HTTP request latency |
-| `nebulacr_auth_http_requests_in_flight` | Gauge | `route` | In-flight auth-service requests |
-| `nebulacr_rate_limit_rejected_total` | Counter | `tenant` | Requests rejected by the registry rate limiter |
-| `nebulacr_build_info` | Gauge | `service`, `version`, `rustc` | Static `1` series; labels carry build metadata |
-| `nebulacr_process_start_time_seconds` | Gauge | – | Wall-time the process started (for uptime calculations) |
+| `spectoncr_http_requests_total` | Counter | `route`, `method`, `status_class` | Registry HTTP requests, route is a low-cardinality classifier (manifest_get, blob_get, blob_upload_chunk, …) |
+| `spectoncr_http_request_duration_seconds` | Histogram | `route`, `method` | Registry HTTP request latency |
+| `spectoncr_http_requests_in_flight` | Gauge | `route` | Currently in-flight registry requests |
+| `spectoncr_auth_http_requests_total` | Counter | `route`, `method`, `status_class` | Auth-service HTTP requests |
+| `spectoncr_auth_http_request_duration_seconds` | Histogram | `route`, `method` | Auth-service HTTP request latency |
+| `spectoncr_auth_http_requests_in_flight` | Gauge | `route` | In-flight auth-service requests |
+| `spectoncr_rate_limit_rejected_total` | Counter | `tenant` | Requests rejected by the registry rate limiter |
+| `spectoncr_build_info` | Gauge | `service`, `version`, `rustc` | Static `1` series; labels carry build metadata |
+| `spectoncr_process_start_time_seconds` | Gauge | – | Wall-time the process started (for uptime calculations) |
 
 ### Storage backend (resilience layer)
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `nebulacr_storage_operations_total` | Counter | `operation`, `outcome` | All `ObjectStore` operations through the resilient wrapper |
-| `nebulacr_storage_operation_errors_total` | Counter | `operation` | Subset of the above where `outcome="error"` |
-| `nebulacr_storage_operation_duration_seconds` | Histogram | `operation` | End-to-end latency for each storage op |
-| `nebulacr_retry_attempts_total` | Counter | `operation`, `outcome` (`recovered`, `exhausted`) | Retry attempts emitted by the retry policy |
-| `nebulacr_circuit_breaker_state` | Gauge | `breaker` | 0 = closed, 1 = half-open, 2 = open |
-| `nebulacr_circuit_breaker_transitions_total` | Counter | `breaker`, `to` | Transitions counted per target state |
-| `nebulacr_circuit_breaker_rejections_total` | Counter | `breaker` | Calls short-circuited because the breaker was open |
+| `spectoncr_storage_operations_total` | Counter | `operation`, `outcome` | All `ObjectStore` operations through the resilient wrapper |
+| `spectoncr_storage_operation_errors_total` | Counter | `operation` | Subset of the above where `outcome="error"` |
+| `spectoncr_storage_operation_duration_seconds` | Histogram | `operation` | End-to-end latency for each storage op |
+| `spectoncr_retry_attempts_total` | Counter | `operation`, `outcome` (`recovered`, `exhausted`) | Retry attempts emitted by the retry policy |
+| `spectoncr_circuit_breaker_state` | Gauge | `breaker` | 0 = closed, 1 = half-open, 2 = open |
+| `spectoncr_circuit_breaker_transitions_total` | Counter | `breaker`, `to` | Transitions counted per target state |
+| `spectoncr_circuit_breaker_rejections_total` | Counter | `breaker` | Calls short-circuited because the breaker was open |
 
 The `breaker` label is `storage` for the resilient object store wrapper, `upstream-<name>` for each mirror upstream, and `replication-<region>` for each replication peer.
 
@@ -104,37 +104,37 @@ The `breaker` label is `storage` for the resilient object store wrapper, `upstre
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `nebulacr_mirror_cache_misses_total` | Counter | `kind` (`manifest`, `blob`) | Local lookup missed and we contacted an upstream |
-| `nebulacr_mirror_fetch_total` | Counter | `kind`, `outcome` (`fetched`, `not_found`, `error`, `skipped_scope`, `skipped_unlinked`, `no_upstreams`) | Final result of a mirror fetch |
-| `nebulacr_mirror_cache_population_bytes_total` | Counter | `kind`, `upstream` | Bytes cached locally after upstream fetch |
-| `nebulacr_mirror_upstream_requests_total` | Counter | `upstream`, `kind`, `outcome` (`success`, `not_found`, `auth_error`, `upstream_5xx`, `breaker_open`, `error`) | Per-upstream result of a single fetch attempt |
-| `nebulacr_mirror_upstream_latency_seconds` | Histogram | `upstream`, `kind` | Upstream HTTP latency |
-| `nebulacr_mirror_upstream_bytes_total` | Counter | `upstream`, `kind` | Bytes fetched from upstream |
+| `spectoncr_mirror_cache_misses_total` | Counter | `kind` (`manifest`, `blob`) | Local lookup missed and we contacted an upstream |
+| `spectoncr_mirror_fetch_total` | Counter | `kind`, `outcome` (`fetched`, `not_found`, `error`, `skipped_scope`, `skipped_unlinked`, `no_upstreams`) | Final result of a mirror fetch |
+| `spectoncr_mirror_cache_population_bytes_total` | Counter | `kind`, `upstream` | Bytes cached locally after upstream fetch |
+| `spectoncr_mirror_upstream_requests_total` | Counter | `upstream`, `kind`, `outcome` (`success`, `not_found`, `auth_error`, `upstream_5xx`, `breaker_open`, `error`) | Per-upstream result of a single fetch attempt |
+| `spectoncr_mirror_upstream_latency_seconds` | Histogram | `upstream`, `kind` | Upstream HTTP latency |
+| `spectoncr_mirror_upstream_bytes_total` | Counter | `upstream`, `kind` | Bytes fetched from upstream |
 
 ### Multi-region replication
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `nebulacr_replication_enqueued_total` | Counter | `kind` | Replication events enqueued by request handlers |
-| `nebulacr_replication_enqueue_failures_total` | Counter | – | Channel-send failures during enqueue |
-| `nebulacr_replication_queue_depth` | Gauge | – | Live depth of the bounded MPSC channel |
-| `nebulacr_replication_lag_seconds` | Gauge | `source_region` | Wall-time between event creation and the replicator dequeueing it |
-| `nebulacr_replication_events_total` | Counter | `region`, `kind`, `outcome` | Per-region replication attempts |
-| `nebulacr_replication_event_duration_seconds` | Histogram | `region`, `kind` | Per-region replication latency |
-| `nebulacr_replication_bytes_total` | Counter | `region`, `kind` | Bytes successfully replicated |
-| `nebulacr_region_healthy` | Gauge | `region` | 1 = healthy, 0 = unhealthy (failover manager) |
-| `nebulacr_region_health_check_latency_seconds` | Gauge | `region` | Latency of the most recent health probe |
-| `nebulacr_region_health_transitions_total` | Counter | `region`, `to` | Health state transitions per region |
+| `spectoncr_replication_enqueued_total` | Counter | `kind` | Replication events enqueued by request handlers |
+| `spectoncr_replication_enqueue_failures_total` | Counter | – | Channel-send failures during enqueue |
+| `spectoncr_replication_queue_depth` | Gauge | – | Live depth of the bounded MPSC channel |
+| `spectoncr_replication_lag_seconds` | Gauge | `source_region` | Wall-time between event creation and the replicator dequeueing it |
+| `spectoncr_replication_events_total` | Counter | `region`, `kind`, `outcome` | Per-region replication attempts |
+| `spectoncr_replication_event_duration_seconds` | Histogram | `region`, `kind` | Per-region replication latency |
+| `spectoncr_replication_bytes_total` | Counter | `region`, `kind` | Bytes successfully replicated |
+| `spectoncr_region_healthy` | Gauge | `region` | 1 = healthy, 0 = unhealthy (failover manager) |
+| `spectoncr_region_health_check_latency_seconds` | Gauge | `region` | Latency of the most recent health probe |
+| `spectoncr_region_health_transitions_total` | Counter | `region`, `to` | Health state transitions per region |
 
 ### Webhook notifier
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `nebulacr_webhook_enqueued_total` | Counter | `event` | Events handed to the notifier |
-| `nebulacr_webhook_enqueue_failures_total` | Counter | `event` | Channel-send failures |
-| `nebulacr_webhook_delivery_attempts_total` | Counter | `endpoint`, `outcome` (`non_success_status`, `transport_error`) | Individual delivery attempts that failed |
-| `nebulacr_webhook_deliveries_total` | Counter | `endpoint`, `event`, `outcome` (`success`, `failed`) | Final delivery outcome per event |
-| `nebulacr_webhook_delivery_duration_seconds` | Histogram | `endpoint`, `event` | End-to-end delivery latency |
+| `spectoncr_webhook_enqueued_total` | Counter | `event` | Events handed to the notifier |
+| `spectoncr_webhook_enqueue_failures_total` | Counter | `event` | Channel-send failures |
+| `spectoncr_webhook_delivery_attempts_total` | Counter | `endpoint`, `outcome` (`non_success_status`, `transport_error`) | Individual delivery attempts that failed |
+| `spectoncr_webhook_deliveries_total` | Counter | `endpoint`, `event`, `outcome` (`success`, `failed`) | Final delivery outcome per event |
+| `spectoncr_webhook_delivery_duration_seconds` | Histogram | `endpoint`, `event` | End-to-end delivery latency |
 
 ### Auth (existing `registry_*` series, kept for compatibility)
 
@@ -173,7 +173,7 @@ metrics_addr = "0.0.0.0:9090"
 ```
 
 ```bash
-NEBULACR_SERVER__METRICS_ADDR=0.0.0.0:9090
+SPECTONCR_SERVER__METRICS_ADDR=0.0.0.0:9090
 ```
 
 ### Kubernetes ServiceMonitor & PrometheusRule
@@ -196,22 +196,22 @@ The chart ships both a `ServiceMonitor` and a `PrometheusRule` with the same ale
 
 ```yaml
 scrape_configs:
-  - job_name: nebulacr-registry
+  - job_name: spectoncr-registry
     metrics_path: /metrics
     static_configs:
-      - targets: ["nebulacr-registry.nebulacr.svc.cluster.local:5000"]
+      - targets: ["spectoncr-registry.spectoncr.svc.cluster.local:5000"]
 
-  - job_name: nebulacr-auth
+  - job_name: spectoncr-auth
     metrics_path: /metrics
     static_configs:
-      - targets: ["nebulacr-auth.nebulacr.svc.cluster.local:5001"]
+      - targets: ["spectoncr-auth.spectoncr.svc.cluster.local:5001"]
 ```
 
 ---
 
 ## Structured JSON Logging
 
-NebulaCR uses the `tracing` framework with structured JSON output recommended for production.
+SpectonCR uses the `tracing` framework with structured JSON output recommended for production.
 
 ### Configuration
 
@@ -223,11 +223,11 @@ log_format = "json"
 
 ```bash
 # Using the tracing env-filter syntax
-RUST_LOG="info,nebula_registry=debug,nebula_common=debug"
+RUST_LOG="info,specton_registry=debug,specton_common=debug"
 
-# Or via NebulaCR config
-NEBULACR_OBSERVABILITY__LOG_LEVEL=info
-NEBULACR_OBSERVABILITY__LOG_FORMAT=json
+# Or via SpectonCR config
+SPECTONCR_OBSERVABILITY__LOG_LEVEL=info
+SPECTONCR_OBSERVABILITY__LOG_FORMAT=json
 ```
 
 ### Log Format
@@ -238,7 +238,7 @@ JSON log output looks like this:
 {
   "timestamp": "2025-01-15T10:30:00.123456Z",
   "level": "INFO",
-  "target": "nebula_registry::routes",
+  "target": "specton_registry::routes",
   "message": "manifest pushed",
   "span": {
     "name": "push_manifest",
@@ -271,16 +271,16 @@ The `RUST_LOG` variable supports per-crate filters:
 
 ```bash
 # Debug for registry, info for everything else
-RUST_LOG="info,nebula_registry=debug"
+RUST_LOG="info,specton_registry=debug"
 
 # Debug for auth, warn for everything else
-RUST_LOG="warn,nebula_auth=debug"
+RUST_LOG="warn,specton_auth=debug"
 
 # Trace storage operations
-RUST_LOG="info,nebula_common::storage=trace"
+RUST_LOG="info,specton_common::storage=trace"
 
-# Debug all NebulaCR crates
-RUST_LOG="info,nebula_registry=debug,nebula_auth=debug,nebula_common=debug"
+# Debug all SpectonCR crates
+RUST_LOG="info,specton_registry=debug,specton_auth=debug,specton_common=debug"
 ```
 
 ### Pretty Logging (Development)
@@ -288,14 +288,14 @@ RUST_LOG="info,nebula_registry=debug,nebula_auth=debug,nebula_common=debug"
 For local development, use the human-readable format:
 
 ```bash
-NEBULACR_OBSERVABILITY__LOG_FORMAT=pretty
+SPECTONCR_OBSERVABILITY__LOG_FORMAT=pretty
 ```
 
 ---
 
 ## OpenTelemetry Tracing
 
-NebulaCR supports distributed tracing via the OpenTelemetry Protocol (OTLP). Traces are exported to any OTLP-compatible collector (Jaeger, Grafana Tempo, Datadog, etc.).
+SpectonCR supports distributed tracing via the OpenTelemetry Protocol (OTLP). Traces are exported to any OTLP-compatible collector (Jaeger, Grafana Tempo, Datadog, etc.).
 
 ### Configuration
 
@@ -305,7 +305,7 @@ otlp_endpoint = "http://otel-collector:4317"
 ```
 
 ```bash
-NEBULACR_OBSERVABILITY__OTLP_ENDPOINT=http://otel-collector:4317
+SPECTONCR_OBSERVABILITY__OTLP_ENDPOINT=http://otel-collector:4317
 ```
 
 ### Helm Values
@@ -329,7 +329,7 @@ observability:
 
 ### Trace Context
 
-NebulaCR propagates trace context via the W3C `traceparent` header. Traces span across the auth and registry services when both are configured with the same collector.
+SpectonCR propagates trace context via the W3C `traceparent` header. Traces span across the auth and registry services when both are configured with the same collector.
 
 A typical push trace includes spans for:
 
@@ -367,7 +367,7 @@ Then add to the registry and auth services:
 
 ```yaml
 environment:
-  NEBULACR_OBSERVABILITY__OTLP_ENDPOINT: "http://tempo:4317"
+  SPECTONCR_OBSERVABILITY__OTLP_ENDPOINT: "http://tempo:4317"
 ```
 
 ---
@@ -380,7 +380,7 @@ The bundled JSON dashboards listed at the top of this doc cover every layer of t
 
 ## Health Endpoints
 
-NebulaCR exposes health check endpoints on both services.
+SpectonCR exposes health check endpoints on both services.
 
 ### Registry Health
 

@@ -10,7 +10,7 @@
 #   SLACK_WEBHOOK_URL
 #     from $SLACK_FILE (default /tmp/slack), with trailing newline trimmed.
 #   DOCKER_HUB_USERNAME / DOCKER_HUB_PASSWORD
-#   NEBULACR_USERNAME / NEBULACR_PASSWORD / NEBULACR_REGISTRY / NEBULACR_MIRROR
+#   SPECTONCR_USERNAME / SPECTONCR_PASSWORD / SPECTONCR_REGISTRY / SPECTONCR_MIRROR
 #     from environment variables of the same name.
 #   MIRROR_SSH_KEY
 #     from $MIRROR_SSH_KEY_FILE (default ~/.ssh/id_rsa) — private key used by
@@ -20,12 +20,12 @@
 # Values are never echoed; only names + byte lengths are logged.
 #
 # Usage:
-#   scripts/sync-gh-secrets.sh                  # push to bwalia/nebulacr
+#   scripts/sync-gh-secrets.sh                  # push to spectonio/spectoncr
 #   REPO=other/repo scripts/sync-gh-secrets.sh  # override repo
 #   DRY_RUN=1 scripts/sync-gh-secrets.sh        # show what would happen
 set -euo pipefail
 
-REPO="${REPO:-bwalia/nebulacr}"
+REPO="${REPO:-spectonio/spectoncr}"
 AWS_PROFILE="${AWS_PROFILE:-kubepilot}"
 KUBECONFIG_FILE="${KUBECONFIG_FILE:-$HOME/.kube/config}"
 SLACK_FILE="${SLACK_FILE:-/tmp/slack}"
@@ -88,8 +88,8 @@ fi
 # ── Env-var passthrough ────────────────────────────────────────────────────
 for name in \
   DOCKER_HUB_USERNAME DOCKER_HUB_PASSWORD \
-  NEBULACR_USERNAME NEBULACR_PASSWORD \
-  NEBULACR_REGISTRY NEBULACR_MIRROR
+  SPECTONCR_USERNAME SPECTONCR_PASSWORD \
+  SPECTONCR_REGISTRY SPECTONCR_MIRROR
 do
   val="${!name:-}"
   if [ -n "$val" ]; then

@@ -1,4 +1,4 @@
-# NebulaCR Next-Major-Release Design Index
+# SpectonCR Next-Major-Release Design Index
 
 Nineteen feature designs targeting parity with — and beyond — Azure
 Container Registry, Sonatype Nexus, and Harbor. Each per-feature doc
@@ -8,7 +8,7 @@ schema / failure / migration / test / slice count) defined in
 
 All designs honour the project memory rulings: VulnDB and Queue stay behind
 traits; new persistent state goes in Postgres; Redis stays ephemeral; every
-feature has a `nebulacr.toml` kill-switch defaulting to OFF.
+feature has a `spectoncr.toml` kill-switch defaulting to OFF.
 
 The first eight features (001–008) target ACR / Nexus parity. Features
 009–019 are the open-source-launch differentiators — operational pain
@@ -45,7 +45,7 @@ telemetry, auto-rebuild, AI agent).
 | 016 | Typed artifacts (Helm/WASM/AI/TF) | [016-typed-artifacts.md](./016-typed-artifacts.md) | proposed | 4 slices |
 | 017 | Cost & pull-telemetry            | [017-cost-telemetry.md](./017-cost-telemetry.md) | proposed | 3 slices |
 | 018 | Auto-rebuild on base CVE patch   | [018-auto-rebuild.md](./018-auto-rebuild.md)   | proposed | 3 slices |
-| 019 | AI agent (`nebula-pilot`)        | [019-ai-agent.md](./019-ai-agent.md)           | proposed | 5 slices |
+| 019 | AI agent (`specton-pilot`)        | [019-ai-agent.md](./019-ai-agent.md)           | proposed | 5 slices |
 
 A "slice" is calibrated against the scanner work — each is roughly one week
 of engineer time including tests and docs.
@@ -119,7 +119,7 @@ differentiators (014, 015, 018, 019) layer on.
 
 - **005 unblocks 002, 003, 004, 006, 007, 019.** Every state-changing feature
   needs a durable, queryable audit record. The current in-memory ring buffer
-  (`crates/nebula-registry/src/audit.rs:43`) cannot survive a restart and
+  (`crates/specton-registry/src/audit.rs:43`) cannot survive a restart and
   cannot be shown in a UI timeline. A real append-only Postgres log with a
   hash chain is the substrate every other feature writes to. 019's AI
   agent specifically requires it for safe destructive ops.
@@ -141,7 +141,7 @@ next are **009 (Online GC)** and **012 (Migration Importer)**:
   004's mark-and-sweep model; 004 stays as the periodic reconciler.
 - **012** removes the single biggest reason teams stay on Nexus —
   switching cost. One command imports their entire Nexus / Harbor / ACR
-  registry into NebulaCR with retention rules and permissions translated.
+  registry into SpectonCR with retention rules and permissions translated.
 
 After those two, 019 (AI agent) is the credible "wow" feature for the
 open-source launch story; it depends on a healthy 005 + 014 + 017 to be
@@ -156,11 +156,11 @@ useful.
   `wrapped_deks`. Redis only caches ephemeral admission decisions
   (sub-minute TTL).
 - **2-segment and 3-segment paths** are first-class for every new route,
-  matching the existing pattern at `crates/nebula-registry/src/main.rs:2924-2980`.
-- **Kill-switch in `nebulacr.toml`** under each feature's section, default
+  matching the existing pattern at `crates/specton-registry/src/main.rs:2924-2980`.
+- **Kill-switch in `spectoncr.toml`** under each feature's section, default
   `enabled = false`. Existing deployments are no-op upgrades.
 - **CRD additions are additive only.** `Project.spec.immutable_tags` and
   `Project.spec.retention_policy` already exist
-  (`crates/nebula-controller/src/main.rs:88-112`); 003 and 004 extend them.
-- **CLI surface (`nebulacr`) and MCP tool surface (`nebula-mcp`) are
+  (`crates/specton-controller/src/main.rs:88-112`); 003 and 004 extend them.
+- **CLI surface (`spectoncr`) and MCP tool surface (`specton-mcp`) are
   designed alongside the HTTP routes**, not bolted on.

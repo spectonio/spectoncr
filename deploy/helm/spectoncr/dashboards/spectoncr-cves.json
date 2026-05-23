@@ -1,0 +1,608 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Dedicated view of CVE / vulnerability scan results. Backed by the scanner's `scans` and `findings` tables in Postgres. Suppressions are honoured.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": ["spectoncr"],
+      "targetBlank": false,
+      "title": "SpectonCR Enterprise Overview",
+      "tooltip": "Top-line storage / cost / CVE summary",
+      "type": "link",
+      "url": "/d/spectoncr-overview/spectoncr-enterprise-overview"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": ["spectoncr"],
+      "targetBlank": false,
+      "title": "SpectonCR Operations Detail",
+      "tooltip": "Image-size / request volume / scan queue",
+      "type": "link",
+      "url": "/d/spectoncr-detail/spectoncr-operations-detail"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "id": 100,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "title": "Headline counts",
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 1,
+      "title": "Open critical CVEs",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "table",
+          "rawSql": "SELECT NOW() AS time, COUNT(*)::BIGINT AS critical FROM findings f JOIN scans s ON s.digest = f.digest WHERE f.severity = 'critical' AND f.detector = 'cve' AND NOT EXISTS ( SELECT 1 FROM suppressions sup WHERE sup.cve_id = f.finding_id AND sup.detector = 'cve' AND sup.revoked_at IS NULL AND (sup.expires_at IS NULL OR sup.expires_at > NOW())) AND (s.tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all')",
+          "rawQuery": true
+        }
+      ],
+      "description": "Critical CVEs across every scanned image, suppressions honoured."
+    },
+    {
+      "id": 2,
+      "title": "Open high CVEs",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "orange", "value": 25 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "table",
+          "rawSql": "SELECT NOW() AS time, COUNT(*)::BIGINT AS high FROM findings f JOIN scans s ON s.digest = f.digest WHERE f.severity = 'high' AND f.detector = 'cve' AND NOT EXISTS ( SELECT 1 FROM suppressions sup WHERE sup.cve_id = f.finding_id AND sup.detector = 'cve' AND sup.revoked_at IS NULL AND (sup.expires_at IS NULL OR sup.expires_at > NOW())) AND (s.tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all')",
+          "rawQuery": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Scanned images",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "table",
+          "rawSql": "SELECT NOW() AS time, COUNT(DISTINCT digest)::BIGINT AS images FROM scans WHERE status = 'completed' AND (tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all')",
+          "rawQuery": true
+        }
+      ],
+      "description": "Distinct manifest digests with at least one completed scan."
+    },
+    {
+      "id": 4,
+      "title": "Scans completed (last 24h)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 1 },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "table",
+          "rawSql": "SELECT NOW() AS time, COUNT(*)::BIGINT AS scans FROM scans WHERE status = 'completed' AND completed_at >= NOW() - INTERVAL '24 hours' AND (tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all')",
+          "rawQuery": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Failed scans (last 24h)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 1 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "table",
+          "rawSql": "SELECT NOW() AS time, COUNT(*)::BIGINT AS failed FROM scans WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours' AND (tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all')",
+          "rawQuery": true
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Suppressed CVEs",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 1 },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "table",
+          "rawSql": "SELECT NOW() AS time, COUNT(*)::BIGINT AS suppressed FROM suppressions WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())",
+          "rawQuery": true
+        }
+      ],
+      "description": "Active suppressions across all detectors."
+    },
+    {
+      "type": "row",
+      "id": 101,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "title": "Findings breakdown",
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 7,
+      "title": "Findings by severity",
+      "type": "piechart",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 7 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right", "showLegend": true, "values": ["value", "percent"] },
+        "pieType": "donut",
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "mappings": [],
+          "unit": "short"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "critical" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byName", "options": "high" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byName", "options": "medium" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }] },
+          { "matcher": { "id": "byName", "options": "low" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byName", "options": "unknown" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "grey" } }] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "table",
+          "rawSql": "SELECT f.severity, COUNT(*)::BIGINT AS findings FROM findings f JOIN scans s ON s.digest = f.digest WHERE f.detector = 'cve' AND NOT EXISTS ( SELECT 1 FROM suppressions sup WHERE sup.cve_id = f.finding_id AND sup.detector = 'cve' AND sup.revoked_at IS NULL) AND (s.tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all') GROUP BY f.severity ORDER BY CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END",
+          "rawQuery": true
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Findings by detector",
+      "type": "barchart",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 7 },
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0,
+        "barWidth": 0.8,
+        "groupWidth": 0.7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisPlacement": "auto", "fillOpacity": 80, "lineWidth": 1 },
+          "mappings": [],
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "table",
+          "rawSql": "SELECT f.detector, COUNT(*) FILTER (WHERE f.severity = 'critical')::BIGINT AS critical, COUNT(*) FILTER (WHERE f.severity = 'high')::BIGINT AS high, COUNT(*) FILTER (WHERE f.severity = 'medium')::BIGINT AS medium, COUNT(*) FILTER (WHERE f.severity = 'low')::BIGINT AS low FROM findings f JOIN scans s ON s.digest = f.digest WHERE NOT EXISTS ( SELECT 1 FROM suppressions sup WHERE sup.cve_id = f.finding_id AND sup.detector = f.detector AND sup.revoked_at IS NULL) AND (s.tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all') GROUP BY f.detector ORDER BY f.detector",
+          "rawQuery": true
+        }
+      ],
+      "description": "Vulnerability mix by detector type (cve / license / secret / malware)."
+    },
+    {
+      "id": 9,
+      "title": "Top 30 CVEs by occurrence",
+      "type": "table",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 7 },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "images", "desc": true }]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left", "displayMode": "auto" },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "severity" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "critical": { "color": "red", "index": 0 } } },
+                  { "type": "value", "options": { "high": { "color": "orange", "index": 1 } } },
+                  { "type": "value", "options": { "medium": { "color": "yellow", "index": 2 } } },
+                  { "type": "value", "options": { "low": { "color": "blue", "index": 3 } } }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "images" },
+            "properties": [
+              { "id": "custom.align", "value": "right" },
+              { "id": "custom.displayMode", "value": "gradient-gauge" }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "table",
+          "rawSql": "SELECT f.finding_id AS cve, f.severity, COUNT(DISTINCT f.digest)::BIGINT AS images FROM findings f JOIN scans s ON s.digest = f.digest WHERE f.detector = 'cve' AND NOT EXISTS ( SELECT 1 FROM suppressions sup WHERE sup.cve_id = f.finding_id AND sup.detector = 'cve' AND sup.revoked_at IS NULL) AND (s.tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all') GROUP BY f.finding_id, f.severity ORDER BY images DESC, CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END LIMIT 30",
+          "rawQuery": true
+        }
+      ],
+      "description": "Most-frequent CVE IDs across the scanned image set. Click a row to copy the CVE for upstream lookup."
+    },
+    {
+      "type": "row",
+      "id": 102,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "title": "Top vulnerable images",
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 10,
+      "title": "Top 30 images by Critical+High CVEs",
+      "type": "table",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 17 },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "critical", "desc": true }]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left", "displayMode": "auto" },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "(critical|high|medium|low)" },
+            "properties": [
+              { "id": "custom.align", "value": "right" },
+              { "id": "custom.displayMode", "value": "color-background" }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "table",
+          "rawSql": "SELECT s.tenant, s.project, s.repository, s.reference AS tag, COUNT(*) FILTER (WHERE f.severity = 'critical') AS critical, COUNT(*) FILTER (WHERE f.severity = 'high') AS high, COUNT(*) FILTER (WHERE f.severity = 'medium') AS medium, COUNT(*) FILTER (WHERE f.severity = 'low') AS low, MAX(f.detected_at) AS last_seen FROM findings f JOIN scans s ON s.digest = f.digest WHERE f.detector = 'cve' AND NOT EXISTS ( SELECT 1 FROM suppressions sup WHERE sup.cve_id = f.finding_id AND sup.detector = 'cve' AND sup.revoked_at IS NULL) AND (s.tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all') GROUP BY s.tenant, s.project, s.repository, s.reference HAVING COUNT(*) FILTER (WHERE f.severity IN ('critical', 'high')) > 0 ORDER BY critical DESC, high DESC LIMIT 30",
+          "rawQuery": true
+        }
+      ],
+      "description": "Per-image CVE counts. Drill in: oldest last_seen with high counts means the image hasn't been re-scanned recently."
+    },
+    {
+      "type": "row",
+      "id": 103,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 },
+      "title": "Recent scans",
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 11,
+      "title": "Recent scans (last 50)",
+      "type": "table",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 30 },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "completed_at", "desc": true }]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left", "displayMode": "auto" },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "status" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "completed": { "color": "green", "index": 0 } } },
+                  { "type": "value", "options": { "failed": { "color": "red", "index": 1 } } },
+                  { "type": "value", "options": { "in_progress": { "color": "blue", "index": 2 } } },
+                  { "type": "value", "options": { "queued": { "color": "yellow", "index": 3 } } }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "(critical|high|medium|low)" },
+            "properties": [
+              { "id": "custom.align", "value": "right" },
+              { "id": "custom.displayMode", "value": "color-background" }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "table",
+          "rawSql": "SELECT s.tenant, s.project, s.repository, s.reference AS tag, s.status, s.critical_count AS critical, s.high_count AS high, s.medium_count AS medium, s.low_count AS low, COALESCE(s.completed_at, s.started_at, s.created_at) AS completed_at FROM scans s WHERE (s.tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all') ORDER BY COALESCE(s.completed_at, s.started_at, s.created_at) DESC LIMIT 50",
+          "rawQuery": true
+        }
+      ],
+      "description": "Most recent scan runs across all tenants. CVE counts come from the scanner's denormalised columns on `scans` so this works even when individual findings have rotated out."
+    },
+    {
+      "type": "row",
+      "id": 104,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
+      "title": "Trends",
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 12,
+      "title": "Scan throughput (per day)",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 43 },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 80, "lineWidth": 1, "stacking": { "mode": "normal" } },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', COALESCE(s.completed_at, s.created_at)) AS time, s.status, COUNT(*)::BIGINT AS scans FROM scans s WHERE COALESCE(s.completed_at, s.created_at) >= $__timeFrom() AND COALESCE(s.completed_at, s.created_at) <= $__timeTo() AND (s.tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all') GROUP BY 1, s.status ORDER BY 1",
+          "rawQuery": true
+        }
+      ],
+      "description": "Daily scan volume, stacked by terminal status."
+    },
+    {
+      "id": 13,
+      "title": "New findings (per day)",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 43 },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 80, "lineWidth": 1, "stacking": { "mode": "normal" } },
+          "unit": "short"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "critical" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byName", "options": "high" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byName", "options": "medium" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }] },
+          { "matcher": { "id": "byName", "options": "low" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('day', f.detected_at) AS time, f.severity, COUNT(*)::BIGINT AS findings FROM findings f JOIN scans s ON s.digest = f.digest WHERE f.detector = 'cve' AND f.detected_at >= $__timeFrom() AND f.detected_at <= $__timeTo() AND (s.tenant = ANY(string_to_array('${tenant:csv}', ',')) OR '${tenant:csv}' = '$$__all') GROUP BY 1, f.severity ORDER BY 1",
+          "rawQuery": true
+        }
+      ],
+      "description": "New findings detected per day, stacked by severity. Spikes mean either an upstream vuln-DB update or a fresh batch of vulnerable images landing."
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["spectoncr", "cve", "security"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "spectoncr-postgres", "value": "spectoncr-postgres" },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Postgres datasource",
+        "multi": false,
+        "name": "datasource_pg",
+        "options": [],
+        "query": "postgres",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "datasource": { "type": "postgres", "uid": "${datasource_pg}" },
+        "definition": "SELECT DISTINCT tenant FROM scans ORDER BY tenant",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Tenant",
+        "multi": true,
+        "name": "tenant",
+        "options": [],
+        "query": "SELECT DISTINCT tenant FROM scans ORDER BY tenant",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "SpectonCR — CVE Reports",
+  "uid": "spectoncr-cves",
+  "version": 1,
+  "weekStart": ""
+}

@@ -1,8 +1,8 @@
 -- ============================================================================
--- NebulaCR Container Registry Metadata Schema
+-- SpectonCR Container Registry Metadata Schema
 --
 -- Migration for OpsAPI to store metadata, categories, and tags for
--- container images managed by NebulaCR. Receives data via webhook
+-- container images managed by SpectonCR. Receives data via webhook
 -- notifications from the registry.
 --
 -- Prerequisites: namespace-system.lua (for namespace_id foreign key)
@@ -115,7 +115,7 @@ return {
     db.query("CREATE INDEX idx_container_repo_tags_tag ON container_repository_tags (tag)")
 
     -- ── Webhook event log ─────────────────────────────────────────────
-    -- Audit trail of all webhook events received from NebulaCR.
+    -- Audit trail of all webhook events received from SpectonCR.
     schema.create_table("container_webhook_events", {
       { "id",          types.serial({ primary_key = true }) },
       { "event_id",    types.varchar({ length = 64 }) },

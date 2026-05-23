@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Online-GC end-to-end smoke test (009 slice 4).
 #
-# Boots a registry + postgres via docker-compose with NEBULACR_GC__ONLINE=true,
+# Boots a registry + postgres via docker-compose with SPECTONCR_GC__ONLINE=true,
 # pushes an image, deletes it, waits past the grace period, and asserts:
 #   - blob_refcounts row hits refcount=0
 #   - reaper deletes the storage object
@@ -17,7 +17,7 @@ set -euo pipefail
 
 # ── Config ───────────────────────────────────────────────────────────
 REGISTRY_URL="${REGISTRY_URL:-http://localhost:5000}"
-POSTGRES_URL="${POSTGRES_URL:-postgres://nebulacr:nebulacr@localhost:5432/nebulacr}"
+POSTGRES_URL="${POSTGRES_URL:-postgres://spectoncr:spectoncr@localhost:5432/spectoncr}"
 GRACE="${GRACE:-5}"           # seconds — short for the test
 ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASS="${ADMIN_PASS:-admin}"
@@ -37,7 +37,7 @@ fail() { printf "[gc-e2e][FAIL] %s\n" "$*" >&2; exit 1; }
 
 token() {
   curl -fsS -u "$ADMIN_USER:$ADMIN_PASS" \
-    "$REGISTRY_URL/auth/token?service=nebulacr-registry&scope=repository:$1:$2" \
+    "$REGISTRY_URL/auth/token?service=spectoncr-registry&scope=repository:$1:$2" \
     | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])"
 }
 
@@ -61,7 +61,7 @@ curl -fsS "$REGISTRY_URL/health" >/dev/null || fail "registry not healthy"
 # Verify GC is enabled.
 status=$(curl -fsS -u "$ADMIN_USER:$ADMIN_PASS" "$REGISTRY_URL/v2/_gc/status")
 echo "$status" | grep -q '"enabled":true' \
-  || fail "GC not enabled (status=$status). Set NEBULACR_GC__ONLINE=true."
+  || fail "GC not enabled (status=$status). Set SPECTONCR_GC__ONLINE=true."
 
 # ── Step 1: push an image ────────────────────────────────────────────
 log "pushing test image"

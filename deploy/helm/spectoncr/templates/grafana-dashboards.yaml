@@ -1,0 +1,41 @@
+{{/*
+Grafana dashboards.
+
+Renders a ConfigMap per JSON in `deploy/helm/spectoncr/dashboards/`,
+labelled `grafana_dashboard: "1"` so a Grafana sidecar (the in-chart
+`grafana` subchart, kube-prometheus-stack, or kiwigrid) auto-loads
+them. Operators using a different provisioner can override the
+discovery label via `spectoncrDashboards.discoveryLabel`.
+
+Default off — operators opt in when their Grafana is configured to
+scan this namespace.
+
+Note: this used to live under `grafana.dashboards.*`. The path was
+renamed to `spectoncrDashboards.*` once the chart added a real
+Grafana subchart so the `grafana.*` block could belong entirely to
+the upstream chart's own values.
+*/}}
+{{- if .Values.spectoncrDashboards.enabled }}
+{{- range $path, $bytes := .Files.Glob "dashboards/*.json" }}
+{{- $name := regexReplaceAll "\\.json$" (base $path) "" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "spectoncr.fullname" $ }}-grafana-{{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "spectoncr.labels" $ | nindent 4 }}
+    {{ $.Values.spectoncrDashboards.discoveryLabel }}: "1"
+    {{- with $.Values.spectoncrDashboards.extraLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $.Values.spectoncrDashboards.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  {{ $name }}.json: |-
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}
+{{- end }}

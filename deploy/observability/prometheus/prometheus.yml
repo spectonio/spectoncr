@@ -2,7 +2,7 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    cluster: nebulacr-local
+    cluster: spectoncr-local
     env: dev
 
 rule_files:
@@ -14,21 +14,21 @@ scrape_configs:
   # path /metrics. The dedicated metrics_addr in config.toml is reserved
   # for an out-of-band binding and may not always be wired up — scraping
   # the API port via /metrics works in every deployment topology.
-  - job_name: nebulacr-registry
+  - job_name: spectoncr-registry
     metrics_path: /metrics
     static_configs:
       - targets:
           - registry:5000
         labels:
-          service: nebulacr-registry
+          service: spectoncr-registry
 
-  - job_name: nebulacr-auth
+  - job_name: spectoncr-auth
     metrics_path: /metrics
     static_configs:
       - targets:
           - auth:5001
         labels:
-          service: nebulacr-auth
+          service: spectoncr-auth
 
   # Self-scrape so we can alert on Prometheus health.
   - job_name: prometheus

@@ -10,14 +10,14 @@
 ## a. Problem statement
 
 ACR has Microsoft Defender admission control; Nexus IQ has the firewall
-quarantine. NebulaCR has a scanner that runs on push
-(`crates/nebula-registry/src/main.rs:980-998`) but no enforcement on
+quarantine. SpectonCR has a scanner that runs on push
+(`crates/specton-registry/src/main.rs:980-998`) but no enforcement on
 pull — a vulnerable image scanned 10 min ago is still served. Admission
 gating is the actual security feature; everything else is metadata.
 
 ## b. Proposed approach
 
-New module `crates/nebula-registry/src/admission.rs`. Single function:
+New module `crates/specton-registry/src/admission.rs`. Single function:
 
 ```rust
 pub async fn evaluate(
@@ -33,7 +33,7 @@ pub enum AdmissionVerdict {
 }
 ```
 
-Hook point: `get_manifest` at `crates/nebula-registry/src/main.rs:838`,
+Hook point: `get_manifest` at `crates/specton-registry/src/main.rs:838`,
 right after manifest bytes are loaded but before audit + response. For
 HEAD, the same evaluator runs but returns `Allow` for warn-mode (HEAD
 doesn't carry a body to attach reasoning to).
@@ -43,35 +43,35 @@ The evaluator orchestrates four sources, in order:
 1. **Redis decision cache** — key `admit:{digest}:{policy_id}`,
    30-second TTL. Cuts steady-state pull latency to one Redis GET.
 2. **Scanner result** — `ScanResultStore::get(digest)` from
-   `crates/nebula-scanner/src/store.rs:21` (existing). If present, run
-   the existing `PolicyEvaluation` (`crates/nebula-scanner/src/policy.rs:39`)
+   `crates/specton-scanner/src/store.rs:21` (existing). If present, run
+   the existing `PolicyEvaluation` (`crates/specton-scanner/src/policy.rs:39`)
    against the new admission `PolicyCRD.severityThreshold`.
 3. **Signature check** — if 001 enabled and `policy.signatureRequired`,
-   delegate to `nebula_signing::Verifier`.
+   delegate to `specton_signing::Verifier`.
 4. **Scan-on-first-pull fallback** — if no scanner result, behaviour
    depends on `policy.onUnknown`:
    - `block` (default): return `MANIFEST_UNVERIFIED` 403.
    - `scan`: `state.scanner_queue.enqueue_priority(...)` (new helper —
-     see migration in `nebula-scanner/src/queue.rs`), wait up to
+     see migration in `specton-scanner/src/queue.rs`), wait up to
      `policy.scan_wait_secs` (default 5), poll Redis store; if it
      completes evaluate normally, otherwise apply `onTimeout`.
-   - `allow`: serve, emit `nebulacr_admit_unknown_total`.
+   - `allow`: serve, emit `spectoncr_admit_unknown_total`.
 
 Suppressions are honoured automatically — `Policy::evaluate` already
-filters suppressed CVEs (`crates/nebula-scanner/src/policy.rs:41`).
+filters suppressed CVEs (`crates/specton-scanner/src/policy.rs:41`).
 
 The `bypass-admission` permission (new `Action::BypassAdmission`,
-extends `crates/nebula-common/src/models.rs:95`) lets break-glass tokens
+extends `crates/specton-common/src/models.rs:95`) lets break-glass tokens
 skip the gate for incident response. Always audited.
 
-CLI: `nebulacr admit test <ref>` runs the evaluator dry; `nebulacr admit
+CLI: `spectoncr admit test <ref>` runs the evaluator dry; `spectoncr admit
 override <ref> --reason "..."` issues a one-shot bypass token. MCP:
 `evaluate_admission`, `request_bypass`.
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: AdmissionPolicy
 metadata:
   name: prod-block-criticals
@@ -94,7 +94,7 @@ spec:
   bypassPermission: bypass-admission
 ```
 
-The scanner's existing YAML `Policy` (`crates/nebula-scanner/src/policy.rs:20`)
+The scanner's existing YAML `Policy` (`crates/specton-scanner/src/policy.rs:20`)
 is reused as the inner `severityThreshold`; this CRD is a thin envelope
 that adds scope + signature + on-unknown semantics.
 
@@ -108,8 +108,8 @@ that adds scope + signature + on-unknown semantics.
 
 The actual gate runs invisibly inside `GET /v2/.../manifests/{ref}` and
 returns the OCI standard error `MANIFEST_UNVERIFIED` (new code added to
-`crates/nebula-common/src/errors.rs`). On `block` the response includes
-a `WWW-NebulaCR-Reason` header with the human-readable cause.
+`crates/specton-common/src/errors.rs`). On `block` the response includes
+a `WWW-SpectonCR-Reason` header with the human-readable cause.
 
 ## e. Storage / Postgres schema
 
@@ -164,17 +164,17 @@ hot path; Postgres is the audit trail.
 `[admission]` section, `enabled = false` ships a no-op gate. Existing
 deployments see zero behaviour change. To migrate: enable, write an
 `AdmissionPolicy` with `onViolation: warn` for a week, monitor
-`nebulacr_admit_warn_total`, then flip to `block`.
+`spectoncr_admit_warn_total`, then flip to `block`.
 
 ## h. Test plan
 
 | Layer            | Where                                              | Notes                                |
 | ---------------- | -------------------------------------------------- | ------------------------------------ |
-| Pure evaluator   | `crates/nebula-registry/tests/admission_unit.rs`   | Mocked scanner store, mocked Redis   |
-| With real scan   | `crates/nebula-registry/tests/admission_e2e.rs`    | Postgres + Redis testcontainers      |
-| Bypass audit     | `crates/nebula-registry/tests/admission_bypass.rs` | Asserts audit row written            |
-| Scan-on-first    | `crates/nebula-registry/tests/scan_on_first.rs`    | Force scanner queue with delay       |
-| CRD validation   | `crates/nebula-controller/tests/admission_crd.rs`  | webhook rejects `signatureRequired`  |
+| Pure evaluator   | `crates/specton-registry/tests/admission_unit.rs`   | Mocked scanner store, mocked Redis   |
+| With real scan   | `crates/specton-registry/tests/admission_e2e.rs`    | Postgres + Redis testcontainers      |
+| Bypass audit     | `crates/specton-registry/tests/admission_bypass.rs` | Asserts audit row written            |
+| Scan-on-first    | `crates/specton-registry/tests/scan_on_first.rs`    | Force scanner queue with delay       |
+| CRD validation   | `crates/specton-controller/tests/admission_crd.rs`  | webhook rejects `signatureRequired`  |
 |                  |                                                    | when signing module disabled         |
 
 ## i. Implementation slice count
@@ -184,6 +184,6 @@ deployments see zero behaviour change. To migrate: enable, write an
 1. `admission.rs` evaluator + Redis cache + the `block`/`allow` paths,
    integrating existing scanner result store.
 2. `AdmissionPolicy` CRD + reconciler + `onUnknown` scan-on-pull with
-   priority queue helper in `nebula-scanner/src/queue.rs`.
+   priority queue helper in `specton-scanner/src/queue.rs`.
 3. Bypass permission, `_admit/test` endpoint, audit integration (depends
    on 005 if available; otherwise writes to in-memory ring).

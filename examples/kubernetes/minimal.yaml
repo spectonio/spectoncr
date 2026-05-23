@@ -1,11 +1,11 @@
 # ============================================================================
-# NebulaCR -- Minimal Single-Node Kubernetes Deployment
+# SpectonCR -- Minimal Single-Node Kubernetes Deployment
 # ============================================================================
 #
-# This manifest deploys NebulaCR (registry + auth) on a single node with
+# This manifest deploys SpectonCR (registry + auth) on a single node with
 # filesystem storage. It is intended for development, testing, and evaluation
 # -- NOT for production use. For production, see ha-production.yaml or the
-# Helm chart in deploy/helm/nebulacr/.
+# Helm chart in deploy/helm/spectoncr/.
 #
 # Prerequisites:
 #   - A running Kubernetes cluster (minikube, kind, k3s, etc.)
@@ -18,8 +18,8 @@
 #   openssl ec -in signing.pem -pubout -out verification.pem
 #
 #   # 2. Create the namespace and store the keys as a Secret
-#   kubectl create namespace nebulacr
-#   kubectl -n nebulacr create secret generic nebulacr-jwt-keys \
+#   kubectl create namespace spectoncr
+#   kubectl -n spectoncr create secret generic spectoncr-jwt-keys \
 #     --from-file=signing.pem=signing.pem \
 #     --from-file=verification.pem=verification.pem
 #
@@ -27,11 +27,11 @@
 #   kubectl apply -f minimal.yaml
 #
 #   # 4. Wait for pods
-#   kubectl -n nebulacr rollout status deployment/nebulacr-registry
-#   kubectl -n nebulacr rollout status deployment/nebulacr-auth
+#   kubectl -n spectoncr rollout status deployment/spectoncr-registry
+#   kubectl -n spectoncr rollout status deployment/spectoncr-auth
 #
 #   # 5. Port-forward and test
-#   kubectl -n nebulacr port-forward svc/nebulacr-registry 5000:5000 &
+#   kubectl -n spectoncr port-forward svc/spectoncr-registry 5000:5000 &
 #   curl http://localhost:5000/v2/
 #
 #   # Push an image (assuming anonymous push is allowed, or configure auth):
@@ -39,7 +39,7 @@
 #   docker push localhost:5000/library/alpine:latest
 #
 #   # Port-forward the auth service
-#   kubectl -n nebulacr port-forward svc/nebulacr-auth 5001:5001 &
+#   kubectl -n spectoncr port-forward svc/spectoncr-auth 5001:5001 &
 #   curl http://localhost:5001/health
 #
 # ============================================================================
@@ -49,10 +49,10 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: nebulacr
+  name: spectoncr
   labels:
-    app.kubernetes.io/name: nebulacr
-    app.kubernetes.io/part-of: nebulacr
+    app.kubernetes.io/name: spectoncr
+    app.kubernetes.io/part-of: spectoncr
 
 ---
 # ---------- ConfigMap ----------
@@ -60,10 +60,10 @@ metadata:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: nebulacr-config
-  namespace: nebulacr
+  name: spectoncr-config
+  namespace: spectoncr
   labels:
-    app.kubernetes.io/name: nebulacr
+    app.kubernetes.io/name: spectoncr
 data:
   registry.yaml: |
     server:
@@ -71,17 +71,17 @@ data:
       metrics_addr: "0.0.0.0:9090"
 
     auth:
-      service_url: "http://nebulacr-auth:5001"
+      service_url: "http://spectoncr-auth:5001"
       jwt:
         access_token_ttl: 3600
         refresh_token_ttl: 86400
-        signing_key_path: "/etc/nebulacr/keys/signing.pem"
-        verification_key_path: "/etc/nebulacr/keys/verification.pem"
+        signing_key_path: "/etc/spectoncr/keys/signing.pem"
+        verification_key_path: "/etc/spectoncr/keys/verification.pem"
 
     storage:
       backend: "filesystem"
       filesystem:
-        root_directory: "/var/lib/nebulacr/data"
+        root_directory: "/var/lib/spectoncr/data"
 
     observability:
       log_level: "info"
@@ -95,8 +95,8 @@ data:
     jwt:
       access_token_ttl: 3600
       refresh_token_ttl: 86400
-      signing_key_path: "/etc/nebulacr/keys/signing.pem"
-      verification_key_path: "/etc/nebulacr/keys/verification.pem"
+      signing_key_path: "/etc/spectoncr/keys/signing.pem"
+      verification_key_path: "/etc/spectoncr/keys/verification.pem"
 
     observability:
       log_level: "info"
@@ -110,7 +110,7 @@ data:
 #
 #   openssl ecparam -genkey -name prime256v1 -noout -out signing.pem
 #   openssl ec -in signing.pem -pubout -out verification.pem
-#   kubectl -n nebulacr create secret generic nebulacr-jwt-keys \
+#   kubectl -n spectoncr create secret generic spectoncr-jwt-keys \
 #     --from-file=signing.pem=signing.pem \
 #     --from-file=verification.pem=verification.pem
 #
@@ -119,10 +119,10 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: nebulacr-jwt-keys
-  namespace: nebulacr
+  name: spectoncr-jwt-keys
+  namespace: spectoncr
   labels:
-    app.kubernetes.io/name: nebulacr
+    app.kubernetes.io/name: spectoncr
 type: Opaque
 data: {}
   # signing.pem: <base64-encoded-private-key>
@@ -133,10 +133,10 @@ data: {}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: nebulacr-data
-  namespace: nebulacr
+  name: spectoncr-data
+  namespace: spectoncr
   labels:
-    app.kubernetes.io/name: nebulacr
+    app.kubernetes.io/name: spectoncr
 spec:
   accessModes:
     - ReadWriteOnce
@@ -149,10 +149,10 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nebulacr-registry
-  namespace: nebulacr
+  name: spectoncr-registry
+  namespace: spectoncr
   labels:
-    app.kubernetes.io/name: nebulacr
+    app.kubernetes.io/name: spectoncr
     app.kubernetes.io/component: registry
 spec:
   replicas: 1
@@ -161,12 +161,12 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app.kubernetes.io/name: nebulacr
+      app.kubernetes.io/name: spectoncr
       app.kubernetes.io/component: registry
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: nebulacr
+        app.kubernetes.io/name: spectoncr
         app.kubernetes.io/component: registry
     spec:
       securityContext:
@@ -180,12 +180,12 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: registry
-          image: bwalia/nebulacr:latest
+          image: specton/spectoncr:latest
           imagePullPolicy: Always
           args:
-            - nebula-registry
+            - specton-registry
             - serve
-            - --config=/etc/nebulacr/config/registry.yaml
+            - --config=/etc/spectoncr/config/registry.yaml
           ports:
             - name: http
               containerPort: 5000
@@ -224,26 +224,26 @@ spec:
             failureThreshold: 2
           volumeMounts:
             - name: config
-              mountPath: /etc/nebulacr/config
+              mountPath: /etc/spectoncr/config
               readOnly: true
             - name: signing-keys
-              mountPath: /etc/nebulacr/keys
+              mountPath: /etc/spectoncr/keys
               readOnly: true
             - name: data
-              mountPath: /var/lib/nebulacr/data
+              mountPath: /var/lib/spectoncr/data
             - name: tmp
               mountPath: /tmp
       volumes:
         - name: config
           configMap:
-            name: nebulacr-config
+            name: spectoncr-config
         - name: signing-keys
           secret:
-            secretName: nebulacr-jwt-keys
+            secretName: spectoncr-jwt-keys
             defaultMode: 0440
         - name: data
           persistentVolumeClaim:
-            claimName: nebulacr-data
+            claimName: spectoncr-data
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
@@ -253,10 +253,10 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nebulacr-auth
-  namespace: nebulacr
+  name: spectoncr-auth
+  namespace: spectoncr
   labels:
-    app.kubernetes.io/name: nebulacr
+    app.kubernetes.io/name: spectoncr
     app.kubernetes.io/component: auth
 spec:
   replicas: 1
@@ -267,12 +267,12 @@ spec:
       maxSurge: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: nebulacr
+      app.kubernetes.io/name: spectoncr
       app.kubernetes.io/component: auth
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: nebulacr
+        app.kubernetes.io/name: spectoncr
         app.kubernetes.io/component: auth
     spec:
       securityContext:
@@ -286,12 +286,12 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: auth
-          image: bwalia/nebulacr:latest
+          image: specton/spectoncr:latest
           imagePullPolicy: Always
           args:
-            - nebula-auth
+            - specton-auth
             - serve
-            - --config=/etc/nebulacr/config/auth.yaml
+            - --config=/etc/spectoncr/config/auth.yaml
           ports:
             - name: http
               containerPort: 5001
@@ -330,20 +330,20 @@ spec:
             failureThreshold: 2
           volumeMounts:
             - name: config
-              mountPath: /etc/nebulacr/config
+              mountPath: /etc/spectoncr/config
               readOnly: true
             - name: signing-keys
-              mountPath: /etc/nebulacr/keys
+              mountPath: /etc/spectoncr/keys
               readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
         - name: config
           configMap:
-            name: nebulacr-config
+            name: spectoncr-config
         - name: signing-keys
           secret:
-            secretName: nebulacr-jwt-keys
+            secretName: spectoncr-jwt-keys
             defaultMode: 0440
         - name: tmp
           emptyDir:
@@ -354,15 +354,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: nebulacr-registry
-  namespace: nebulacr
+  name: spectoncr-registry
+  namespace: spectoncr
   labels:
-    app.kubernetes.io/name: nebulacr
+    app.kubernetes.io/name: spectoncr
     app.kubernetes.io/component: registry
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: nebulacr
+    app.kubernetes.io/name: spectoncr
     app.kubernetes.io/component: registry
   ports:
     - name: http
@@ -379,15 +379,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: nebulacr-auth
-  namespace: nebulacr
+  name: spectoncr-auth
+  namespace: spectoncr
   labels:
-    app.kubernetes.io/name: nebulacr
+    app.kubernetes.io/name: spectoncr
     app.kubernetes.io/component: auth
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: nebulacr
+    app.kubernetes.io/name: spectoncr
     app.kubernetes.io/component: auth
   ports:
     - name: http

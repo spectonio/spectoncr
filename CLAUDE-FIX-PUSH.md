@@ -1,22 +1,22 @@
-# Fix: Docker push returns 404/502 on blob upload — NebulaCR registry
+# Fix: Docker push returns 404/502 on blob upload — SpectonCR registry
 
 ## Problem
 
-`docker push acc-nebulacr.diytaxreturn.co.uk/diytaxreturn/diy-tax-return-uk:latest` fails with:
+`docker push acc-spectoncr.diytaxreturn.co.uk/diytaxreturn/diy-tax-return-uk:latest` fails with:
 
 ```
 unknown: unexpected status from POST request to
-https://acc-nebulacr.diytaxreturn.co.uk/v2/diytaxreturn/diy-tax-return-uk/blobs/uploads/: 404 Not Found
+https://acc-spectoncr.diytaxreturn.co.uk/v2/diytaxreturn/diy-tax-return-uk/blobs/uploads/: 404 Not Found
 ```
 
-The CI test at https://github.com/bwalia/nebulacr/actions/runs/23726139273/job/69109983909 also fails with `502 Bad Gateway` on the same endpoint.
+The CI test at https://github.com/spectonio/spectoncr/actions/runs/23726139273/job/69109983909 also fails with `502 Bad Gateway` on the same endpoint.
 
 ## Root Cause
 
-NebulaCR routes expect **3 path segments** (`{tenant}/{project}/{name}`):
+SpectonCR routes expect **3 path segments** (`{tenant}/{project}/{name}`):
 
 ```rust
-// crates/nebula-registry/src/main.rs line 2091
+// crates/specton-registry/src/main.rs line 2091
 "/v2/{tenant}/{project}/{name}/blobs/uploads/"
 ```
 
@@ -34,7 +34,7 @@ The CI test uses 3 segments (`demo/default/nightly-test`) which matches the rout
 
 ### 1. Support 2-segment Docker image paths via default tenant (CRITICAL)
 
-Standard Docker registries use `{namespace}/{repo}` (2 segments), but NebulaCR uses `{tenant}/{project}/{name}` (3 segments) for multi-tenancy. Both must work.
+Standard Docker registries use `{namespace}/{repo}` (2 segments), but SpectonCR uses `{tenant}/{project}/{name}` (3 segments) for multi-tenancy. Both must work.
 
 Add middleware or duplicate routes that rewrite 2-segment paths into 3-segment paths using a **default tenant** (e.g., `_` or `library`). When a user pushes to:
 
@@ -68,7 +68,7 @@ These should internally map to `tenant = "_"` (or a configurable default tenant)
 
 The CI test pushes to `demo/default/nightly-test` (3 segments) but gets `502 Bad Gateway`. This suggests the auth service isn't reachable or isn't issuing valid tokens in the CI environment. Check:
 
-- Is the auth service (`nebula-auth`) starting and healthy in CI?
+- Is the auth service (`specton-auth`) starting and healthy in CI?
 - Is the JWT signing key configured correctly?
 - Is the `authorize()` call in `initiate_blob_upload` (line 891) failing and returning an error that gets mapped to 502?
 
@@ -77,30 +77,30 @@ The CI test pushes to `demo/default/nightly-test` (3 segments) but gets `502 Bad
 After fixing, verify these Docker commands work:
 
 ```bash
-docker login acc-nebulacr.diytaxreturn.co.uk -u admin -p admin
+docker login acc-spectoncr.diytaxreturn.co.uk -u admin -p admin
 
 # 2-segment (standard Docker — uses default tenant automatically)
-docker tag alpine:latest acc-nebulacr.diytaxreturn.co.uk/diytaxreturn/diy-tax-return-uk:latest
-docker push acc-nebulacr.diytaxreturn.co.uk/diytaxreturn/diy-tax-return-uk:latest
+docker tag alpine:latest acc-spectoncr.diytaxreturn.co.uk/diytaxreturn/diy-tax-return-uk:latest
+docker push acc-spectoncr.diytaxreturn.co.uk/diytaxreturn/diy-tax-return-uk:latest
 # Should internally store under tenant "_" (default), project "diytaxreturn", name "diy-tax-return-uk"
 
-# 3-segment (NebulaCR multi-tenant — explicit tenant)
-docker tag alpine:latest acc-nebulacr.diytaxreturn.co.uk/mytenant/myproject/myapp:latest
-docker push acc-nebulacr.diytaxreturn.co.uk/mytenant/myproject/myapp:latest
+# 3-segment (SpectonCR multi-tenant — explicit tenant)
+docker tag alpine:latest acc-spectoncr.diytaxreturn.co.uk/mytenant/myproject/myapp:latest
+docker push acc-spectoncr.diytaxreturn.co.uk/mytenant/myproject/myapp:latest
 # Uses tenant "mytenant", project "myproject", name "myapp"
 ```
 
 ## Key Files
 
-- `crates/nebula-registry/src/main.rs` — Route definitions (line ~2060-2106) and handler functions (`initiate_blob_upload` at line 886, `upload_blob_chunk` at line 933, `complete_blob_upload` at line 999)
-- `crates/nebula-auth/` — Auth service that issues JWT tokens
-- `crates/nebula-common/` — Shared types including `RepoPath`, `StorePath`
+- `crates/specton-registry/src/main.rs` — Route definitions (line ~2060-2106) and handler functions (`initiate_blob_upload` at line 886, `upload_blob_chunk` at line 933, `complete_blob_upload` at line 999)
+- `crates/specton-auth/` — Auth service that issues JWT tokens
+- `crates/specton-common/` — Shared types including `RepoPath`, `StorePath`
 - `.github/workflows/` — CI workflow with "Registry Health Test" job
 - `deploy/` — Helm chart and deployment manifests
 
 ## Deployed Environment
 
-- Registry: `acc-nebulacr.diytaxreturn.co.uk` (K3s cluster, namespace `acc`)
+- Registry: `acc-spectoncr.diytaxreturn.co.uk` (K3s cluster, namespace `acc`)
 - Auth: `admin:admin` (basic auth)
-- Helm release: `nebulacr` v0.3.0, revision 20
-- Storage: filesystem PVC at `/var/lib/nebulacr/data`
+- Helm release: `spectoncr` v0.3.0, revision 20
+- Storage: filesystem PVC at `/var/lib/spectoncr/data`

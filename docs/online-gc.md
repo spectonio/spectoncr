@@ -1,6 +1,6 @@
 # Online Garbage Collection
 
-NebulaCR's online GC keeps the registry from accumulating dead blobs without
+SpectonCR's online GC keeps the registry from accumulating dead blobs without
 requiring a read-only window. Every manifest push records blob edges in
 Postgres, and a continuous reaper drains zero-refcount blobs once they sit
 past a configurable grace period.
@@ -31,13 +31,13 @@ gc:
 
 | Variable                              | Default | Notes                                                  |
 | ------------------------------------- | ------- | ------------------------------------------------------ |
-| `NEBULACR_GC__ONLINE`                 | `false` | Master switch                                          |
-| `NEBULACR_GC__POSTGRES_URL`           | (none)  | Required if scanner is disabled                        |
-| `NEBULACR_GC__REAPER_ENABLED`         | `true`  | Set to `false` to refcount-only (run reap from CronJob)|
-| `NEBULACR_GC__REAPER_GRACE_SECS`      | `86400` | Worst-case upload duration ceiling                     |
-| `NEBULACR_GC__REAPER_BATCH`           | `200`   | Rows per drain cycle                                   |
-| `NEBULACR_GC__REAPER_IDLE_SLEEP_SECS` | `30`    | Sleep between empty cycles                             |
-| `NEBULACR_GC__REAPER_QPS`             | `100`   | Storage delete operations per second                   |
+| `SPECTONCR_GC__ONLINE`                 | `false` | Master switch                                          |
+| `SPECTONCR_GC__POSTGRES_URL`           | (none)  | Required if scanner is disabled                        |
+| `SPECTONCR_GC__REAPER_ENABLED`         | `true`  | Set to `false` to refcount-only (run reap from CronJob)|
+| `SPECTONCR_GC__REAPER_GRACE_SECS`      | `86400` | Worst-case upload duration ceiling                     |
+| `SPECTONCR_GC__REAPER_BATCH`           | `200`   | Rows per drain cycle                                   |
+| `SPECTONCR_GC__REAPER_IDLE_SLEEP_SECS` | `30`    | Sleep between empty cycles                             |
+| `SPECTONCR_GC__REAPER_QPS`             | `100`   | Storage delete operations per second                   |
 
 ## HTTP control plane (admin role required)
 

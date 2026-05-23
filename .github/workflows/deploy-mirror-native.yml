@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "NebulaCR image tag to deploy"
+        description: "SpectonCR image tag to deploy"
         required: false
         default: "latest"
       observability:
@@ -25,7 +25,7 @@ env:
 
 jobs:
   deploy-mirror:
-    name: Deploy NebulaCR Mirror
+    name: Deploy SpectonCR Mirror
     runs-on: [self-hosted, test]
     timeout-minutes: 10
 
@@ -74,8 +74,8 @@ jobs:
           OBS="${{ github.event.inputs.observability || 'true' }}"
           ansible-playbook -i inventory.yml deploy-mirror.yml \
             --private-key "${{ steps.ssh.outputs.key }}" \
-            -e "nebulacr_version=${{ github.event.inputs.version || 'latest' }}" \
-            -e "nebulacr_observability_enabled=${OBS}" \
+            -e "spectoncr_version=${{ github.event.inputs.version || 'latest' }}" \
+            -e "spectoncr_observability_enabled=${OBS}" \
             -v
 
       - name: Verify deployment

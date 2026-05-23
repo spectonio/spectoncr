@@ -1,12 +1,12 @@
 # ============================================================================
-# Tekton Task: Build and Push to NebulaCR
+# Tekton Task: Build and Push to SpectonCR
 #
 # This Tekton Task builds a container image with Kaniko and pushes it to
-# NebulaCR, using SPIFFE/SPIRE workload identity for zero-trust authentication.
+# SpectonCR, using SPIFFE/SPIRE workload identity for zero-trust authentication.
 #
 # Authentication flow:
 #   1. The Task pod receives a SPIFFE SVID (X.509 or JWT) from the SPIRE agent
-#   2. The SVID is exchanged for a NebulaCR short-lived access token
+#   2. The SVID is exchanged for a SpectonCR short-lived access token
 #   3. The access token is used for Kaniko registry authentication
 #   4. Credentials are cleaned up after the push
 #
@@ -25,7 +25,7 @@
 #   - SPIRE server configured with:
 #       - Kubernetes workload registrar
 #       - Entry for this task's service account
-#   - NebulaCR auth service configured to trust the SPIRE server as an
+#   - SpectonCR auth service configured to trust the SPIRE server as an
 #     OIDC issuer (SPIRE can expose an OIDC discovery endpoint)
 #
 # Usage in a Pipeline:
@@ -33,7 +33,7 @@
 #   tasks:
 #     - name: build-and-push
 #       taskRef:
-#         name: nebulacr-build-push
+#         name: spectoncr-build-push
 #       params:
 #         - name: IMAGE
 #           value: registry.example.com:5000/my-org/my-project/my-app
@@ -50,20 +50,20 @@
 apiVersion: tekton.dev/v1
 kind: Task
 metadata:
-  name: nebulacr-build-push
+  name: spectoncr-build-push
   namespace: tekton-pipelines
   labels:
-    app.kubernetes.io/name: nebulacr-build-push
+    app.kubernetes.io/name: spectoncr-build-push
     app.kubernetes.io/version: "1.0"
     tekton.dev/categories: Image Build
-    tekton.dev/tags: image-build,nebulacr,kaniko,spiffe
+    tekton.dev/tags: image-build,spectoncr,kaniko,spiffe
   annotations:
-    tekton.dev/displayName: "NebulaCR Build and Push (SPIFFE/SPIRE)"
+    tekton.dev/displayName: "SpectonCR Build and Push (SPIFFE/SPIRE)"
     tekton.dev/pipelines.minVersion: "0.50.0"
 spec:
   # ── Description ───────────────────────────────────────────────────────────
   description: >-
-    Build a container image with Kaniko and push to NebulaCR using
+    Build a container image with Kaniko and push to SpectonCR using
     SPIFFE/SPIRE workload identity for zero-trust authentication.
     No static credentials required.
 
@@ -98,24 +98,24 @@ spec:
         "--build-arg=ENV=prod"])
       default: []
 
-    - name: NEBULACR_AUTH_URL
+    - name: SPECTONCR_AUTH_URL
       type: string
-      description: NebulaCR auth API endpoint
+      description: SpectonCR auth API endpoint
       default: "https://auth.example.com:5001"
 
-    - name: NEBULACR_TENANT
+    - name: SPECTONCR_TENANT
       type: string
-      description: NebulaCR tenant name
+      description: SpectonCR tenant name
       default: "my-org"
 
-    - name: NEBULACR_PROJECT
+    - name: SPECTONCR_PROJECT
       type: string
-      description: NebulaCR project name
+      description: SpectonCR project name
       default: "my-project"
 
-    - name: NEBULACR_REGISTRY
+    - name: SPECTONCR_REGISTRY
       type: string
-      description: NebulaCR registry host:port
+      description: SpectonCR registry host:port
       default: "registry.example.com:5000"
 
     - name: EXTRA_ARGS
@@ -161,26 +161,26 @@ spec:
   # ── Steps ─────────────────────────────────────────────────────────────────
   steps:
     # ── Step 1: Authenticate ────────────────────────────────────────────────
-    # Obtain a NebulaCR access token using SPIFFE/SPIRE workload identity.
+    # Obtain a SpectonCR access token using SPIFFE/SPIRE workload identity.
     #
     # The SPIRE agent runs as a DaemonSet and provides identity to pods
     # via the SPIFFE Workload API (Unix domain socket). The spire-agent
     # CLI fetches a JWT-SVID (SPIFFE Verifiable Identity Document) that
-    # NebulaCR can validate against the SPIRE server's OIDC endpoint.
+    # SpectonCR can validate against the SPIRE server's OIDC endpoint.
     #
     # If SPIRE is not available, this step falls back to Kubernetes
     # ServiceAccount Token Volume Projection.
     - name: authenticate
       image: curlimages/curl:8.7.1
       env:
-        - name: NEBULACR_AUTH_URL
-          value: "$(params.NEBULACR_AUTH_URL)"
-        - name: NEBULACR_TENANT
-          value: "$(params.NEBULACR_TENANT)"
-        - name: NEBULACR_PROJECT
-          value: "$(params.NEBULACR_PROJECT)"
-        - name: NEBULACR_REGISTRY
-          value: "$(params.NEBULACR_REGISTRY)"
+        - name: SPECTONCR_AUTH_URL
+          value: "$(params.SPECTONCR_AUTH_URL)"
+        - name: SPECTONCR_TENANT
+          value: "$(params.SPECTONCR_TENANT)"
+        - name: SPECTONCR_PROJECT
+          value: "$(params.SPECTONCR_PROJECT)"
+        - name: SPECTONCR_REGISTRY
+          value: "$(params.SPECTONCR_REGISTRY)"
         - name: IMAGE_NAME
           # Extract image name from the full IMAGE parameter
           # e.g., "registry.example.com:5000/tenant/project/my-app" -> "my-app"
@@ -189,11 +189,11 @@ spec:
         #!/bin/sh
         set -eu
 
-        echo "=== NebulaCR Authentication ==="
+        echo "=== SpectonCR Authentication ==="
 
         # ── Strategy 1: SPIFFE/SPIRE JWT-SVID ──────────────────────────
         # The SPIRE agent socket is mounted at /run/spire/sockets/agent.sock
-        # If available, fetch a JWT-SVID with the "nebulacr" audience.
+        # If available, fetch a JWT-SVID with the "spectoncr" audience.
         IDENTITY_TOKEN=""
         if [ -S "/run/spire/sockets/agent.sock" ]; then
           echo "SPIRE agent detected, fetching JWT-SVID..."
@@ -201,10 +201,10 @@ spec:
           # Use the SPIRE agent CLI to fetch a JWT-SVID
           # The SVID will contain:
           #   iss: "https://spire.example.com"
-          #   sub: "spiffe://example.com/ns/tekton-pipelines/sa/nebulacr-builder"
-          #   aud: "nebulacr"
+          #   sub: "spiffe://example.com/ns/tekton-pipelines/sa/spectoncr-builder"
+          #   aud: "spectoncr"
           IDENTITY_TOKEN=$(/opt/spire/bin/spire-agent api fetch jwt \
-            -audience nebulacr \
+            -audience spectoncr \
             -socketPath /run/spire/sockets/agent.sock \
             -timeout 10s 2>/dev/null | head -1)
 
@@ -217,9 +217,9 @@ spec:
 
         # ── Strategy 2: Kubernetes ServiceAccount Token ────────────────
         # If SPIRE is not available, use the projected SA token with
-        # the "nebulacr" audience (mounted via the volume below).
+        # the "spectoncr" audience (mounted via the volume below).
         if [ -z "${IDENTITY_TOKEN}" ]; then
-          SA_TOKEN_PATH="/var/run/secrets/nebulacr/token"
+          SA_TOKEN_PATH="/var/run/secrets/spectoncr/token"
           if [ -f "${SA_TOKEN_PATH}" ]; then
             IDENTITY_TOKEN=$(cat "${SA_TOKEN_PATH}")
             echo "Using Kubernetes ServiceAccount projected token"
@@ -230,24 +230,24 @@ spec:
           fi
         fi
 
-        # ── Exchange identity token for NebulaCR access token ──────────
+        # ── Exchange identity token for SpectonCR access token ──────────
         # Extract just the image name from the full reference for scoping
         REPO_NAME=$(echo "${IMAGE_NAME}" | awk -F'/' '{print $NF}')
 
-        echo "Exchanging identity token for NebulaCR access token..."
-        echo "  Registry: ${NEBULACR_REGISTRY}"
-        echo "  Tenant:   ${NEBULACR_TENANT}"
-        echo "  Project:  ${NEBULACR_PROJECT}"
+        echo "Exchanging identity token for SpectonCR access token..."
+        echo "  Registry: ${SPECTONCR_REGISTRY}"
+        echo "  Tenant:   ${SPECTONCR_TENANT}"
+        echo "  Project:  ${SPECTONCR_PROJECT}"
         echo "  Repo:     ${REPO_NAME}"
 
         RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
-          "${NEBULACR_AUTH_URL}/auth/token" \
+          "${SPECTONCR_AUTH_URL}/auth/token" \
           -H "Content-Type: application/json" \
           -d "{
             \"identity_token\": \"${IDENTITY_TOKEN}\",
             \"scope\": {
-              \"tenant\": \"${NEBULACR_TENANT}\",
-              \"project\": \"${NEBULACR_PROJECT}\",
+              \"tenant\": \"${SPECTONCR_TENANT}\",
+              \"project\": \"${SPECTONCR_PROJECT}\",
               \"repository\": \"${REPO_NAME}\",
               \"actions\": [\"pull\", \"push\"]
             }
@@ -257,7 +257,7 @@ spec:
         BODY=$(echo "${RESPONSE}" | sed '$d')
 
         if [ "${HTTP_CODE}" != "200" ]; then
-          echo "ERROR: NebulaCR authentication failed (HTTP ${HTTP_CODE})"
+          echo "ERROR: SpectonCR authentication failed (HTTP ${HTTP_CODE})"
           echo "${BODY}" | jq -r '.error // "unknown"' 2>/dev/null || true
           echo "${BODY}" | jq -r '.message // ""' 2>/dev/null || true
           exit 1
@@ -265,7 +265,7 @@ spec:
 
         ACCESS_TOKEN=$(echo "${BODY}" | jq -r '.token')
         EXPIRES_IN=$(echo "${BODY}" | jq -r '.expires_in // "unknown"')
-        echo "NebulaCR token obtained (expires in ${EXPIRES_IN}s)"
+        echo "SpectonCR token obtained (expires in ${EXPIRES_IN}s)"
 
         # ── Write Docker config for Kaniko ─────────────────────────────
         # Kaniko reads /kaniko/.docker/config.json for authentication.
@@ -274,7 +274,7 @@ spec:
         cat > /kaniko/.docker/config.json <<ENDCONFIG
         {
           "auths": {
-            "${NEBULACR_REGISTRY}": {
+            "${SPECTONCR_REGISTRY}": {
               "auth": "${AUTH_B64}"
             }
           }
@@ -293,8 +293,8 @@ spec:
           mountPath: /run/spire/sockets
           readOnly: true
         # Kubernetes projected ServiceAccount token (fallback)
-        - name: nebulacr-token
-          mountPath: /var/run/secrets/nebulacr
+        - name: spectoncr-token
+          mountPath: /var/run/secrets/spectoncr
           readOnly: true
         # Kaniko Docker config directory
         - name: kaniko-docker-config
@@ -311,11 +311,11 @@ spec:
         - --destination=$(params.IMAGE):$(params.TAG)
         - --digest-file=$(results.IMAGE_DIGEST.path)
         - --cache=true
-        - --cache-repo=$(params.NEBULACR_REGISTRY)/$(params.NEBULACR_TENANT)/$(params.NEBULACR_PROJECT)/cache
+        - --cache-repo=$(params.SPECTONCR_REGISTRY)/$(params.SPECTONCR_TENANT)/$(params.SPECTONCR_PROJECT)/cache
         - --reproducible
         - --snapshot-mode=redo
         - --label=org.opencontainers.image.revision=$(params.TAG)
-        - --label=tekton.dev/task=nebulacr-build-push
+        - --label=tekton.dev/task=spectoncr-build-push
         - $(params.BUILD_ARGS[*])
         - $(params.EXTRA_ARGS[*])
       volumeMounts:
@@ -366,7 +366,7 @@ spec:
         IMAGE="$(params.IMAGE):$(params.TAG)"
         echo "Scanning: ${IMAGE}"
 
-        # Configure Trivy to use the NebulaCR credentials
+        # Configure Trivy to use the SpectonCR credentials
         export DOCKER_CONFIG="$(workspaces.source.path)/.docker"
 
         # Run scan
@@ -395,8 +395,8 @@ spec:
     - name: verify
       image: curlimages/curl:8.7.1
       env:
-        - name: NEBULACR_REGISTRY
-          value: "$(params.NEBULACR_REGISTRY)"
+        - name: SPECTONCR_REGISTRY
+          value: "$(params.SPECTONCR_REGISTRY)"
       script: |
         #!/bin/sh
         set -eu
@@ -414,16 +414,16 @@ spec:
         DOCKER_CONFIG="$(workspaces.source.path)/.docker"
 
         # Verify the manifest exists in the registry via the OCI Distribution API
-        AUTH_HEADER=$(cat "${DOCKER_CONFIG}/config.json" | jq -r ".auths[\"${NEBULACR_REGISTRY}\"].auth" | base64 -d)
+        AUTH_HEADER=$(cat "${DOCKER_CONFIG}/config.json" | jq -r ".auths[\"${SPECTONCR_REGISTRY}\"].auth" | base64 -d)
         USERNAME=$(echo "${AUTH_HEADER}" | cut -d: -f1)
         PASSWORD=$(echo "${AUTH_HEADER}" | cut -d: -f2-)
 
         # Extract the repository path from the full image reference
-        REPO_PATH=$(echo "${IMAGE}" | sed "s|${NEBULACR_REGISTRY}/||")
+        REPO_PATH=$(echo "${IMAGE}" | sed "s|${SPECTONCR_REGISTRY}/||")
 
         HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" \
           -u "${USERNAME}:${PASSWORD}" \
-          "https://${NEBULACR_REGISTRY}/v2/${REPO_PATH}/manifests/${TAG}" \
+          "https://${SPECTONCR_REGISTRY}/v2/${REPO_PATH}/manifests/${TAG}" \
           -H "Accept: application/vnd.oci.image.manifest.v1+json")
 
         if [ "${HTTP_CODE}" = "200" ]; then
@@ -459,14 +459,14 @@ spec:
         path: /run/spire/sockets
         type: DirectoryOrCreate
 
-    # Projected ServiceAccount token with "nebulacr" audience.
+    # Projected ServiceAccount token with "spectoncr" audience.
     # Kubernetes automatically mints and rotates this token.
     # Used as a fallback when SPIRE is not available.
-    - name: nebulacr-token
+    - name: spectoncr-token
       projected:
         sources:
           - serviceAccountToken:
-              audience: nebulacr
+              audience: spectoncr
               expirationSeconds: 600
               path: token
 
@@ -479,19 +479,19 @@ spec:
 
 ---
 # ============================================================================
-# Pipeline: Full NebulaCR Build, Scan, and Push
+# Pipeline: Full SpectonCR Build, Scan, and Push
 #
-# A complete Tekton Pipeline that uses the nebulacr-build-push Task above.
+# A complete Tekton Pipeline that uses the spectoncr-build-push Task above.
 # ============================================================================
 apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
-  name: nebulacr-pipeline
+  name: spectoncr-pipeline
   namespace: tekton-pipelines
 spec:
   description: >-
     Clone source code, build a container image, scan for vulnerabilities,
-    and push to NebulaCR using SPIFFE/SPIRE workload identity.
+    and push to SpectonCR using SPIFFE/SPIRE workload identity.
 
   params:
     - name: repo-url
@@ -533,10 +533,10 @@ spec:
         - name: output
           workspace: shared-workspace
 
-    # Build and push to NebulaCR
+    # Build and push to SpectonCR
     - name: build-and-push
       taskRef:
-        name: nebulacr-build-push
+        name: spectoncr-build-push
       runAfter:
         - fetch-source
       params:

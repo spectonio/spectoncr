@@ -125,11 +125,11 @@ def _render(reports: list[dict[str, Any]], outfile: str) -> None:
         rightMargin=15 * mm,
         topMargin=15 * mm,
         bottomMargin=15 * mm,
-        title="NebulaCR nightly CVE scan",
+        title="SpectonCR nightly CVE scan",
     )
     flow: list[Any] = []
 
-    flow.append(Paragraph(f"NebulaCR nightly CVE scan — {ts}", title))
+    flow.append(Paragraph(f"SpectonCR nightly CVE scan — {ts}", title))
     flow.append(Paragraph(f"Overall: <b>{emoji}</b>  |  images scanned: {len(rows)}", body))
     flow.append(Spacer(1, 4 * mm))
 

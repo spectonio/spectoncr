@@ -6,7 +6,7 @@
 > per-project policy can require a SLSA Build Level (L1/L2/L3) and
 > a known builder identity (e.g. `https://github.com/actions`); the
 > 002 admission gate consults this just like signature verification.
-> CLI shortcuts (`nebulacr attest verify`) let teams trust provenance
+> CLI shortcuts (`spectoncr attest verify`) let teams trust provenance
 > without standing up a separate Rekor / TUF server.
 
 ## a. Problem statement
@@ -17,16 +17,16 @@ opaque artifacts at best. Cosign uploads them as adjacent OCI
 artifacts; nothing in any registry checks the SLSA level, the
 builder identity, or the materials list at pull time. Compliance
 teams who want "no L0 builds in prod" have to write their own
-Kyverno / OPA policies after the pull. NebulaCR can shift this left:
+Kyverno / OPA policies after the pull. SpectonCR can shift this left:
 the registry refuses to *serve* a build that doesn't meet the
 configured SLSA bar.
 
 ## b. Proposed approach
 
-New crate `nebula-attest`. Architecture mirrors 001's `Verifier`:
+New crate `specton-attest`. Architecture mirrors 001's `Verifier`:
 
 ```rust
-// crates/nebula-attest/src/lib.rs
+// crates/specton-attest/src/lib.rs
 #[async_trait]
 pub trait AttestationStore: Send + Sync {
     async fn put(&self, subject: Digest, env: DsseEnvelope)
@@ -80,11 +80,11 @@ Verification flow (pull):
 1. 002 admission gate reads `policy.attestation` block.
 2. Calls `AttestationVerifier::verify(envelope, slsa_policy)`.
 3. Verifier:
-   - Decodes DSSE, validates signatures via `nebula-signing`.
+   - Decodes DSSE, validates signatures via `specton-signing`.
    - Parses predicate as SLSA Provenance v0.2 / v1.0.
    - Walks `runDetails.builder.id` against `allowed_builders`.
    - Walks `runDetails.metadata` for SLSA-Level annotations + cross-
-     references with `nebula-signing`'s issuer to assign a level
+     references with `specton-signing`'s issuer to assign a level
      (signed by Fulcio root + builder id matches → L3 candidate).
 4. Verdict cached in Redis (same admission cache as 002).
 
@@ -96,15 +96,15 @@ Builder-identity mapping is config:
 "https://accounts.google.com"                  = "cloud-build"
 ```
 
-CLI: `nebulacr attest push <ref> --predicate slsa-prov.json
---key-id k1`, `nebulacr attest list <ref>`, `nebulacr attest verify
+CLI: `spectoncr attest push <ref> --predicate slsa-prov.json
+--key-id k1`, `spectoncr attest list <ref>`, `spectoncr attest verify
 <ref> --policy prod-slsa-l3`. MCP: `list_attestations`,
 `verify_attestation`.
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: AdmissionPolicy
 metadata:
   name: prod-slsa-l3
@@ -130,7 +130,7 @@ spec:
 Project CRD gets a default policy reference:
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Project
 spec:
   defaultAttestationPolicy: prod-slsa-l3
@@ -150,7 +150,7 @@ spec:
 The cosign / sigstore CLI uses
 `POST /v2/<name>/manifests/<digest>` with the bundle media type and
 expects standard OCI semantics — that path stays the canonical
-upload route. The `_attestation` endpoints are NebulaCR-specific
+upload route. The `_attestation` endpoints are SpectonCR-specific
 conveniences.
 
 ## e. Storage / Postgres schema
@@ -210,7 +210,7 @@ Postgres.
 - **Cosign issuer not in `trusted_builders`.** `slsa_level = 0`;
   attestation accepted but unable to satisfy ≥L1 policies.
 - **Attestation post-dates `maxAgeDays`.** Rejected at pull;
-  `WWW-NebulaCR-Reason: attestation-stale`.
+  `WWW-SpectonCR-Reason: attestation-stale`.
 - **Multiple attestations for same predicate.** Admission gate
   uses the most recent verified one. Older ones are kept for
   audit but not consulted.
@@ -229,11 +229,11 @@ when configured.
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| DSSE parse         | `crates/nebula-attest/tests/dsse_parse.rs`             | Cosign-generated bundle fixtures           |
-| SLSA L1/L2/L3      | `crates/nebula-attest/tests/slsa_levels.rs`            | Fixture per level; expected level computed  |
-| Builder allowlist  | `crates/nebula-attest/tests/builders.rs`               | Unknown issuer → L0                         |
-| Verify integration | `crates/nebula-registry/tests/attest_admit.rs`         | E2E with 002 admission gate                 |
-| Stale rejection    | `crates/nebula-attest/tests/maxage.rs`                 | Old attestation blocked                     |
+| DSSE parse         | `crates/specton-attest/tests/dsse_parse.rs`             | Cosign-generated bundle fixtures           |
+| SLSA L1/L2/L3      | `crates/specton-attest/tests/slsa_levels.rs`            | Fixture per level; expected level computed  |
+| Builder allowlist  | `crates/specton-attest/tests/builders.rs`               | Unknown issuer → L0                         |
+| Verify integration | `crates/specton-registry/tests/attest_admit.rs`         | E2E with 002 admission gate                 |
+| Stale rejection    | `crates/specton-attest/tests/maxage.rs`                 | Old attestation blocked                     |
 | Cosign compat      | `tests/e2e/cosign_attest_e2e.sh`                       | Real `cosign attest` against the registry   |
 
 External e2e dep: `cosign` binary in CI. Same image used by 001
@@ -243,9 +243,9 @@ tests.
 
 3 slices, ~3 weeks:
 
-1. `nebula-attest` crate scaffold + `attestations` schema + manifest
+1. `specton-attest` crate scaffold + `attestations` schema + manifest
    PUT detection of in-toto media types + envelope parse + storage.
 2. SLSA level computation + builder allowlist + `AttestationPolicy`
-   CRD + verifier integration with `nebula-signing`.
+   CRD + verifier integration with `specton-signing`.
 3. 002 admission gate wiring + CLI/MCP + cosign e2e + docs (recipe
    per CI builder: GitHub Actions, Tekton Chains, Buildkit + Rekor).

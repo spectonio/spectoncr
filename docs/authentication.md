@@ -1,6 +1,6 @@
 # Authentication
 
-NebulaCR uses a dedicated auth service (`nebula-auth`, port 5001) that issues short-lived JWT tokens consumed by the registry service (`nebula-registry`, port 5000). Authentication follows the Docker Registry Token Authentication specification.
+SpectonCR uses a dedicated auth service (`specton-auth`, port 5001) that issues short-lived JWT tokens consumed by the registry service (`specton-registry`, port 5000). Authentication follows the Docker Registry Token Authentication specification.
 
 ## Table of Contents
 
@@ -15,13 +15,13 @@ NebulaCR uses a dedicated auth service (`nebula-auth`, port 5001) that issues sh
 
 ## Bootstrap Admin (Development Mode)
 
-For initial setup and local development, NebulaCR provides a bootstrap admin account that authenticates via HTTP Basic auth. The default credentials are `admin:admin`.
+For initial setup and local development, SpectonCR provides a bootstrap admin account that authenticates via HTTP Basic auth. The default credentials are `admin:admin`.
 
 The bootstrap admin is configured through environment variables on the auth service:
 
 ```bash
-NEBULACR_AUTH__BOOTSTRAP_ADMIN__USERNAME=admin
-NEBULACR_AUTH__BOOTSTRAP_ADMIN__PASSWORD_HASH=8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
+SPECTONCR_AUTH__BOOTSTRAP_ADMIN__USERNAME=admin
+SPECTONCR_AUTH__BOOTSTRAP_ADMIN__PASSWORD_HASH=8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
 ```
 
 The password hash is a SHA-256 hex digest. To generate a hash for a custom password:
@@ -30,7 +30,7 @@ The password hash is a SHA-256 hex digest. To generate a hash for a custom passw
 echo -n 'your-password' | sha256sum | cut -d' ' -f1
 ```
 
-Or in the TOML config file (`/etc/nebulacr/config.toml`):
+Or in the TOML config file (`/etc/spectoncr/config.toml`):
 
 ```toml
 [auth.bootstrap_admin]
@@ -44,7 +44,7 @@ password_hash = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a91
 
 ## OIDC Integration
 
-NebulaCR supports multiple OIDC identity providers simultaneously. The auth service validates incoming identity tokens against each provider's JWKS endpoint.
+SpectonCR supports multiple OIDC identity providers simultaneously. The auth service validates incoming identity tokens against each provider's JWKS endpoint.
 
 ### Google Workspace / Cloud Identity
 
@@ -79,7 +79,7 @@ GitHub Actions provides OIDC tokens natively with no client secret required. Thi
 ```toml
 [[auth.oidc_providers]]
 issuer_url = "https://token.actions.githubusercontent.com"
-client_id = "nebulacr"
+client_id = "spectoncr"
 subject_claim = "sub"
 # Optional: map repository_owner to tenant
 # tenant_claim = "repository_owner"
@@ -93,7 +93,7 @@ The GitHub OIDC `sub` claim contains the full context, for example:
 ```toml
 [[auth.oidc_providers]]
 issuer_url = "https://gitlab.com"
-client_id = "nebulacr"
+client_id = "spectoncr"
 subject_claim = "sub"
 # GitLab sub format: "project_path:group/project:ref_type:branch:ref:main"
 ```
@@ -126,7 +126,7 @@ tenant_claim = "hd"
 
 [[auth.oidc_providers]]
 issuer_url = "https://token.actions.githubusercontent.com"
-client_id = "nebulacr"
+client_id = "spectoncr"
 subject_claim = "sub"
 
 [[auth.oidc_providers]]
@@ -140,7 +140,7 @@ tenant_claim = "tid"
 
 ## Token Lifecycle
 
-NebulaCR issues short-lived JWT access tokens. The default TTL is 300 seconds (5 minutes).
+SpectonCR issues short-lived JWT access tokens. The default TTL is 300 seconds (5 minutes).
 
 ### Token Structure
 
@@ -148,8 +148,8 @@ Issued tokens contain these claims:
 
 | Claim | Description |
 |-------|-------------|
-| `iss` | Issuer, matches `auth.issuer` config (default: `nebulacr`) |
-| `aud` | Audience, matches `auth.audience` config (default: `nebulacr-registry`) |
+| `iss` | Issuer, matches `auth.issuer` config (default: `spectoncr`) |
+| `aud` | Audience, matches `auth.audience` config (default: `spectoncr-registry`) |
 | `sub` | Subject identifier (username or OIDC subject) |
 | `exp` | Expiration time (Unix timestamp) |
 | `iat` | Issued-at time (Unix timestamp) |
@@ -167,17 +167,17 @@ token_ttl_seconds = 300    # 5 minutes (default)
 Via environment variable:
 
 ```bash
-NEBULACR_AUTH__TOKEN_TTL_SECONDS=300
+SPECTONCR_AUTH__TOKEN_TTL_SECONDS=300
 ```
 
 Per-tenant TTL can be overridden using the TokenPolicy CRD:
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: TokenPolicy
 metadata:
   name: acme-token-policy
-  namespace: nebulacr
+  namespace: spectoncr
 spec:
   tenantRef: acme
   maxTtlSeconds: 600
@@ -189,13 +189,13 @@ spec:
 
 ### Signing Algorithms
 
-NebulaCR supports RS256 (RSA) and EdDSA (Ed25519) for JWT signing:
+SpectonCR supports RS256 (RSA) and EdDSA (Ed25519) for JWT signing:
 
 ```toml
 [auth]
 signing_algorithm = "RS256"             # or "EdDSA"
-signing_key_path = "/etc/nebulacr/keys/private.pem"
-verification_key_path = "/etc/nebulacr/keys/public.pem"
+signing_key_path = "/etc/spectoncr/keys/private.pem"
+verification_key_path = "/etc/spectoncr/keys/public.pem"
 ```
 
 To generate an RSA key pair:
@@ -247,7 +247,7 @@ docker pull localhost:5000/demo/default/myimage:latest
 
 ### Standard 2-Segment Docker Paths
 
-For compatibility with standard Docker 2-segment paths (e.g., `library/nginx`), NebulaCR uses the default tenant `_`:
+For compatibility with standard Docker 2-segment paths (e.g., `library/nginx`), SpectonCR uses the default tenant `_`:
 
 ```bash
 # These are equivalent -- both use the default tenant "_"
@@ -261,7 +261,7 @@ docker pull localhost:5000/_/library/nginx:latest
 
 ### GitHub Actions (OIDC Zero-Trust)
 
-No long-lived credentials are needed. GitHub provides an OIDC token to the workflow, which NebulaCR exchanges for a registry token.
+No long-lived credentials are needed. GitHub provides an OIDC token to the workflow, which SpectonCR exchanges for a registry token.
 
 ```yaml
 name: Push Image
@@ -283,7 +283,7 @@ jobs:
         id: oidc
         run: |
           OIDC_TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=nebulacr" | jq -r '.value')
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=spectoncr" | jq -r '.value')
           echo "::add-mask::$OIDC_TOKEN"
           echo "token=$OIDC_TOKEN" >> "$GITHUB_OUTPUT"
 
@@ -300,7 +300,7 @@ jobs:
           echo "::add-mask::$REGISTRY_TOKEN"
           echo "token=$REGISTRY_TOKEN" >> "$GITHUB_OUTPUT"
 
-      - name: Login to NebulaCR
+      - name: Login to SpectonCR
         run: |
           echo "${{ steps.registry.outputs.token }}" | \
             docker login registry.example.com -u oauth2 --password-stdin
@@ -317,13 +317,13 @@ jobs:
 push_image:
   image: docker:latest
   id_tokens:
-    NEBULACR_TOKEN:
-      aud: nebulacr
+    SPECTONCR_TOKEN:
+      aud: spectoncr
   script:
     - REGISTRY_TOKEN=$(curl -s -X POST
         "https://registry.example.com/auth/token"
         -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange"
-        -d "subject_token=${NEBULACR_TOKEN}"
+        -d "subject_token=${SPECTONCR_TOKEN}"
         -d "subject_token_type=urn:ietf:params:oauth:token-type:jwt"
         -d "scope=repository:myorg/myproject/myimage:push,pull" | jq -r '.token')
     - echo "$REGISTRY_TOKEN" | docker login registry.example.com -u oauth2 --password-stdin
@@ -338,7 +338,7 @@ For CI systems without OIDC support, use basic auth with a service account:
 ```bash
 # Get a token using basic auth
 TOKEN=$(curl -s -u "ci-user:ci-password" \
-  "https://registry.example.com:5001/auth/token?service=nebulacr-registry&scope=repository:tenant/project/image:push,pull" \
+  "https://registry.example.com:5001/auth/token?service=spectoncr-registry&scope=repository:tenant/project/image:push,pull" \
   | jq -r '.token')
 
 # Use the token
@@ -354,7 +354,7 @@ docker login registry.example.com -u oauth2 -p "$TOKEN"
 ```bash
 # Request a token for a specific repository scope
 curl -s -u admin:admin \
-  "http://localhost:5001/auth/token?service=nebulacr-registry&scope=repository:demo/default/myimage:push,pull"
+  "http://localhost:5001/auth/token?service=spectoncr-registry&scope=repository:demo/default/myimage:push,pull"
 ```
 
 Response:
@@ -392,7 +392,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Step 1: Get a push token
 TOKEN=$(curl -s -u admin:admin \
-  "http://localhost:5001/auth/token?service=nebulacr-registry&scope=repository:demo/default/myimage:push,pull" \
+  "http://localhost:5001/auth/token?service=spectoncr-registry&scope=repository:demo/default/myimage:push,pull" \
   | jq -r '.token')
 
 # Step 2: Start a blob upload
@@ -421,7 +421,7 @@ curl -s -X PUT \
 Token issuance is rate-limited separately from the registry API:
 
 ```bash
-NEBULACR_RATE_LIMIT__TOKEN_ISSUE_RPM=60   # 60 tokens per minute per tenant
+SPECTONCR_RATE_LIMIT__TOKEN_ISSUE_RPM=60   # 60 tokens per minute per tenant
 ```
 
 If you hit the rate limit, you will receive a `429 Too Many Requests` response. Wait and retry, or increase the limit for your tenant.

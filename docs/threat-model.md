@@ -1,15 +1,15 @@
-# NebulaCR Threat Model
+# SpectonCR Threat Model
 
 ## 1. System Overview
 
-NebulaCR is a cloud-native OCI-compliant container image registry built in Rust, providing multi-tenant isolation and zero-trust authentication. The system consists of two primary services and a pluggable storage backend.
+SpectonCR is a cloud-native OCI-compliant container image registry built in Rust, providing multi-tenant isolation and zero-trust authentication. The system consists of two primary services and a pluggable storage backend.
 
 ### 1.1 Components
 
 | Component         | Description                                          | Port |
 |-------------------|------------------------------------------------------|------|
-| nebula-registry   | OCI Distribution API (Docker Registry HTTP API V2)   | 5000 |
-| nebula-auth       | Token issuance, OIDC validation, RBAC enforcement    | 5001 |
+| specton-registry   | OCI Distribution API (Docker Registry HTTP API V2)   | 5000 |
+| specton-auth       | Token issuance, OIDC validation, RBAC enforcement    | 5001 |
 | Storage backend   | Blob/manifest persistence (filesystem, S3, GCS, Azure) | N/A |
 
 ### 1.2 Trust Boundaries
@@ -19,12 +19,12 @@ NebulaCR is a cloud-native OCI-compliant container image registry built in Rust,
                     │                   TRUST BOUNDARY: CLUSTER              │
                     │                                                         │
   ┌──────────┐     │  ┌──────────────┐      ┌──────────────┐                │
-  │  CI/CD   │─────┼──│  nebula-auth │──────│   OIDC       │ (external)     │
+  │  CI/CD   │─────┼──│  specton-auth │──────│   OIDC       │ (external)     │
   │  Client  │     │  │  :5001       │      │   Provider   │                │
   └──────────┘     │  └──────┬───────┘      └──────────────┘                │
                     │         │ JWT                                           │
   ┌──────────┐     │  ┌──────▼───────┐      ┌──────────────┐                │
-  │  Docker  │─────┼──│ nebula-      │──────│   Storage    │                │
+  │  Docker  │─────┼──│ specton-     │──────│   Storage    │                │
   │  Client  │     │  │ registry     │      │   Backend    │                │
   └──────────┘     │  │  :5000       │      │  (S3/FS/GCS) │                │
                     │  └──────────────┘      └──────────────┘                │
@@ -100,7 +100,7 @@ NebulaCR is a cloud-native OCI-compliant container image registry built in Rust,
 
 ## 3. STRIDE Analysis
 
-### 3.1 nebula-auth (Token Service)
+### 3.1 specton-auth (Token Service)
 
 | Threat Category    | Threat                                                    | Severity | Mitigation                                                               |
 |--------------------|-----------------------------------------------------------|----------|--------------------------------------------------------------------------|
@@ -116,7 +116,7 @@ NebulaCR is a cloud-native OCI-compliant container image registry built in Rust,
 | **Elev. of Priv.** | Request token with higher role than assigned              | Critical | Resolve role server-side from policy store; ignore client-requested role |
 | **Elev. of Priv.** | Request scope for another tenant's resources              | Critical | Derive tenant from access policy, not solely from request               |
 
-### 3.2 nebula-registry (OCI Distribution API)
+### 3.2 specton-registry (OCI Distribution API)
 
 | Threat Category    | Threat                                                    | Severity | Mitigation                                                               |
 |--------------------|-----------------------------------------------------------|----------|--------------------------------------------------------------------------|

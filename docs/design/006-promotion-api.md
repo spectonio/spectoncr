@@ -19,7 +19,7 @@ multiple registries.
 
 ## b. Proposed approach
 
-New module `crates/nebula-registry/src/promote.rs`. The single entry:
+New module `crates/specton-registry/src/promote.rs`. The single entry:
 
 ```rust
 pub struct PromoteRequest {
@@ -44,7 +44,7 @@ Flow:
 
 1. Authorise `pull` on source, `push` on dest.
 2. Resolve source manifest digest (use `resolve_manifest_path` at
-   `crates/nebula-registry/src/main.rs:1718`).
+   `crates/specton-registry/src/main.rs:1718`).
 3. If dest project has `immutable_tags = true` and dest tag exists with
    different digest → 409 (delegate to 003's check).
 4. Same-backend short-circuit: if `state.store` source path and dest
@@ -65,7 +65,7 @@ Flow:
 (002) against the source digest's scan result; on pass, proceeds; on
 fail, returns a structured error with the policy violations.
 
-CLI: `nebulacr promote acme/dev/api:1.2.3 acme/prod/api:1.2.3
+CLI: `spectoncr promote acme/dev/api:1.2.3 acme/prod/api:1.2.3
 [--policy prod-block-criticals]`. MCP: `promote_image`, `dry_run_promote`.
 
 ## c. New/changed CRDs
@@ -92,7 +92,7 @@ still happens on each promote call.
 | GET    | `/v2/_promote/history?repo=...`   | `repo:read`                           | List of past promotions for a repo             |
 
 Cross-tenant promotion requires a token with both scopes — RBAC
-existing model in `crates/nebula-registry/src/main.rs:170` covers
+existing model in `crates/specton-registry/src/main.rs:170` covers
 this naturally.
 
 ## e. Storage / Postgres schema
@@ -134,7 +134,7 @@ CREATE INDEX promotions_src_idx ON promotions (src_digest);
 - **Source policy fails on `OnPolicyPass`.** 422 with the violations
   array, no state change.
 - **Cross-region promotion.** Out of scope for v1 — explicitly require
-  same-region. v1.1 wires `nebula_replication::Replicator` to do
+  same-region. v1.1 wires `specton_replication::Replicator` to do
   cross-region atomically.
 
 ## g. Migration story
@@ -147,11 +147,11 @@ new feature only acts on new calls.
 
 | Layer            | Where                                                | Notes                                       |
 | ---------------- | ---------------------------------------------------- | ------------------------------------------- |
-| Same-backend     | `crates/nebula-registry/tests/promote_same.rs`       | Filesystem store, retag short-circuit       |
-| Cross-backend    | `crates/nebula-registry/tests/promote_cross.rs`      | S3 + GCS testcontainers                     |
-| With signatures  | `crates/nebula-registry/tests/promote_signed.rs`     | Push, sign, promote, verify dest sig        |
-| OnPolicyPass     | `crates/nebula-registry/tests/promote_policy.rs`     | Mock scan result; pass and fail variants    |
-| Crash recovery   | `crates/nebula-registry/tests/promote_recovery.rs`   | Inject fault mid-copy; idempotent retry     |
+| Same-backend     | `crates/specton-registry/tests/promote_same.rs`       | Filesystem store, retag short-circuit       |
+| Cross-backend    | `crates/specton-registry/tests/promote_cross.rs`      | S3 + GCS testcontainers                     |
+| With signatures  | `crates/specton-registry/tests/promote_signed.rs`     | Push, sign, promote, verify dest sig        |
+| OnPolicyPass     | `crates/specton-registry/tests/promote_policy.rs`     | Mock scan result; pass and fail variants    |
+| Crash recovery   | `crates/specton-registry/tests/promote_recovery.rs`   | Inject fault mid-copy; idempotent retry     |
 
 ## i. Implementation slice count
 

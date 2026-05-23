@@ -1,34 +1,34 @@
 # ============================================================================
-# GitHub Actions: Build and Push to NebulaCR (Zero-Trust OIDC Flow)
+# GitHub Actions: Build and Push to SpectonCR (Zero-Trust OIDC Flow)
 #
-# This workflow demonstrates NebulaCR's zero-trust CI/CD integration:
+# This workflow demonstrates SpectonCR's zero-trust CI/CD integration:
 #
 #   1. GitHub mints a short-lived OIDC identity token (JWT) for this workflow
-#   2. The workflow exchanges that JWT for a NebulaCR short-lived access token
+#   2. The workflow exchanges that JWT for a SpectonCR short-lived access token
 #      via POST /auth/github-actions/token
-#   3. The NebulaCR token is used for `docker login` and image push
+#   3. The SpectonCR token is used for `docker login` and image push
 #   4. Credentials are cleaned up regardless of success or failure
 #
 # Security properties:
 #   - No long-lived secrets stored in GitHub (zero static credentials)
-#   - NebulaCR access tokens expire after 5 minutes
+#   - SpectonCR access tokens expire after 5 minutes
 #   - GitHub OIDC tokens are audience-bound and single-use
 #   - Subject binding ensures only specific repos/branches can push
 #   - Least-privilege: tokens are scoped to specific tenant/project/actions
 #
 # Prerequisites:
-#   - Configure NebulaCR auth service to trust GitHub's OIDC issuer:
+#   - Configure SpectonCR auth service to trust GitHub's OIDC issuer:
 #       issuer_url = "https://token.actions.githubusercontent.com"
-#       client_id  = "nebulacr"
-#   - Create a tenant and project in NebulaCR
+#       client_id  = "spectoncr"
+#   - Create a tenant and project in SpectonCR
 #   - Create an access policy binding the GitHub subject to a role:
 #       subject = "repo:my-org/my-repo:ref:refs/heads/main"
 #       role    = "push"    (or a custom role with pull+push)
-#   - Ensure your NebulaCR auth endpoint is reachable from GitHub runners
+#   - Ensure your SpectonCR auth endpoint is reachable from GitHub runners
 #
 # Token flow diagram:
 #
-#   GitHub Runner           GitHub OIDC Provider         NebulaCR Auth
+#   GitHub Runner           GitHub OIDC Provider         SpectonCR Auth
 #   ─────────────           ────────────────────         ─────────────
 #        │                         │                          │
 #        │──── Request OIDC JWT ──>│                          │
@@ -40,14 +40,14 @@
 #        │                         │<──── JWKS endpoint ─────│
 #        │                         │──── Public keys ────────>│
 #        │                         │                          │
-#        │<──── Short-lived NebulaCR token ──────────────────│
+#        │<──── Short-lived SpectonCR token ──────────────────│
 #        │                         │                          │
-#        │──── docker login (with NebulaCR token) ──────────>│
+#        │──── docker login (with SpectonCR token) ──────────>│
 #        │──── docker push ─────────────────────────────────>│
 #
 # ============================================================================
 
-name: Build and Push to NebulaCR
+name: Build and Push to SpectonCR
 
 on:
   push:
@@ -63,7 +63,7 @@ on:
 #                       service. Without this, the ACTIONS_ID_TOKEN_REQUEST_URL
 #                       and ACTIONS_ID_TOKEN_REQUEST_TOKEN env vars are unset.
 # contents: read     -- Required to check out the repository code.
-# packages: none     -- We do NOT use GHCR; all images go to NebulaCR.
+# packages: none     -- We do NOT use GHCR; all images go to SpectonCR.
 # ---------------------------------------------------------------------------
 permissions:
   id-token: write
@@ -72,18 +72,18 @@ permissions:
 # ---------------------------------------------------------------------------
 # Environment Variables
 # ---------------------------------------------------------------------------
-# These define the NebulaCR target. Override them in GitHub repository
+# These define the SpectonCR target. Override them in GitHub repository
 # settings (Settings > Secrets and variables > Actions > Variables) for
 # per-repo configuration without modifying the workflow file.
 # ---------------------------------------------------------------------------
 env:
-  # NebulaCR registry endpoint (host:port for Docker protocol)
-  NEBULACR_REGISTRY: registry.example.com:5000
-  # NebulaCR auth API endpoint (HTTPS for token exchange)
-  NEBULACR_AUTH_URL: https://auth.example.com:5001
-  # Tenant and project scoping -- maps to NebulaCR's multi-tenancy model
-  NEBULACR_TENANT: my-org
-  NEBULACR_PROJECT: my-project
+  # SpectonCR registry endpoint (host:port for Docker protocol)
+  SPECTONCR_REGISTRY: registry.example.com:5000
+  # SpectonCR auth API endpoint (HTTPS for token exchange)
+  SPECTONCR_AUTH_URL: https://auth.example.com:5001
+  # Tenant and project scoping -- maps to SpectonCR's multi-tenancy model
+  SPECTONCR_TENANT: my-org
+  SPECTONCR_PROJECT: my-project
   # Image name (without registry prefix -- assembled in steps below)
   IMAGE_NAME: my-app
 
@@ -91,7 +91,7 @@ jobs:
   # ==========================================================================
   # Job: build-and-push
   #
-  # Builds a multi-architecture Docker image and pushes it to NebulaCR.
+  # Builds a multi-architecture Docker image and pushes it to SpectonCR.
   # Uses a matrix strategy to build linux/amd64 and linux/arm64 in parallel,
   # then creates a manifest list combining both architectures.
   # ==========================================================================
@@ -116,7 +116,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.NEBULACR_REGISTRY }}/${{ env.NEBULACR_TENANT }}/${{ env.NEBULACR_PROJECT }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.SPECTONCR_REGISTRY }}/${{ env.SPECTONCR_TENANT }}/${{ env.SPECTONCR_PROJECT }}/${{ env.IMAGE_NAME }}
           tags: |
             # Tag with full SHA for immutable reference
             type=sha,prefix=,format=long
@@ -136,15 +136,15 @@ jobs:
       #
       #   iss: "https://token.actions.githubusercontent.com"
       #   sub: "repo:my-org/my-repo:ref:refs/heads/main"
-      #   aud: "nebulacr"
+      #   aud: "spectoncr"
       #   repository: "my-org/my-repo"
       #   ref: "refs/heads/main"
       #   sha: "<commit-sha>"
-      #   workflow: "Build and Push to NebulaCR"
+      #   workflow: "Build and Push to SpectonCR"
       #   run_id: "12345678"
       #
-      # The audience ("nebulacr") must match the client_id configured in the
-      # NebulaCR OIDC provider settings. This prevents token misuse -- a JWT
+      # The audience ("spectoncr") must match the client_id configured in the
+      # SpectonCR OIDC provider settings. This prevents token misuse -- a JWT
       # minted for a different audience will be rejected.
       #
       # The ACTIONS_ID_TOKEN_REQUEST_URL and ACTIONS_ID_TOKEN_REQUEST_TOKEN
@@ -155,11 +155,11 @@ jobs:
         run: |
           echo "Requesting OIDC token from GitHub..."
 
-          # Request the OIDC token with the "nebulacr" audience.
+          # Request the OIDC token with the "spectoncr" audience.
           # The audience parameter is appended as a query parameter.
           OIDC_TOKEN=$(curl -sSf \
             -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=nebulacr" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=spectoncr" \
             | jq -r '.value')
 
           # Validate that we received a token
@@ -176,20 +176,20 @@ jobs:
           # Log non-sensitive metadata for debugging
           echo "OIDC token obtained successfully (length: ${#OIDC_TOKEN} chars)"
 
-      # ── Step 4: Exchange GitHub OIDC token for NebulaCR access token ──────
+      # ── Step 4: Exchange GitHub OIDC token for SpectonCR access token ──────
       # This is the core of the zero-trust flow. We POST the GitHub OIDC JWT
-      # to NebulaCR's dedicated GitHub Actions token endpoint:
+      # to SpectonCR's dedicated GitHub Actions token endpoint:
       #
       #   POST /auth/github-actions/token
       #
-      # NebulaCR's auth service performs the following validation:
+      # SpectonCR's auth service performs the following validation:
       #   1. Decodes the JWT header to find the key ID (kid)
       #   2. Fetches GitHub's JWKS from:
       #      https://token.actions.githubusercontent.com/.well-known/jwks
       #   3. Validates the JWT signature using the matching public key
       #   4. Checks token expiry, audience, and issuer claims
       #   5. Matches the "sub" claim against configured access policies
-      #   6. Issues a short-lived (default: 5 min) NebulaCR access token
+      #   6. Issues a short-lived (default: 5 min) SpectonCR access token
       #      scoped to the requested tenant/project/repository/actions
       #
       # The scope block follows the principle of least privilege:
@@ -197,10 +197,10 @@ jobs:
       #   - project:    logical grouping within a tenant
       #   - repository: specific image repository
       #   - actions:    "pull" and/or "push" (never "admin" in CI)
-      - name: Authenticate to NebulaCR
-        id: nebulacr-auth
+      - name: Authenticate to SpectonCR
+        id: spectoncr-auth
         run: |
-          echo "Exchanging GitHub OIDC token for NebulaCR access token..."
+          echo "Exchanging GitHub OIDC token for SpectonCR access token..."
 
           # Determine the required actions based on the event type.
           # PRs only need pull (for build cache); pushes need pull+push.
@@ -214,14 +214,14 @@ jobs:
           # This endpoint is optimized for GitHub's OIDC token format and
           # automatically extracts the repository, ref, and workflow claims.
           RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
-            "${{ env.NEBULACR_AUTH_URL }}/auth/github-actions/token" \
+            "${{ env.SPECTONCR_AUTH_URL }}/auth/github-actions/token" \
             -H "Content-Type: application/json" \
-            -H "User-Agent: nebulacr-github-actions/1.0" \
+            -H "User-Agent: spectoncr-github-actions/1.0" \
             -d "{
               \"identity_token\": \"${{ steps.github-oidc.outputs.token }}\",
               \"scope\": {
-                \"tenant\": \"${{ env.NEBULACR_TENANT }}\",
-                \"project\": \"${{ env.NEBULACR_PROJECT }}\",
+                \"tenant\": \"${{ env.SPECTONCR_TENANT }}\",
+                \"project\": \"${{ env.SPECTONCR_PROJECT }}\",
                 \"repository\": \"${{ env.IMAGE_NAME }}\",
                 \"actions\": ${ACTIONS}
               }
@@ -235,14 +235,14 @@ jobs:
           if [ "${HTTP_CODE}" != "200" ]; then
             ERROR_TYPE=$(echo "${BODY}" | jq -r '.error // "unknown"')
             ERROR_MSG=$(echo "${BODY}" | jq -r '.message // "No details available"')
-            echo "::error::NebulaCR authentication failed (HTTP ${HTTP_CODE})"
+            echo "::error::SpectonCR authentication failed (HTTP ${HTTP_CODE})"
             echo "::error::Error: ${ERROR_TYPE} - ${ERROR_MSG}"
 
             # Provide troubleshooting hints based on common error codes
             case "${HTTP_CODE}" in
-              401) echo "::error::Hint: Check that the OIDC issuer is trusted in NebulaCR" ;;
-              403) echo "::error::Hint: Check that this repo/branch is authorized in NebulaCR access policies" ;;
-              404) echo "::error::Hint: Check NEBULACR_AUTH_URL -- the /auth/github-actions/token endpoint may not exist" ;;
+              401) echo "::error::Hint: Check that the OIDC issuer is trusted in SpectonCR" ;;
+              403) echo "::error::Hint: Check that this repo/branch is authorized in SpectonCR access policies" ;;
+              404) echo "::error::Hint: Check SPECTONCR_AUTH_URL -- the /auth/github-actions/token endpoint may not exist" ;;
               422) echo "::error::Hint: Check scope parameters (tenant, project, repository)" ;;
             esac
             exit 1
@@ -251,7 +251,7 @@ jobs:
           # Extract the short-lived access token
           ACCESS_TOKEN=$(echo "${BODY}" | jq -r '.token')
           if [ -z "${ACCESS_TOKEN}" ] || [ "${ACCESS_TOKEN}" = "null" ]; then
-            echo "::error::NebulaCR returned 200 but no token in response body"
+            echo "::error::SpectonCR returned 200 but no token in response body"
             exit 1
           fi
 
@@ -262,27 +262,27 @@ jobs:
           # Log non-sensitive response metadata
           EXPIRES_IN=$(echo "${BODY}" | jq -r '.expires_in // "unknown"')
           TOKEN_ID=$(echo "${BODY}" | jq -r '.token_id // "unknown"')
-          echo "NebulaCR token obtained successfully"
+          echo "SpectonCR token obtained successfully"
           echo "  Token ID:    ${TOKEN_ID}"
           echo "  Expires in:  ${EXPIRES_IN}s"
-          echo "  Scope:       ${{ env.NEBULACR_TENANT }}/${{ env.NEBULACR_PROJECT }}/${{ env.IMAGE_NAME }}"
+          echo "  Scope:       ${{ env.SPECTONCR_TENANT }}/${{ env.SPECTONCR_PROJECT }}/${{ env.IMAGE_NAME }}"
 
       # ── Step 5: Docker login using the short-lived token ──────────────────
-      # The NebulaCR access token is used as the password for `docker login`.
-      # The username field is ignored by NebulaCR (the identity is embedded
+      # The SpectonCR access token is used as the password for `docker login`.
+      # The username field is ignored by SpectonCR (the identity is embedded
       # in the JWT itself), but Docker requires a non-empty value, so we use
       # "github-actions" as a descriptive placeholder.
       #
       # The token is piped via stdin (--password-stdin) rather than passed as
       # a command-line argument. This prevents the token from appearing in
       # process listings (ps aux) or shell history.
-      - name: Docker login to NebulaCR
+      - name: Docker login to SpectonCR
         run: |
-          echo "${{ steps.nebulacr-auth.outputs.token }}" | \
-            docker login "${{ env.NEBULACR_REGISTRY }}" \
+          echo "${{ steps.spectoncr-auth.outputs.token }}" | \
+            docker login "${{ env.SPECTONCR_REGISTRY }}" \
               --username "github-actions" \
               --password-stdin
-          echo "Docker login to NebulaCR successful"
+          echo "Docker login to SpectonCR successful"
 
       # ── Step 6: Set up Docker Buildx for multi-arch builds ────────────────
       # Buildx is Docker's extended build tool that supports:
@@ -298,7 +298,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # ── Step 7: Build and push the Docker image ───────────────────────────
-      # Build for the matrix platform and push to NebulaCR. Each platform
+      # Build for the matrix platform and push to SpectonCR. Each platform
       # build runs in parallel; the manifest-create job (below) combines them.
       - name: Build and push image
         id: build
@@ -351,7 +351,7 @@ jobs:
       - name: Docker logout (cleanup)
         if: always()
         run: |
-          docker logout "${{ env.NEBULACR_REGISTRY }}" 2>/dev/null || true
+          docker logout "${{ env.SPECTONCR_REGISTRY }}" 2>/dev/null || true
           # Also remove any Docker config files that may contain the token
           rm -f "${HOME}/.docker/config.json" 2>/dev/null || true
           echo "Credentials cleaned up"
@@ -380,22 +380,22 @@ jobs:
         run: |
           OIDC_TOKEN=$(curl -sSf \
             -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=nebulacr" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=spectoncr" \
             | jq -r '.value')
           echo "::add-mask::${OIDC_TOKEN}"
           echo "token=${OIDC_TOKEN}" >> "${GITHUB_OUTPUT}"
 
-      - name: Authenticate to NebulaCR
-        id: nebulacr-auth
+      - name: Authenticate to SpectonCR
+        id: spectoncr-auth
         run: |
           RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
-            "${{ env.NEBULACR_AUTH_URL }}/auth/github-actions/token" \
+            "${{ env.SPECTONCR_AUTH_URL }}/auth/github-actions/token" \
             -H "Content-Type: application/json" \
             -d "{
               \"identity_token\": \"${{ steps.github-oidc.outputs.token }}\",
               \"scope\": {
-                \"tenant\": \"${{ env.NEBULACR_TENANT }}\",
-                \"project\": \"${{ env.NEBULACR_PROJECT }}\",
+                \"tenant\": \"${{ env.SPECTONCR_TENANT }}\",
+                \"project\": \"${{ env.SPECTONCR_PROJECT }}\",
                 \"repository\": \"${{ env.IMAGE_NAME }}\",
                 \"actions\": [\"pull\", \"push\"]
               }
@@ -403,23 +403,23 @@ jobs:
           HTTP_CODE=$(echo "${RESPONSE}" | tail -1)
           BODY=$(echo "${RESPONSE}" | sed '$d')
           if [ "${HTTP_CODE}" != "200" ]; then
-            echo "::error::NebulaCR auth failed (HTTP ${HTTP_CODE})"
+            echo "::error::SpectonCR auth failed (HTTP ${HTTP_CODE})"
             exit 1
           fi
           ACCESS_TOKEN=$(echo "${BODY}" | jq -r '.token')
           echo "::add-mask::${ACCESS_TOKEN}"
           echo "token=${ACCESS_TOKEN}" >> "${GITHUB_OUTPUT}"
 
-      - name: Docker login to NebulaCR
+      - name: Docker login to SpectonCR
         run: |
-          echo "${{ steps.nebulacr-auth.outputs.token }}" | \
-            docker login "${{ env.NEBULACR_REGISTRY }}" \
+          echo "${{ steps.spectoncr-auth.outputs.token }}" | \
+            docker login "${{ env.SPECTONCR_REGISTRY }}" \
               --username "github-actions" \
               --password-stdin
 
       - name: Create and push manifest list
         run: |
-          IMAGE_BASE="${{ env.NEBULACR_REGISTRY }}/${{ env.NEBULACR_TENANT }}/${{ env.NEBULACR_PROJECT }}/${{ env.IMAGE_NAME }}"
+          IMAGE_BASE="${{ env.SPECTONCR_REGISTRY }}/${{ env.SPECTONCR_TENANT }}/${{ env.SPECTONCR_PROJECT }}/${{ env.IMAGE_NAME }}"
 
           # Read digests from all platform builds
           DIGESTS=""
@@ -438,7 +438,7 @@ jobs:
       - name: Docker logout (cleanup)
         if: always()
         run: |
-          docker logout "${{ env.NEBULACR_REGISTRY }}" 2>/dev/null || true
+          docker logout "${{ env.SPECTONCR_REGISTRY }}" 2>/dev/null || true
           rm -f "${HOME}/.docker/config.json" 2>/dev/null || true
 
   # ==========================================================================
@@ -459,23 +459,23 @@ jobs:
         run: |
           OIDC_TOKEN=$(curl -sSf \
             -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=nebulacr" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=spectoncr" \
             | jq -r '.value')
           echo "::add-mask::${OIDC_TOKEN}"
           echo "token=${OIDC_TOKEN}" >> "${GITHUB_OUTPUT}"
 
       # Authenticate with pull-only scope for scanning -- least privilege
-      - name: Authenticate to NebulaCR (pull-only)
-        id: nebulacr-auth
+      - name: Authenticate to SpectonCR (pull-only)
+        id: spectoncr-auth
         run: |
           RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
-            "${{ env.NEBULACR_AUTH_URL }}/auth/github-actions/token" \
+            "${{ env.SPECTONCR_AUTH_URL }}/auth/github-actions/token" \
             -H "Content-Type: application/json" \
             -d "{
               \"identity_token\": \"${{ steps.github-oidc.outputs.token }}\",
               \"scope\": {
-                \"tenant\": \"${{ env.NEBULACR_TENANT }}\",
-                \"project\": \"${{ env.NEBULACR_PROJECT }}\",
+                \"tenant\": \"${{ env.SPECTONCR_TENANT }}\",
+                \"project\": \"${{ env.SPECTONCR_PROJECT }}\",
                 \"repository\": \"${{ env.IMAGE_NAME }}\",
                 \"actions\": [\"pull\"]
               }
@@ -483,17 +483,17 @@ jobs:
           HTTP_CODE=$(echo "${RESPONSE}" | tail -1)
           BODY=$(echo "${RESPONSE}" | sed '$d')
           if [ "${HTTP_CODE}" != "200" ]; then
-            echo "::error::NebulaCR auth failed (HTTP ${HTTP_CODE})"
+            echo "::error::SpectonCR auth failed (HTTP ${HTTP_CODE})"
             exit 1
           fi
           ACCESS_TOKEN=$(echo "${BODY}" | jq -r '.token')
           echo "::add-mask::${ACCESS_TOKEN}"
           echo "token=${ACCESS_TOKEN}" >> "${GITHUB_OUTPUT}"
 
-      - name: Docker login to NebulaCR
+      - name: Docker login to SpectonCR
         run: |
-          echo "${{ steps.nebulacr-auth.outputs.token }}" | \
-            docker login "${{ env.NEBULACR_REGISTRY }}" \
+          echo "${{ steps.spectoncr-auth.outputs.token }}" | \
+            docker login "${{ env.SPECTONCR_REGISTRY }}" \
               --username "github-actions" \
               --password-stdin
 
@@ -501,7 +501,7 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.NEBULACR_REGISTRY }}/${{ env.NEBULACR_TENANT }}/${{ env.NEBULACR_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          image-ref: ${{ env.SPECTONCR_REGISTRY }}/${{ env.SPECTONCR_TENANT }}/${{ env.SPECTONCR_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           # Fail the pipeline on CRITICAL or HIGH vulnerabilities
@@ -518,13 +518,13 @@ jobs:
       - name: Docker logout (cleanup)
         if: always()
         run: |
-          docker logout "${{ env.NEBULACR_REGISTRY }}" 2>/dev/null || true
+          docker logout "${{ env.SPECTONCR_REGISTRY }}" 2>/dev/null || true
           rm -f "${HOME}/.docker/config.json" 2>/dev/null || true
 
   # ==========================================================================
   # Job: verify
   #
-  # Final verification that the image is pullable from NebulaCR.
+  # Final verification that the image is pullable from SpectonCR.
   # Uses a separate OIDC token exchange with pull-only scope.
   # ==========================================================================
   verify:
@@ -538,22 +538,22 @@ jobs:
         run: |
           OIDC_TOKEN=$(curl -sSf \
             -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=nebulacr" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=spectoncr" \
             | jq -r '.value')
           echo "::add-mask::${OIDC_TOKEN}"
           echo "token=${OIDC_TOKEN}" >> "${GITHUB_OUTPUT}"
 
-      - name: Authenticate to NebulaCR (pull-only)
-        id: nebulacr-auth
+      - name: Authenticate to SpectonCR (pull-only)
+        id: spectoncr-auth
         run: |
           RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
-            "${{ env.NEBULACR_AUTH_URL }}/auth/github-actions/token" \
+            "${{ env.SPECTONCR_AUTH_URL }}/auth/github-actions/token" \
             -H "Content-Type: application/json" \
             -d "{
               \"identity_token\": \"${{ steps.github-oidc.outputs.token }}\",
               \"scope\": {
-                \"tenant\": \"${{ env.NEBULACR_TENANT }}\",
-                \"project\": \"${{ env.NEBULACR_PROJECT }}\",
+                \"tenant\": \"${{ env.SPECTONCR_TENANT }}\",
+                \"project\": \"${{ env.SPECTONCR_PROJECT }}\",
                 \"repository\": \"${{ env.IMAGE_NAME }}\",
                 \"actions\": [\"pull\"]
               }
@@ -561,23 +561,23 @@ jobs:
           HTTP_CODE=$(echo "${RESPONSE}" | tail -1)
           BODY=$(echo "${RESPONSE}" | sed '$d')
           if [ "${HTTP_CODE}" != "200" ]; then
-            echo "::error::NebulaCR auth failed"
+            echo "::error::SpectonCR auth failed"
             exit 1
           fi
           ACCESS_TOKEN=$(echo "${BODY}" | jq -r '.token')
           echo "::add-mask::${ACCESS_TOKEN}"
           echo "token=${ACCESS_TOKEN}" >> "${GITHUB_OUTPUT}"
 
-      - name: Docker login to NebulaCR
+      - name: Docker login to SpectonCR
         run: |
-          echo "${{ steps.nebulacr-auth.outputs.token }}" | \
-            docker login "${{ env.NEBULACR_REGISTRY }}" \
+          echo "${{ steps.spectoncr-auth.outputs.token }}" | \
+            docker login "${{ env.SPECTONCR_REGISTRY }}" \
               --username "github-actions" \
               --password-stdin
 
       - name: Verify image is pullable
         run: |
-          IMAGE="${{ env.NEBULACR_REGISTRY }}/${{ env.NEBULACR_TENANT }}/${{ env.NEBULACR_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          IMAGE="${{ env.SPECTONCR_REGISTRY }}/${{ env.SPECTONCR_TENANT }}/${{ env.SPECTONCR_PROJECT }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
           echo "Pulling image: ${IMAGE}"
           docker pull "${IMAGE}"
           echo "Image verified successfully: ${IMAGE}"
@@ -588,5 +588,5 @@ jobs:
       - name: Docker logout (cleanup)
         if: always()
         run: |
-          docker logout "${{ env.NEBULACR_REGISTRY }}" 2>/dev/null || true
+          docker logout "${{ env.SPECTONCR_REGISTRY }}" 2>/dev/null || true
           rm -f "${HOME}/.docker/config.json" 2>/dev/null || true

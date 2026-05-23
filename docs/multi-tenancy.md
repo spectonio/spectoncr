@@ -1,6 +1,6 @@
 # Multi-Tenancy
 
-NebulaCR provides full multi-tenancy with isolated storage, access control, quotas, and rate limiting per tenant. The tenancy model uses a three-segment repository path: `tenant/project/repository`.
+SpectonCR provides full multi-tenancy with isolated storage, access control, quotas, and rate limiting per tenant. The tenancy model uses a three-segment repository path: `tenant/project/repository`.
 
 ## Table of Contents
 
@@ -14,7 +14,7 @@ NebulaCR provides full multi-tenancy with isolated storage, access control, quot
 
 ## Tenant / Project / Repository Model
 
-NebulaCR organizes images in a three-level hierarchy:
+SpectonCR organizes images in a three-level hierarchy:
 
 ```
 tenant / project / repository : tag
@@ -47,7 +47,7 @@ Two-segment paths (like Docker Hub's `library/nginx`) conflate ownership and org
 
 ## Default Tenant for Standard Docker Paths
 
-For backward compatibility with standard Docker 2-segment paths, NebulaCR uses a special default tenant named `_` (underscore). When a path has only two segments, the registry automatically maps it to the `_` tenant.
+For backward compatibility with standard Docker 2-segment paths, SpectonCR uses a special default tenant named `_` (underscore). When a path has only two segments, the registry automatically maps it to the `_` tenant.
 
 ```bash
 # Standard 2-segment path -- tenant defaults to "_"
@@ -69,14 +69,14 @@ The `_` tenant is created automatically and cannot be deleted. It has default qu
 
 ## Kubernetes CRDs
 
-NebulaCR provides four Custom Resource Definitions (CRDs) in the `nebulacr.io/v1alpha1` API group. The `nebula-controller` watches these resources and syncs their state to the auth service.
+SpectonCR provides four Custom Resource Definitions (CRDs) in the `spectoncr.io/v1alpha1` API group. The `specton-controller` watches these resources and syncs their state to the auth service.
 
 ### Tenant
 
 Tenants are cluster-scoped resources (not namespaced).
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Tenant
 metadata:
   name: acme
@@ -124,11 +124,11 @@ Status:
 Projects are namespaced resources that reference a parent tenant.
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Project
 metadata:
   name: backend
-  namespace: nebulacr
+  namespace: spectoncr
 spec:
   tenantRef: acme
   displayName: "Backend Services"
@@ -145,8 +145,8 @@ spec:
 ```
 
 ```bash
-kubectl get projects -n nebulacr
-kubectl describe project backend -n nebulacr
+kubectl get projects -n spectoncr
+kubectl describe project backend -n spectoncr
 ```
 
 ### AccessPolicy
@@ -154,11 +154,11 @@ kubectl describe project backend -n nebulacr
 AccessPolicy defines who can do what within a tenant or project.
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: AccessPolicy
 metadata:
   name: acme-backend-devs
-  namespace: nebulacr
+  namespace: spectoncr
 spec:
   tenantRef: acme
   # Scope to a specific project (omit for tenant-wide access)
@@ -199,11 +199,11 @@ Subject kinds:
 TokenPolicy controls JWT token behavior per tenant.
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: TokenPolicy
 metadata:
   name: acme-token-policy
-  namespace: nebulacr
+  namespace: spectoncr
 spec:
   tenantRef: acme
   # Maximum allowed token lifetime
@@ -228,14 +228,14 @@ Validation rules enforced by the controller:
 
 ## Isolation Guarantees
 
-NebulaCR enforces strict isolation between tenants at multiple levels:
+SpectonCR enforces strict isolation between tenants at multiple levels:
 
 ### Storage Isolation
 
 Each tenant's data is stored under a separate prefix in the storage backend:
 
 ```
-/var/lib/nebulacr/data/
+/var/lib/spectoncr/data/
   acme/
     backend/
       api-server/
@@ -297,9 +297,9 @@ token_issue_rpm = 60    # Token requests/minute per tenant
 ```
 
 ```bash
-NEBULACR_RATE_LIMIT__DEFAULT_RPS=100
-NEBULACR_RATE_LIMIT__IP_RPS=50
-NEBULACR_RATE_LIMIT__TOKEN_ISSUE_RPM=60
+SPECTONCR_RATE_LIMIT__DEFAULT_RPS=100
+SPECTONCR_RATE_LIMIT__IP_RPS=50
+SPECTONCR_RATE_LIMIT__TOKEN_ISSUE_RPM=60
 ```
 
 **Per-tenant override** via Tenant CRD:
@@ -342,10 +342,10 @@ Retry-After: 1
 Quota usage is exposed via Prometheus metrics:
 
 ```
-nebulacr_tenant_storage_bytes{tenant="acme"}
-nebulacr_tenant_repository_count{tenant="acme"}
-nebulacr_tenant_project_count{tenant="acme"}
-nebulacr_rate_limit_rejected_total{tenant="acme", endpoint="push"}
+spectoncr_tenant_storage_bytes{tenant="acme"}
+spectoncr_tenant_repository_count{tenant="acme"}
+spectoncr_tenant_project_count{tenant="acme"}
+spectoncr_rate_limit_rejected_total{tenant="acme", endpoint="push"}
 ```
 
 See the [Observability](observability.md) guide for setting up monitoring dashboards.

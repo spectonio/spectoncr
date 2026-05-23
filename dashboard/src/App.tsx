@@ -31,7 +31,7 @@ export function App() {
   return (
     <main>
       <header className="topbar">
-        <h1>NebulaCR</h1>
+        <h1>SpectonCR</h1>
         <input
           type="password"
           value={key}

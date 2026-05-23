@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in NebulaCR, please report it responsibly.
+If you discover a security vulnerability in SpectonCR, please report it responsibly.
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
@@ -38,7 +38,7 @@ Include:
 
 ## Security Best Practices
 
-When deploying NebulaCR:
+When deploying SpectonCR:
 
 - Run containers as non-root (default in our images)
 - Enable TLS for all external traffic

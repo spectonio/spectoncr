@@ -1,21 +1,21 @@
 // ============================================================================
-// Jenkins Pipeline: Build and Push to NebulaCR (Zero-Trust OIDC Flow)
+// Jenkins Pipeline: Build and Push to SpectonCR (Zero-Trust OIDC Flow)
 //
-// This declarative pipeline demonstrates NebulaCR's zero-trust CI/CD
+// This declarative pipeline demonstrates SpectonCR's zero-trust CI/CD
 // integration with Jenkins using OIDC or Vault-based authentication.
 //
 // Authentication methods (choose one):
 //   A) Jenkins OIDC Plugin -- Jenkins mints an OIDC JWT for the pipeline
 //   B) HashiCorp Vault     -- Jenkins fetches a token from Vault, which
-//                             has already been configured to trust NebulaCR
+//                             has already been configured to trust SpectonCR
 //   C) Direct API token    -- For bootstrap/migration only (not zero-trust)
 //
 // Pipeline stages:
-//   1. Authenticate  -- Obtain short-lived NebulaCR access token
+//   1. Authenticate  -- Obtain short-lived SpectonCR access token
 //   2. Build         -- Build Docker image with BuildKit
 //   3. Scan          -- Scan image for vulnerabilities (Trivy)
-//   4. Push          -- Push image to NebulaCR registry
-//   5. Verify        -- Verify image is pullable from NebulaCR
+//   4. Push          -- Push image to SpectonCR registry
+//   5. Verify        -- Verify image is pullable from SpectonCR
 //
 // Prerequisites:
 //   - Jenkins 2.387+ with Pipeline plugin
@@ -23,7 +23,7 @@
 //   - One of:
 //     - Jenkins OIDC Credentials Plugin (for method A)
 //     - HashiCorp Vault Plugin (for method B)
-//   - NebulaCR auth service configured to trust Jenkins OIDC issuer or Vault
+//   - SpectonCR auth service configured to trust Jenkins OIDC issuer or Vault
 //   - curl and jq available on the build agent
 //
 // ============================================================================
@@ -35,18 +35,18 @@ pipeline {
     }
 
     // ── Environment Variables ──────────────────────────────────────────────
-    // These define the NebulaCR target. Override via Jenkins job parameters
+    // These define the SpectonCR target. Override via Jenkins job parameters
     // or environment injections for per-project configuration.
     environment {
-        // NebulaCR connection settings
-        NEBULACR_REGISTRY  = 'registry.example.com:5000'
-        NEBULACR_AUTH_URL   = 'https://auth.example.com:5001'
-        NEBULACR_TENANT     = 'my-org'
-        NEBULACR_PROJECT    = 'my-project'
+        // SpectonCR connection settings
+        SPECTONCR_REGISTRY  = 'registry.example.com:5000'
+        SPECTONCR_AUTH_URL   = 'https://auth.example.com:5001'
+        SPECTONCR_TENANT     = 'my-org'
+        SPECTONCR_PROJECT    = 'my-project'
         IMAGE_NAME          = 'my-app'
 
         // Full image reference (assembled from components)
-        IMAGE_REF = "${NEBULACR_REGISTRY}/${NEBULACR_TENANT}/${NEBULACR_PROJECT}/${IMAGE_NAME}"
+        IMAGE_REF = "${SPECTONCR_REGISTRY}/${SPECTONCR_TENANT}/${SPECTONCR_PROJECT}/${IMAGE_NAME}"
 
         // Build metadata
         BUILD_TAG = "${GIT_COMMIT?.take(12) ?: 'unknown'}"
@@ -58,12 +58,12 @@ pipeline {
         choice(
             name: 'AUTH_METHOD',
             choices: ['oidc', 'vault'],
-            description: 'Authentication method for NebulaCR'
+            description: 'Authentication method for SpectonCR'
         )
         booleanParam(
             name: 'PUSH_IMAGE',
             defaultValue: true,
-            description: 'Push image to NebulaCR (uncheck for dry-run builds)'
+            description: 'Push image to SpectonCR (uncheck for dry-run builds)'
         )
         booleanParam(
             name: 'SCAN_IMAGE',
@@ -91,9 +91,9 @@ pipeline {
 
     stages {
         // ================================================================
-        // Stage 1: Authenticate to NebulaCR
+        // Stage 1: Authenticate to SpectonCR
         //
-        // Obtain a short-lived NebulaCR access token using one of the
+        // Obtain a short-lived SpectonCR access token using one of the
         // supported authentication methods.
         // ================================================================
         stage('Authenticate') {
@@ -103,15 +103,15 @@ pipeline {
                         // ── Method A: Jenkins OIDC Plugin ──────────────
                         // The Jenkins OIDC Credentials Plugin can mint a
                         // JWT for the current pipeline. The JWT is then
-                        // exchanged for a NebulaCR access token.
+                        // exchanged for a SpectonCR access token.
                         //
                         // Requires: Jenkins OIDC Credentials Plugin
-                        //           configured with audience = "nebulacr"
+                        //           configured with audience = "spectoncr"
                         //
                         // The OIDC token contains claims like:
                         //   iss: "https://jenkins.example.com"
                         //   sub: "job:my-org/my-job:build:42"
-                        //   aud: "nebulacr"
+                        //   aud: "spectoncr"
                         withCredentials([
                             string(
                                 credentialsId: 'jenkins-oidc-token',
@@ -121,17 +121,17 @@ pipeline {
                             sh '''#!/bin/bash
                                 set -euo pipefail
 
-                                echo "Exchanging Jenkins OIDC token for NebulaCR access token..."
+                                echo "Exchanging Jenkins OIDC token for SpectonCR access token..."
 
                                 RESPONSE=$(curl -sS -w "\\n%{http_code}" -X POST \
-                                    "${NEBULACR_AUTH_URL}/auth/token" \
+                                    "${SPECTONCR_AUTH_URL}/auth/token" \
                                     -H "Content-Type: application/json" \
-                                    -H "User-Agent: nebulacr-jenkins/1.0" \
+                                    -H "User-Agent: spectoncr-jenkins/1.0" \
                                     -d "{
                                         \\"identity_token\\": \\"${JENKINS_OIDC_TOKEN}\\",
                                         \\"scope\\": {
-                                            \\"tenant\\": \\"${NEBULACR_TENANT}\\",
-                                            \\"project\\": \\"${NEBULACR_PROJECT}\\",
+                                            \\"tenant\\": \\"${SPECTONCR_TENANT}\\",
+                                            \\"project\\": \\"${SPECTONCR_PROJECT}\\",
                                             \\"repository\\": \\"${IMAGE_NAME}\\",
                                             \\"actions\\": [\\"pull\\", \\"push\\"]
                                         }
@@ -141,7 +141,7 @@ pipeline {
                                 BODY=$(echo "$RESPONSE" | sed '$d')
 
                                 if [ "$HTTP_CODE" != "200" ]; then
-                                    echo "ERROR: NebulaCR auth failed (HTTP ${HTTP_CODE})"
+                                    echo "ERROR: SpectonCR auth failed (HTTP ${HTTP_CODE})"
                                     echo "$BODY" | jq -r '.error // "unknown"'
                                     exit 1
                                 fi
@@ -150,21 +150,21 @@ pipeline {
                                 EXPIRES_IN=$(echo "$BODY" | jq -r '.expires_in // "unknown"')
 
                                 # Write token to a temporary file (not env var, to avoid leaking)
-                                echo -n "$ACCESS_TOKEN" > /tmp/nebulacr-token
-                                chmod 600 /tmp/nebulacr-token
+                                echo -n "$ACCESS_TOKEN" > /tmp/spectoncr-token
+                                chmod 600 /tmp/spectoncr-token
 
-                                echo "NebulaCR token obtained (expires in ${EXPIRES_IN}s)"
+                                echo "SpectonCR token obtained (expires in ${EXPIRES_IN}s)"
                             '''
                         }
                     } else if (params.AUTH_METHOD == 'vault') {
                         // ── Method B: HashiCorp Vault ──────────────────
-                        // Use the Vault Plugin to fetch a NebulaCR token
+                        // Use the Vault Plugin to fetch a SpectonCR token
                         // from Vault's secrets engine. Vault must be
-                        // configured with NebulaCR as a backend.
+                        // configured with SpectonCR as a backend.
                         //
                         // Alternatively, use Vault's JWT auth method to
                         // authenticate Jenkins, then read a dynamic
-                        // NebulaCR credential from Vault.
+                        // SpectonCR credential from Vault.
                         withVault(
                             configuration: [
                                 vaultUrl: 'https://vault.example.com',
@@ -172,9 +172,9 @@ pipeline {
                             ],
                             vaultSecrets: [
                                 [
-                                    path: "nebulacr/creds/${NEBULACR_TENANT}/${NEBULACR_PROJECT}",
+                                    path: "spectoncr/creds/${SPECTONCR_TENANT}/${SPECTONCR_PROJECT}",
                                     secretValues: [
-                                        [vaultKey: 'token', envVar: 'VAULT_NEBULACR_TOKEN']
+                                        [vaultKey: 'token', envVar: 'VAULT_SPECTONCR_TOKEN']
                                     ]
                                 ]
                             ]
@@ -183,10 +183,10 @@ pipeline {
                                 set -euo pipefail
 
                                 # Write the Vault-provided token to a temp file
-                                echo -n "${VAULT_NEBULACR_TOKEN}" > /tmp/nebulacr-token
-                                chmod 600 /tmp/nebulacr-token
+                                echo -n "${VAULT_SPECTONCR_TOKEN}" > /tmp/spectoncr-token
+                                chmod 600 /tmp/spectoncr-token
 
-                                echo "NebulaCR token obtained from Vault"
+                                echo "SpectonCR token obtained from Vault"
                             '''
                         }
                     }
@@ -197,7 +197,7 @@ pipeline {
         // ================================================================
         // Stage 2: Docker Login
         //
-        // Use the short-lived token to authenticate with the NebulaCR
+        // Use the short-lived token to authenticate with the SpectonCR
         // registry via `docker login`.
         // ================================================================
         stage('Docker Login') {
@@ -206,17 +206,17 @@ pipeline {
                     set -euo pipefail
 
                     # Read token from the secure temp file
-                    if [ ! -f /tmp/nebulacr-token ]; then
-                        echo "ERROR: NebulaCR token file not found"
+                    if [ ! -f /tmp/spectoncr-token ]; then
+                        echo "ERROR: SpectonCR token file not found"
                         exit 1
                     fi
 
                     # Login using --password-stdin to avoid token in process args
-                    cat /tmp/nebulacr-token | docker login "${NEBULACR_REGISTRY}" \
+                    cat /tmp/spectoncr-token | docker login "${SPECTONCR_REGISTRY}" \
                         --username "jenkins" \
                         --password-stdin
 
-                    echo "Docker login to NebulaCR successful"
+                    echo "Docker login to SpectonCR successful"
                 '''
             }
         }
@@ -243,7 +243,7 @@ pipeline {
                         --label "org.opencontainers.image.revision=${GIT_COMMIT}" \
                         --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
                         --label "org.opencontainers.image.title=${IMAGE_NAME}" \
-                        --label "org.opencontainers.image.vendor=${NEBULACR_TENANT}" \
+                        --label "org.opencontainers.image.vendor=${SPECTONCR_TENANT}" \
                         --label "ci.jenkins.build-url=${BUILD_URL}" \
                         --label "ci.jenkins.build-number=${BUILD_NUMBER}" \
                         --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -318,7 +318,7 @@ pipeline {
         // ================================================================
         // Stage 5: Push
         //
-        // Push the built and scanned image to NebulaCR.
+        // Push the built and scanned image to SpectonCR.
         // ================================================================
         stage('Push') {
             when {
@@ -328,7 +328,7 @@ pipeline {
                 sh '''#!/bin/bash
                     set -euo pipefail
 
-                    echo "Pushing image to NebulaCR..."
+                    echo "Pushing image to SpectonCR..."
 
                     docker push "${IMAGE_REF}:${BUILD_TAG}"
                     docker push "${IMAGE_REF}:${BUILD_NUMBER}"
@@ -349,7 +349,7 @@ pipeline {
         // ================================================================
         // Stage 6: Verify
         //
-        // Verify the pushed image is accessible from NebulaCR.
+        // Verify the pushed image is accessible from SpectonCR.
         // ================================================================
         stage('Verify') {
             when {
@@ -376,16 +376,16 @@ pipeline {
 
     // ── Post Actions ───────────────────────────────────────────────────────
     // Always clean up credentials and local images, regardless of build
-    // outcome. The NebulaCR token is short-lived (5 min), but defense in
+    // outcome. The SpectonCR token is short-lived (5 min), but defense in
     // depth means we clean up immediately.
     post {
         always {
             sh '''#!/bin/bash
-                # Remove the NebulaCR token file
-                rm -f /tmp/nebulacr-token 2>/dev/null || true
+                # Remove the SpectonCR token file
+                rm -f /tmp/spectoncr-token 2>/dev/null || true
 
                 # Docker logout to remove credentials from config
-                docker logout "${NEBULACR_REGISTRY}" 2>/dev/null || true
+                docker logout "${SPECTONCR_REGISTRY}" 2>/dev/null || true
 
                 # Remove Docker config file that may contain cached credentials
                 rm -f "${HOME}/.docker/config.json" 2>/dev/null || true

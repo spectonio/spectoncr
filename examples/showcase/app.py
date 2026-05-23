@@ -11,8 +11,8 @@ app = Flask(__name__)
 def index():
     return jsonify(
         {
-            "service": "nebulacr-showcase",
-            "purpose": "Demo image for NebulaCR — see /metrics on the registry side.",
+            "service": "spectoncr-showcase",
+            "purpose": "Demo image for SpectonCR — see /metrics on the registry side.",
         }
     )
 

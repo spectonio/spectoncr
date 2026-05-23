@@ -1,4 +1,4 @@
-# NebulaCR Dashboard
+# SpectonCR Dashboard
 
 A React + Vite + TypeScript SPA for browsing scan results, filtering
 vulnerabilities, and watching live scan progress over WebSocket.

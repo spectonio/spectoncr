@@ -7,13 +7,13 @@
 > browser, tag list, manifest viewer (layers + config), scan report,
 > signature viewer, audit timeline, policy editor. Reuse the existing
 > `dashboard_auth_middleware`
-> (`crates/nebula-registry/src/main.rs:209`) and `/api/*` routes
+> (`crates/specton-registry/src/main.rs:209`) and `/api/*` routes
 > (`main.rs:2904-2916`). No new framework.
 
 ## a. Problem statement
 
 ACR Portal and Nexus UI are major selling points; users evaluate
-registries by clicking around for ten minutes. NebulaCR's dashboard is
+registries by clicking around for ten minutes. SpectonCR's dashboard is
 a one-page CVE search shipping zero registry-data viewing. The HTTP
 APIs work, but no human can use them without `curl`.
 
@@ -44,7 +44,7 @@ Data sources (all already exist or are added by sibling features):
 
 - Repos / tags: existing `/v2/_catalog`, `/v2/.../tags/list`.
 - Scan report: existing `/api/image-detail`
-  (`crates/nebula-registry/src/main.rs:2912`) + scanner's `/scan/{digest}`.
+  (`crates/specton-registry/src/main.rs:2912`) + scanner's `/scan/{digest}`.
 - Manifest body: existing `GET /v2/.../manifests/{ref}` — render
   layers, config descriptor, mediaType, history.
 - Signatures: `/v2/.../signatures/{digest}` (001).
@@ -62,7 +62,7 @@ can be flipped to "JWT or API key" mode. Login page hits
 Build is unchanged: `npm run build` produces `dashboard/dist/`, served
 by the existing static-file route. The Helm chart already has a
 `dashboard.enabled` flag at
-`deploy/helm/nebulacr/values.yaml:340-346`.
+`deploy/helm/spectoncr/values.yaml:340-346`.
 
 CLI: nothing — UI is the surface. MCP: `open_in_ui` returns a deep
 link given a digest or tag.

@@ -1,4 +1,4 @@
-# NebulaCR Scanner — Resume Prompt
+# SpectonCR Scanner — Resume Prompt
 
 Paste the block below into a fresh Claude Code session after SSH reconnect.
 Everything Claude needs to continue is in here; no earlier-session memory
@@ -8,9 +8,9 @@ assumed. Keep this file around until the scanner platform is feature-complete.
 
 ## Resume prompt (copy-paste verbatim)
 
-> I'm resuming work on the NebulaCR image-scanning platform. The work so far
-> is in this repo at `/home/bwalia/nebulacr`. Read
-> `RESUME.md`, `.claude/projects/-home-bwalia-nebulacr/memory/MEMORY.md`, and
+> I'm resuming work on the SpectonCR image-scanning platform. The work so far
+> is in this repo at `/home/dev/spectoncr`. Read
+> `RESUME.md`, `.claude/projects/-home-bwalia-spectoncr/memory/MEMORY.md`, and
 > `git log --oneline -5` to pick up context, then answer with a one-screen
 > status summary and propose the next concrete slice. Do NOT start coding
 > until I confirm. My GPU contention with `kubepilot` may or may not be
@@ -39,7 +39,7 @@ closing the session.
 - `docker compose up -d` brings up `postgres`, `redis`, `auth`, `registry`
 - Registry is on `localhost:5000`, metrics `localhost:9095`, auth `localhost:5001`
 - Scanner workers (2) spin up inside the registry process via `ScannerRuntime`
-- `NEBULACR_SCANNER__*` env vars already set in `docker-compose.yml`
+- `SPECTONCR_SCANNER__*` env vars already set in `docker-compose.yml`
 - Postgres schema: scans, vulnerabilities, affected_ranges, suppressions, audit_log, image_settings, scanner_api_keys
 - Ollama expected at `http://host.docker.internal:11434` with model
   `qwen2.5-coder:7b` — **currently contended by `kubepilot` (pid 7850)**; AI
@@ -75,9 +75,9 @@ Next up (commit 3 of 2a) — **OSV zip ingester + writer + scheduler + admin end
 - Spawn scheduler from `ScannerRuntime::build`; first-run banner uses `warn!`.
 - `POST /admin/vulndb/ingest` — auth-gated manual trigger for dev.
 
-After that (commit 4 of 2a) — **`NebulaVulnDb::query` + smoke test**:
+After that (commit 4 of 2a) — **`SpectonVulnDb::query` + smoke test**:
 - Per-package `SELECT ... FROM affected_ranges JOIN vulnerabilities ...`, filter via `matcher::for_ecosystem()`.
-- Re-scan `alpine:3.16` under `NEBULACR_SCANNER__VULNDB=nebula`; compare to baseline (1 crit / 3 high / 5 med / 2 low / 1 unk). ±a couple acceptable.
+- Re-scan `alpine:3.16` under `SPECTONCR_SCANNER__VULNDB=specton`; compare to baseline (1 crit / 3 high / 5 med / 2 low / 1 unk). ±a couple acceptable.
 
 Other not-yet-done (parked behind 2a):
 1. **RPM SBOM parser** — BDB + sqlite header-blob decoding. RHEL/UBI/CentOS only.
@@ -92,14 +92,14 @@ Done (earlier in this session, as commits above):
 
 ### Known pre-existing registry bugs I had to patch
 - `/v2/` returned 200 without auth → fixed to return 401 + WWW-Authenticate
-- WWW-Authenticate realm defaulted to `https://` → set `NEBULACR_EXTERNAL_URL`
-- `/auth/token` proxy hardcoded to `nebulacr-auth:5001` → set `NEBULACR_AUTH_SERVICE_URL`
+- WWW-Authenticate realm defaulted to `https://` → set `SPECTONCR_EXTERNAL_URL`
+- `/auth/token` proxy hardcoded to `spectoncr-auth:5001` → set `SPECTONCR_AUTH_SERVICE_URL`
 - JWT keys owned by root, auth uid is 10001 → `chown` on the volume. If the volume gets recreated this will break again; long-term fix is to update the `keygen` init-container to chown before writing.
 
 ### How to smoke-test after restart
 
 ```bash
-cd /home/bwalia/nebulacr
+cd /home/dev/spectoncr
 docker compose up -d
 sleep 6
 docker compose logs registry | grep "scanner runtime ready"  # expect 1 line
@@ -111,7 +111,7 @@ docker push localhost:5000/demo/default/alpine:3.16
 
 # Wait a couple seconds, then:
 DIGEST=sha256:0db9d004361b106932f8c7632ae54d56e92c18281e2dd203127d77405020abf6
-TOKEN=$(curl -s -u admin:admin "http://localhost:5000/auth/token?service=nebulacr-registry&scope=repository:demo/default/alpine:pull" | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
+TOKEN=$(curl -s -u admin:admin "http://localhost:5000/auth/token?service=spectoncr-registry&scope=repository:demo/default/alpine:pull" | python3 -c "import sys,json;print(json.load(sys.stdin)['token'])")
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:5000/v2/scan/live/$DIGEST" | python3 -m json.tool | head -40
 ```
 
@@ -124,9 +124,9 @@ Postgres, so yes).
 All 32 scanner lib tests green as of `b90f65d`. Run in container:
 
 ```bash
-docker run --rm -v /home/bwalia/nebulacr:/build -w /build \
+docker run --rm -v /home/dev/spectoncr:/build -w /build \
   -e CARGO_HOME=/build/.cargo-home rust:1.94-bookworm \
-  cargo test -p nebula-scanner --lib
+  cargo test -p specton-scanner --lib
 ```
 
 No Rust toolchain installed directly on the host — the project always
@@ -141,4 +141,4 @@ Once 2a is end-to-end:
 Both feed the same `Ingester` trait + normaliser pattern established in 2a.
 
 The trait boundary at `VulnDb` is already there; flipping
-`NEBULACR_SCANNER__VULNDB=nebula` swaps implementations with zero caller changes.
+`SPECTONCR_SCANNER__VULNDB=specton` swaps implementations with zero caller changes.

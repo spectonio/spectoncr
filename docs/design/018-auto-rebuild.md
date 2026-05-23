@@ -1,7 +1,7 @@
 # 018 — Auto-Rebuild on Base CVE Patch
 
 > **Summary.** When a base image (e.g. `python:3.12-slim`) gets a
-> patched re-push that fixes a CVE NebulaCR's scanner has flagged
+> patched re-push that fixes a CVE SpectonCR's scanner has flagged
 > downstream, fire a structured webhook to every repo whose images
 > use that base. CI receives the event with a payload tailored to
 > the build system (GitHub Actions `repository_dispatch`, GitLab
@@ -17,14 +17,14 @@ A new CVE drops on `glibc`; Debian publishes a patched
 but no team rebuilds their app images on top until somebody opens a
 ticket and says "rebuild." Days pass with vulnerable images in
 production. Nexus has a paid feature ("Lifecycle Suggested Components")
-that approximates this; ACR has nothing native. NebulaCR has the
+that approximates this; ACR has nothing native. SpectonCR has the
 ingredients — the scanner already knows which packages are in which
 image, and the registry knows which manifests reference which base.
 Closing the loop is mostly plumbing.
 
 ## b. Proposed approach
 
-New module `crates/nebula-scanner/src/rebuild.rs` plus a
+New module `crates/specton-scanner/src/rebuild.rs` plus a
 `RebuildEmitter` trait so output destinations are pluggable:
 
 ```rust
@@ -66,18 +66,18 @@ Detection pipeline:
    describing the SCM repo + emitter.
 
 Authentication out: short-lived signed JWTs sent in the webhook
-`Authorization` header, signed by NebulaCR's existing JWT key. CI
+`Authorization` header, signed by SpectonCR's existing JWT key. CI
 verifies via the registry's JWKS.
 
-CLI: `nebulacr rebuild subscriptions list/add/remove`,
-`nebulacr rebuild trigger <ref> --reason cve-fix --to <subscription>`
-(manual fire), `nebulacr lineage show <ref>` (inspect parent chain).
+CLI: `spectoncr rebuild subscriptions list/add/remove`,
+`spectoncr rebuild trigger <ref> --reason cve-fix --to <subscription>`
+(manual fire), `spectoncr lineage show <ref>` (inspect parent chain).
 MCP: `list_rebuild_subscriptions`, `trigger_rebuild`, `inspect_lineage`.
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: RebuildSubscription
 metadata:
   name: api-on-base-cve
@@ -220,12 +220,12 @@ emission until at least one `RebuildSubscription` exists.
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| Lineage detection  | `crates/nebula-scanner/tests/lineage.rs`               | Both label + history paths                  |
-| Subscription match | `crates/nebula-scanner/tests/sub_match.rs`             | Glob descendants matcher                    |
-| GitHub emitter     | `crates/nebula-scanner/tests/emit_github.rs`           | Mock GH API                                 |
-| GitLab emitter     | `crates/nebula-scanner/tests/emit_gitlab.rs`           | Mock GitLab API                             |
-| Webhook HMAC       | `crates/nebula-scanner/tests/emit_webhook.rs`          | HMAC signing & client-side verify           |
-| Rate limit         | `crates/nebula-scanner/tests/rate_limit.rs`            | 10 fires → 1 actually emits                 |
+| Lineage detection  | `crates/specton-scanner/tests/lineage.rs`               | Both label + history paths                  |
+| Subscription match | `crates/specton-scanner/tests/sub_match.rs`             | Glob descendants matcher                    |
+| GitHub emitter     | `crates/specton-scanner/tests/emit_github.rs`           | Mock GH API                                 |
+| GitLab emitter     | `crates/specton-scanner/tests/emit_gitlab.rs`           | Mock GitLab API                             |
+| Webhook HMAC       | `crates/specton-scanner/tests/emit_webhook.rs`          | HMAC signing & client-side verify           |
+| Rate limit         | `crates/specton-scanner/tests/rate_limit.rs`            | 10 fires → 1 actually emits                 |
 | End-to-end         | `tests/e2e/auto_rebuild_e2e.sh`                        | Patch base → assert downstream rebuild fired |
 
 ## i. Implementation slice count

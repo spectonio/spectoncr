@@ -1,6 +1,6 @@
-# 019 — AI Agent for Registry Automation (`nebula-pilot`)
+# 019 — AI Agent for Registry Automation (`specton-pilot`)
 
-> **Summary.** A natural-language operator agent for NebulaCR — pick
+> **Summary.** A natural-language operator agent for SpectonCR — pick
 > a model (Anthropic Claude, OpenAI, or local Ollama), expose a
 > structured tool registry over MCP **and** an HTTP chat surface,
 > and let the agent invoke registry operations the same way a human
@@ -20,7 +20,7 @@ false-positive CVE for our team", "promote the latest tag of
 Every action requires a different sub-CLI, a different set of
 flags, and a different doc page. `bwalia/dockpilot` proved (for the
 Docker daemon) that an LLM can compress this UX into a single
-chat-style entry point. NebulaCR has the right primitives — every
+chat-style entry point. SpectonCR has the right primitives — every
 admin operation is already a CLI subcommand or an HTTP endpoint —
 but no integrated agent surface. The dual-use risk (an agent typing
 `run_gc` is fine; typing `delete every tag` is not) is what dockpilot
@@ -29,7 +29,7 @@ mandatory audit.
 
 ## b. Proposed approach
 
-New crate `nebula-pilot`. Three pieces:
+New crate `specton-pilot`. Three pieces:
 
 ### 1. Tool registry
 
@@ -38,7 +38,7 @@ schema, a permission requirement, a destructiveness flag, and a
 handler:
 
 ```rust
-// crates/nebula-pilot/src/tool.rs
+// crates/specton-pilot/src/tool.rs
 pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
@@ -76,13 +76,13 @@ Initial tool catalogue (one struct per item, dispatched by name):
 | `trigger_rebuild`          | Mutating        | `tenant:admin`     | 018 manual fire                              |
 
 The catalogue is the contract surface for the agent — adding a new
-NebulaCR feature means registering one `Tool` impl and the agent
+SpectonCR feature means registering one `Tool` impl and the agent
 inherits it.
 
 ### 2. Multi-backend LLM client
 
 ```rust
-// crates/nebula-pilot/src/llm/mod.rs
+// crates/specton-pilot/src/llm/mod.rs
 #[async_trait]
 pub trait LlmClient: Send + Sync {
     async fn step(&self, msgs: &[ChatMessage], tools: &[ToolDescriptor])
@@ -102,14 +102,14 @@ again. Recursion bound: max 10 tool calls per user message, max
 
 ### 3. Surfaces
 
-- **MCP server** (`nebula-mcp` already mentioned in PROMPT.md but
+- **MCP server** (`specton-mcp` already mentioned in PROMPT.md but
   not yet implemented). Each `Tool` becomes an MCP tool.
-  Claude Code, Cursor, Continue, etc. talk to NebulaCR directly.
+  Claude Code, Cursor, Continue, etc. talk to SpectonCR directly.
 - **HTTP chat API** (`POST /v2/_pilot/chat`) — JSON `{messages,
   session_id}` in, streamed SSE responses out. Suitable for embedding
   in 007's Web UI as a chat sidebar.
-- **CLI** (`nebulacr pilot`) — interactive REPL using the same
-  endpoint. `nebulacr pilot "rescan the prod tags pushed in the
+- **CLI** (`spectoncr pilot`) — interactive REPL using the same
+  endpoint. `spectoncr pilot "rescan the prod tags pushed in the
   last hour and tell me which still have criticals"`.
 
 Safety rails:
@@ -127,25 +127,25 @@ Safety rails:
 - **Audit every invocation.** Tool name, input, principal, model,
   outcome, dry-run flag — written to 005 in a single transaction.
   Failure to audit fails the tool call.
-- **Spend cap.** `nebulacr.toml` carries a per-tenant token budget
+- **Spend cap.** `spectoncr.toml` carries a per-tenant token budget
   per day (Anthropic / OpenAI tokens). Agent declines further
   steps with a clear message when the cap is hit.
 - **No lateral state.** Agent has no shell, no file IO, no
   arbitrary HTTP. It can ONLY invoke the registered tools.
 
 CLI:
-- `nebulacr pilot` — interactive REPL.
-- `nebulacr pilot --once "..."` — single-shot prompt.
-- `nebulacr pilot tools list` — print the tool catalogue.
-- `nebulacr pilot sessions list` — saved chat sessions per user.
-- `nebulacr mcp serve` — MCP stdio server.
+- `spectoncr pilot` — interactive REPL.
+- `spectoncr pilot --once "..."` — single-shot prompt.
+- `spectoncr pilot tools list` — print the tool catalogue.
+- `spectoncr pilot sessions list` — saved chat sessions per user.
+- `spectoncr mcp serve` — MCP stdio server.
 
 MCP tool surface mirrors the catalogue 1:1.
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: PilotConfig
 metadata:
   name: tenant-acme
@@ -183,7 +183,7 @@ without changing code.
 | POST   | `/v2/_pilot/approvals/{id}`                                | `tenant:admin`     | Approve a queued destructive op                  |
 | GET    | `/v2/_pilot/usage`                                         | `tenant:admin`     | Token spend per backend                          |
 
-The MCP server is delivered as a separate binary — `nebula-mcp` —
+The MCP server is delivered as a separate binary — `specton-mcp` —
 that talks the standard MCP stdio protocol; it imports the same
 `Tool` registry crate.
 
@@ -293,24 +293,24 @@ encounter it.
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| Tool dispatch      | `crates/nebula-pilot/tests/dispatch.rs`                | Invokes each tool with mocked deps          |
-| Permission gate    | `crates/nebula-pilot/tests/rbac.rs`                    | Insufficient scope → 403                     |
-| Dry-run on destructive | `crates/nebula-pilot/tests/dry_run.rs`             | First call dry, second confirm-required     |
-| Approval flow      | `crates/nebula-pilot/tests/approval.rs`                | Pending → admin approves → tool fires       |
-| Spend cap          | `crates/nebula-pilot/tests/spend_cap.rs`               | Mock token usage; cap triggers 429          |
-| Anthropic backend  | `crates/nebula-pilot/tests/llm_anthropic.rs`           | Mock client; tool-use round trip            |
-| OpenAI backend     | `crates/nebula-pilot/tests/llm_openai.rs`              | Mock client                                  |
-| Ollama backend     | `crates/nebula-pilot/tests/llm_ollama.rs`              | Mock; JSON-mode parse                       |
-| Prompt injection   | `crates/nebula-pilot/tests/prompt_injection.rs`        | Malicious tool output → no privileged call  |
-| MCP transport      | `crates/nebula-pilot/tests/mcp_stdio.rs`               | Round-trip MCP call → tool dispatch         |
-| End-to-end CLI     | `tests/e2e/pilot_cli.sh`                               | `nebulacr pilot --once "scan acme/prod/api:latest and tell me criticals"` |
+| Tool dispatch      | `crates/specton-pilot/tests/dispatch.rs`                | Invokes each tool with mocked deps          |
+| Permission gate    | `crates/specton-pilot/tests/rbac.rs`                    | Insufficient scope → 403                     |
+| Dry-run on destructive | `crates/specton-pilot/tests/dry_run.rs`             | First call dry, second confirm-required     |
+| Approval flow      | `crates/specton-pilot/tests/approval.rs`                | Pending → admin approves → tool fires       |
+| Spend cap          | `crates/specton-pilot/tests/spend_cap.rs`               | Mock token usage; cap triggers 429          |
+| Anthropic backend  | `crates/specton-pilot/tests/llm_anthropic.rs`           | Mock client; tool-use round trip            |
+| OpenAI backend     | `crates/specton-pilot/tests/llm_openai.rs`              | Mock client                                  |
+| Ollama backend     | `crates/specton-pilot/tests/llm_ollama.rs`              | Mock; JSON-mode parse                       |
+| Prompt injection   | `crates/specton-pilot/tests/prompt_injection.rs`        | Malicious tool output → no privileged call  |
+| MCP transport      | `crates/specton-pilot/tests/mcp_stdio.rs`               | Round-trip MCP call → tool dispatch         |
+| End-to-end CLI     | `tests/e2e/pilot_cli.sh`                               | `spectoncr pilot --once "scan acme/prod/api:latest and tell me criticals"` |
 
 ## i. Implementation slice count
 
 5 slices, ~5 weeks (largest after 011's mesh — LLM integration is
 deceptively wide):
 
-1. `nebula-pilot` crate scaffold + `Tool` trait + initial 8
+1. `specton-pilot` crate scaffold + `Tool` trait + initial 8
    read-only tools (no LLM yet) + JSON Schema generation +
    permission gate.
 2. `LlmClient` trait + Anthropic backend + chat loop + session +
@@ -319,5 +319,5 @@ deceptively wide):
    delete) with dry-run + approval flow.
 4. OpenAI + Ollama backends + tenant `PilotConfig` CRD + token
    budget enforcement + audit-log integration.
-5. MCP server binary (`nebula-mcp`) + CLI REPL + dashboard chat
+5. MCP server binary (`specton-mcp`) + CLI REPL + dashboard chat
    sidebar (handed to 007) + e2e + docs (recipes per backend).

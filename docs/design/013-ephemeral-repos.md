@@ -3,8 +3,8 @@
 > **Summary.** A "PR build" namespace where every push gets a TTL,
 > every tag is auto-deleted at expiry, and the whole repo evaporates
 > when its source PR closes. Built on top of 003 (tag-state) and
-> 004/009 (GC). One annotation on push (`X-NebulaCR-TTL: 7d`) is
-> enough; CI/CD wiring is `nebulacr ci tag --pr 1234 → ephemeral`.
+> 004/009 (GC). One annotation on push (`X-SpectonCR-TTL: 7d`) is
+> enough; CI/CD wiring is `spectoncr ci tag --pr 1234 → ephemeral`.
 
 ## a. Problem statement
 
@@ -14,7 +14,7 @@ registry forever — Nexus and ACR both stop only at retention rules
 and "max tag count" rules that operators forget to tune. The result
 is registries where 80 % of stored bytes are PR scratch. Operators
 either run aggressive retention (which stomps on real release
-tags) or do nothing (and pay the storage bill). NebulaCR can model
+tags) or do nothing (and pay the storage bill). SpectonCR can model
 ephemerality as a first-class property: the tag *knows* it is
 ephemeral, the registry *knows* when to drop it, and CI doesn't
 need a separate cleanup pipeline.
@@ -26,7 +26,7 @@ Two lightweight features:
 ### 1. TTL tags
 
 Any tag can carry a TTL. On push, clients set
-`X-NebulaCR-TTL: <duration>` (e.g. `7d`, `12h`, `2026-06-01T00:00Z`).
+`X-SpectonCR-TTL: <duration>` (e.g. `7d`, `12h`, `2026-06-01T00:00Z`).
 The registry stores the expiry on the `tags` table (the same one
 003 already extends with state). A reaper removes expired tags via
 the same code path as a normal `DELETE /v2/<name>/manifests/<tag>`,
@@ -34,7 +34,7 @@ which means audit, GC refcount decrement, and signing teardown all
 flow naturally.
 
 ```rust
-// crates/nebula-registry/src/ttl.rs
+// crates/specton-registry/src/ttl.rs
 pub struct TtlReaper { db: PgPool, registry: Arc<RegistryHandle> }
 
 impl TtlReaper {
@@ -45,7 +45,7 @@ impl TtlReaper {
 ```
 
 Hook into `put_manifest` at
-`crates/nebula-registry/src/main.rs:886` to read the header and
+`crates/specton-registry/src/main.rs:886` to read the header and
 write `expires_at` on the `tags` row.
 
 ### 2. Ephemeral repositories
@@ -62,7 +62,7 @@ CI flow:
 
 ```bash
 # At PR open
-nebulacr ci tag --pr 1234 --repo acme/prod/api/pr-1234 --ttl 7d
+spectoncr ci tag --pr 1234 --repo acme/prod/api/pr-1234 --ttl 7d
 # This calls POST /v2/_ephemeral/repos and gets back a scoped token.
 
 # At PR push
@@ -72,18 +72,18 @@ docker push registry.example.com/acme/prod/api/pr-1234:abc1234
 # All tags & manifests deleted, refcounts decrement, GC reaper picks up.
 ```
 
-The CLI subcommand `nebulacr ci tag` is opinionated: it composes
+The CLI subcommand `spectoncr ci tag` is opinionated: it composes
 the right TTL header, scopes a token to push only to that one
 repo, and registers the SCM webhook in one shot.
 
-CLI: `nebulacr ttl set <ref> --ttl 7d`, `nebulacr ttl extend <ref>
---by 7d`, `nebulacr ephemeral list`, `nebulacr ephemeral close
+CLI: `spectoncr ttl set <ref> --ttl 7d`, `spectoncr ttl extend <ref>
+--by 7d`, `spectoncr ephemeral list`, `spectoncr ephemeral close
 <repo>`. MCP: `set_ttl`, `extend_ttl`, `close_ephemeral_repo`.
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Repository
 metadata:
   name: api-pr-1234
@@ -128,7 +128,7 @@ spec:
 | POST   | `/v2/<name>/manifests/<ref>/ttl`                        | `repo:push`        | Body `{ttl}` → updates `expires_at`              |
 | DELETE | `/v2/<name>/manifests/<ref>/ttl`                        | `repo:push`        | Removes expiry (makes permanent)                  |
 
-The push-time `X-NebulaCR-TTL` header is the primary path; the
+The push-time `X-SpectonCR-TTL` header is the primary path; the
 explicit `/ttl` route is the management plane.
 
 ## e. Storage / Postgres schema
@@ -180,7 +180,7 @@ separate "expiring soon" table needed.
   no default, push is accepted with no expiry (but a metric flags
   `ephemeral_no_ttl_total` for monitoring).
 - **TTL > project's `maxTtl`.** Capped silently to maxTtl; response
-  header `X-NebulaCR-TTL-Capped: 30d` informs the client.
+  header `X-SpectonCR-TTL-Capped: 30d` informs the client.
 - **Reaper deletes a tag a CI is concurrently pulling.** The
   manifest delete sets the tag row to `Quarantined` (003) before
   removing — ongoing pulls complete because they already have
@@ -193,7 +193,7 @@ separate "expiring soon" table needed.
   deployments.** `expireOnEmpty: false` keeps the repo alive while
   pulls continue (last-pull timestamp tracked in `tags.last_pulled_at`),
   reaped only after `gracePeriod` of inactivity.
-- **Operator wants to "save" an ephemeral repo's tag.** `nebulacr
+- **Operator wants to "save" an ephemeral repo's tag.** `spectoncr
   ttl extend <ref> --by 30d --pin` removes the ephemeral flag and
   promotes to a normal tag.
 
@@ -209,11 +209,11 @@ No retroactive migration of existing scratch tags — operators run
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| Reaper             | `crates/nebula-registry/tests/ttl_reaper.rs`           | Push 100 tags with TTL 1s; assert reap     |
-| Header parsing     | `crates/nebula-registry/tests/ttl_header.rs`           | Valid + invalid + cap behaviours            |
-| SCM webhook        | `crates/nebula-registry/tests/scm_webhook.rs`          | GitHub + GitLab + Bitbucket payloads        |
-| HMAC validation    | `crates/nebula-registry/tests/scm_hmac.rs`             | Spoofed payload rejected                    |
-| Pull during reap   | `crates/nebula-registry/tests/pull_during_ttl.rs`      | In-flight pull survives                     |
+| Reaper             | `crates/specton-registry/tests/ttl_reaper.rs`           | Push 100 tags with TTL 1s; assert reap     |
+| Header parsing     | `crates/specton-registry/tests/ttl_header.rs`           | Valid + invalid + cap behaviours            |
+| SCM webhook        | `crates/specton-registry/tests/scm_webhook.rs`          | GitHub + GitLab + Bitbucket payloads        |
+| HMAC validation    | `crates/specton-registry/tests/scm_hmac.rs`             | Spoofed payload rejected                    |
+| Pull during reap   | `crates/specton-registry/tests/pull_during_ttl.rs`      | In-flight pull survives                     |
 | End-to-end CI flow | `tests/e2e/ephemeral_e2e.sh`                           | Open PR → push → close PR → assert deleted  |
 
 ## i. Implementation slice count
@@ -224,6 +224,6 @@ No retroactive migration of existing scratch tags — operators run
    reaper task. Pure tag-level TTL, no ephemeral repos yet.
 2. `ephemeral_repos` table + Repository CRD + `_ephemeral/repos`
    routes + project defaults.
-3. SCM webhook handlers (GitHub / GitLab / Bitbucket), `nebulacr ci
+3. SCM webhook handlers (GitHub / GitLab / Bitbucket), `spectoncr ci
    tag` CLI subcommand, MCP tools, e2e test, docs (recipe per CI
    platform).

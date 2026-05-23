@@ -1,28 +1,28 @@
 # ============================================================================
-# GitLab CI: Build, Scan, and Push to NebulaCR (Zero-Trust OIDC Flow)
+# GitLab CI: Build, Scan, and Push to SpectonCR (Zero-Trust OIDC Flow)
 #
-# This pipeline demonstrates NebulaCR's zero-trust CI/CD integration with
+# This pipeline demonstrates SpectonCR's zero-trust CI/CD integration with
 # GitLab CI/CD using native OIDC identity tokens (GitLab 15.7+).
 #
 # Pipeline stages:
 #   1. build   -- Build the Docker image (or Kaniko for non-Docker runners)
 #   2. scan    -- Scan the image for vulnerabilities with Trivy
-#   3. push    -- Push the verified image to NebulaCR
+#   3. push    -- Push the verified image to SpectonCR
 #   4. deploy  -- Update deployment manifests (optional)
 #
 # Security properties:
 #   - No long-lived secrets or CI/CD variables required
 #   - GitLab OIDC tokens are short-lived and audience-bound
-#   - NebulaCR access tokens expire after 5 minutes
+#   - SpectonCR access tokens expire after 5 minutes
 #   - Least-privilege: each stage requests only the permissions it needs
 #   - Subject binding ensures only authorized projects/branches can push
 #
 # Prerequisites:
 #   - GitLab 15.7+ (for native id_tokens support)
-#   - Configure NebulaCR auth service to trust GitLab's OIDC issuer:
+#   - Configure SpectonCR auth service to trust GitLab's OIDC issuer:
 #       issuer_url = "https://gitlab.com"   (or your self-hosted instance)
-#       client_id  = "nebulacr"
-#   - Create a tenant and project in NebulaCR
+#       client_id  = "spectoncr"
+#   - Create a tenant and project in SpectonCR
 #   - Create an access policy binding the GitLab subject to a role:
 #       subject = "project_path:my-group/my-project:ref_type:branch:ref:main"
 #       role    = "push"
@@ -43,16 +43,16 @@ stages:
 # Global variables
 # ---------------------------------------------------------------------------
 variables:
-  # NebulaCR connection settings -- override in GitLab CI/CD Variables
+  # SpectonCR connection settings -- override in GitLab CI/CD Variables
   # (Settings > CI/CD > Variables) for per-project configuration.
-  NEBULACR_REGISTRY: registry.example.com:5000
-  NEBULACR_AUTH_URL: https://auth.example.com:5001
-  NEBULACR_TENANT: my-org
-  NEBULACR_PROJECT: my-project
+  SPECTONCR_REGISTRY: registry.example.com:5000
+  SPECTONCR_AUTH_URL: https://auth.example.com:5001
+  SPECTONCR_TENANT: my-org
+  SPECTONCR_PROJECT: my-project
   IMAGE_NAME: my-app
 
   # Full image reference (assembled from components above)
-  IMAGE_REF: "${NEBULACR_REGISTRY}/${NEBULACR_TENANT}/${NEBULACR_PROJECT}/${IMAGE_NAME}"
+  IMAGE_REF: "${SPECTONCR_REGISTRY}/${SPECTONCR_TENANT}/${SPECTONCR_PROJECT}/${IMAGE_NAME}"
 
   # Docker-in-Docker settings
   DOCKER_TLS_CERTDIR: "/certs"
@@ -65,51 +65,51 @@ variables:
 #
 #   iss: "https://gitlab.com"  (or your self-hosted URL)
 #   sub: "project_path:my-group/my-project:ref_type:branch:ref:main"
-#   aud: "nebulacr"
+#   aud: "spectoncr"
 #   namespace_path: "my-group"
 #   project_path: "my-group/my-project"
 #   ref: "main"
 #   ref_type: "branch"
 #   pipeline_id: "12345678"
 #
-# The audience ("nebulacr") must match the client_id configured in the
-# NebulaCR OIDC provider settings. The token is available to all jobs
+# The audience ("spectoncr") must match the client_id configured in the
+# SpectonCR OIDC provider settings. The token is available to all jobs
 # as the GITLAB_OIDC_TOKEN environment variable.
 # ---------------------------------------------------------------------------
 id_tokens:
   GITLAB_OIDC_TOKEN:
-    aud: nebulacr
+    aud: spectoncr
 
 # ---------------------------------------------------------------------------
-# Helper function: Exchange GitLab OIDC token for NebulaCR access token
+# Helper function: Exchange GitLab OIDC token for SpectonCR access token
 # ---------------------------------------------------------------------------
 # Defined as a YAML anchor so it can be reused across stages without
 # code duplication. Each stage calls this with its own scope (actions).
 # ---------------------------------------------------------------------------
-.nebulacr_auth: &nebulacr_auth
+.spectoncr_auth: &spectoncr_auth
   # Install dependencies (Alpine-based Docker image)
   - apk add --no-cache curl jq
-  # Exchange OIDC token for NebulaCR token
+  # Exchange OIDC token for SpectonCR token
   - |
-    nebulacr_authenticate() {
+    spectoncr_authenticate() {
       local ACTIONS="$1"  # JSON array, e.g., '["pull"]' or '["pull", "push"]'
 
-      echo "Authenticating to NebulaCR..."
-      echo "  Auth URL:   ${NEBULACR_AUTH_URL}"
-      echo "  Tenant:     ${NEBULACR_TENANT}"
-      echo "  Project:    ${NEBULACR_PROJECT}"
+      echo "Authenticating to SpectonCR..."
+      echo "  Auth URL:   ${SPECTONCR_AUTH_URL}"
+      echo "  Tenant:     ${SPECTONCR_TENANT}"
+      echo "  Project:    ${SPECTONCR_PROJECT}"
       echo "  Repository: ${IMAGE_NAME}"
       echo "  Actions:    ${ACTIONS}"
 
       RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
-        "${NEBULACR_AUTH_URL}/auth/token" \
+        "${SPECTONCR_AUTH_URL}/auth/token" \
         -H "Content-Type: application/json" \
-        -H "User-Agent: nebulacr-gitlab-ci/1.0" \
+        -H "User-Agent: spectoncr-gitlab-ci/1.0" \
         -d "{
           \"identity_token\": \"${GITLAB_OIDC_TOKEN}\",
           \"scope\": {
-            \"tenant\": \"${NEBULACR_TENANT}\",
-            \"project\": \"${NEBULACR_PROJECT}\",
+            \"tenant\": \"${SPECTONCR_TENANT}\",
+            \"project\": \"${SPECTONCR_PROJECT}\",
             \"repository\": \"${IMAGE_NAME}\",
             \"actions\": ${ACTIONS}
           }
@@ -119,27 +119,27 @@ id_tokens:
       BODY=$(echo "$RESPONSE" | sed '$d')
 
       if [ "$HTTP_CODE" != "200" ]; then
-        echo "ERROR: NebulaCR authentication failed (HTTP ${HTTP_CODE})"
+        echo "ERROR: SpectonCR authentication failed (HTTP ${HTTP_CODE})"
         echo "$BODY" | jq -r '.error // "unknown error"' 2>/dev/null
         echo "$BODY" | jq -r '.message // ""' 2>/dev/null
         return 1
       fi
 
       # Export the token for use in subsequent commands
-      export NEBULACR_TOKEN=$(echo "$BODY" | jq -r '.token')
+      export SPECTONCR_TOKEN=$(echo "$BODY" | jq -r '.token')
       EXPIRES_IN=$(echo "$BODY" | jq -r '.expires_in // "unknown"')
       TOKEN_ID=$(echo "$BODY" | jq -r '.token_id // "unknown"')
 
-      echo "NebulaCR token obtained successfully"
+      echo "SpectonCR token obtained successfully"
       echo "  Token ID:   ${TOKEN_ID}"
       echo "  Expires in: ${EXPIRES_IN}s"
     }
 
 # ---------------------------------------------------------------------------
-# Helper: Docker login using NebulaCR token
+# Helper: Docker login using SpectonCR token
 # ---------------------------------------------------------------------------
 .docker_login: &docker_login
-  - echo "${NEBULACR_TOKEN}" | docker login "${NEBULACR_REGISTRY}" --username "gitlab-ci" --password-stdin
+  - echo "${SPECTONCR_TOKEN}" | docker login "${SPECTONCR_REGISTRY}" --username "gitlab-ci" --password-stdin
 
 # ===========================================================================
 # Stage: build
@@ -153,10 +153,10 @@ build:docker:
   services:
     - docker:27-dind
   before_script:
-    *nebulacr_auth
+    *spectoncr_auth
   script:
-    # Authenticate with pull scope (for base image layers from NebulaCR)
-    - nebulacr_authenticate '["pull"]'
+    # Authenticate with pull scope (for base image layers from SpectonCR)
+    - spectoncr_authenticate '["pull"]'
     - *docker_login
 
     # Build the image with OCI labels for traceability
@@ -185,7 +185,7 @@ build:docker:
     - echo "${CI_COMMIT_SHA}" > /build/digest.txt
 
   after_script:
-    - docker logout "${NEBULACR_REGISTRY}" 2>/dev/null || true
+    - docker logout "${SPECTONCR_REGISTRY}" 2>/dev/null || true
   artifacts:
     paths:
       - /build/image.tar
@@ -216,17 +216,17 @@ build:kaniko:
     # Kaniko uses /kaniko/.docker/config.json for registry auth
     - apk add --no-cache curl jq 2>/dev/null || true
   script:
-    # Authenticate to NebulaCR and write Docker config for Kaniko
+    # Authenticate to SpectonCR and write Docker config for Kaniko
     - |
       # Manually exchange OIDC token (Kaniko image may not have full shell)
       RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
-        "${NEBULACR_AUTH_URL}/auth/token" \
+        "${SPECTONCR_AUTH_URL}/auth/token" \
         -H "Content-Type: application/json" \
         -d "{
           \"identity_token\": \"${GITLAB_OIDC_TOKEN}\",
           \"scope\": {
-            \"tenant\": \"${NEBULACR_TENANT}\",
-            \"project\": \"${NEBULACR_PROJECT}\",
+            \"tenant\": \"${SPECTONCR_TENANT}\",
+            \"project\": \"${SPECTONCR_PROJECT}\",
             \"repository\": \"${IMAGE_NAME}\",
             \"actions\": [\"pull\", \"push\"]
           }
@@ -236,7 +236,7 @@ build:kaniko:
       BODY=$(echo "$RESPONSE" | sed '$d')
 
       if [ "$HTTP_CODE" != "200" ]; then
-        echo "ERROR: NebulaCR auth failed (HTTP ${HTTP_CODE})"
+        echo "ERROR: SpectonCR auth failed (HTTP ${HTTP_CODE})"
         exit 1
       fi
 
@@ -251,7 +251,7 @@ build:kaniko:
       cat > /kaniko/.docker/config.json <<DOCKERCFG
       {
         "auths": {
-          "${NEBULACR_REGISTRY}": {
+          "${SPECTONCR_REGISTRY}": {
             "auth": "${AUTH_B64}"
           }
         }
@@ -356,7 +356,7 @@ scan:trivy:
 # ===========================================================================
 # Stage: push
 #
-# Push the scanned image to NebulaCR. This stage only runs on the main
+# Push the scanned image to SpectonCR. This stage only runs on the main
 # branch (not on merge requests) to prevent unreviewed code from being
 # pushed to the registry.
 # ===========================================================================
@@ -366,10 +366,10 @@ push:
   services:
     - docker:27-dind
   before_script:
-    *nebulacr_auth
+    *spectoncr_auth
   script:
     # Authenticate with push scope
-    - nebulacr_authenticate '["pull", "push"]'
+    - spectoncr_authenticate '["pull", "push"]'
     - *docker_login
 
     # Load the image from the build artifact
@@ -395,7 +395,7 @@ push:
     - echo "  ${IMAGE_REF}:${CI_COMMIT_REF_SLUG}"
 
   after_script:
-    - docker logout "${NEBULACR_REGISTRY}" 2>/dev/null || true
+    - docker logout "${SPECTONCR_REGISTRY}" 2>/dev/null || true
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
   needs:
@@ -438,7 +438,7 @@ deploy:staging:
 # ===========================================================================
 # Stage: verify (runs after push)
 #
-# Verify the pushed image is accessible from NebulaCR.
+# Verify the pushed image is accessible from SpectonCR.
 # ===========================================================================
 verify:
   stage: deploy  # Runs in the deploy stage after push
@@ -446,10 +446,10 @@ verify:
   services:
     - docker:27-dind
   before_script:
-    *nebulacr_auth
+    *spectoncr_auth
   script:
     # Authenticate with pull-only scope for verification
-    - nebulacr_authenticate '["pull"]'
+    - spectoncr_authenticate '["pull"]'
     - *docker_login
 
     # Pull the image to verify it is accessible
@@ -458,7 +458,7 @@ verify:
     - docker inspect "${IMAGE_REF}:${CI_COMMIT_SHA}" --format '{{.RepoDigests}}'
 
   after_script:
-    - docker logout "${NEBULACR_REGISTRY}" 2>/dev/null || true
+    - docker logout "${SPECTONCR_REGISTRY}" 2>/dev/null || true
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
   needs:

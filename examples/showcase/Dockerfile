@@ -1,4 +1,4 @@
-# Showcase image for NebulaCR demos.
+# Showcase image for SpectonCR demos.
 #
 # The point is not to be production — it is to give the CVE scanner
 # something to find so the dashboards have signal. We pick a base
@@ -11,9 +11,9 @@ FROM ${BASE_IMAGE}
 
 # Tag the base image so 018 lineage detection picks it up.
 LABEL org.opencontainers.image.base.name="${BASE_IMAGE}"
-LABEL org.opencontainers.image.title="NebulaCR Showcase App"
+LABEL org.opencontainers.image.title="SpectonCR Showcase App"
 LABEL org.opencontainers.image.description="Demo image with deliberate CVE-rich deps for showcase runs."
-LABEL org.opencontainers.image.source="https://github.com/bwalia/nebulacr"
+LABEL org.opencontainers.image.source="https://github.com/spectonio/spectoncr"
 
 WORKDIR /app
 COPY requirements.txt .

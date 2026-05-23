@@ -1,11 +1,11 @@
-# NebulaCR
+# SpectonCR
 
 A cloud-native Docker/OCI container registry built in Rust with multi-tenancy, zero-trust authentication, and pull-through caching.
 
 ## Quick Start
 
 ```bash
-docker run -d -p 5000:5000 bwalia/nebulacr:latest
+docker run -d -p 5000:5000 specton/spectoncr:latest
 ```
 
 Then push an image:
@@ -40,26 +40,26 @@ docker push localhost:5000/myorg/nginx:latest
 ```yaml
 services:
   registry:
-    image: bwalia/nebulacr:latest
-    command: ["nebula-registry"]
+    image: specton/spectoncr:latest
+    command: ["specton-registry"]
     ports:
       - "5000:5000"
       - "9090:9090"
     environment:
-      NEBULACR_STORAGE__BACKEND: filesystem
-      NEBULACR_STORAGE__ROOT: /var/lib/nebulacr/data
-      NEBULACR_AUTH__VERIFICATION_KEY_PATH: /etc/nebulacr/keys/public.pem
+      SPECTONCR_STORAGE__BACKEND: filesystem
+      SPECTONCR_STORAGE__ROOT: /var/lib/spectoncr/data
+      SPECTONCR_AUTH__VERIFICATION_KEY_PATH: /etc/spectoncr/keys/public.pem
     volumes:
-      - registry-data:/var/lib/nebulacr/data
+      - registry-data:/var/lib/spectoncr/data
 ```
 
-See the full [docker-compose.yml](https://github.com/bwalia/nebulacr/blob/main/docker-compose.yml) for a complete setup with auth and key generation.
+See the full [docker-compose.yml](https://github.com/spectonio/spectoncr/blob/main/docker-compose.yml) for a complete setup with auth and key generation.
 
 ## Kubernetes (Helm)
 
 ```bash
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
-  --namespace nebulacr --create-namespace
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
+  --namespace spectoncr --create-namespace
 ```
 
 ## Ports
@@ -74,17 +74,17 @@ helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEBULACR_STORAGE__BACKEND` | `filesystem` | Storage backend (`filesystem`, `s3`, `gcs`, `azure`) |
-| `NEBULACR_STORAGE__ROOT` | `/var/lib/nebulacr/data` | Filesystem storage root |
-| `NEBULACR_SERVER__LISTEN_ADDR` | `0.0.0.0:5000` | Registry listen address |
-| `NEBULACR_AUTH__VERIFICATION_KEY_PATH` | -- | Path to JWT public key |
+| `SPECTONCR_STORAGE__BACKEND` | `filesystem` | Storage backend (`filesystem`, `s3`, `gcs`, `azure`) |
+| `SPECTONCR_STORAGE__ROOT` | `/var/lib/spectoncr/data` | Filesystem storage root |
+| `SPECTONCR_SERVER__LISTEN_ADDR` | `0.0.0.0:5000` | Registry listen address |
+| `SPECTONCR_AUTH__VERIFICATION_KEY_PATH` | -- | Path to JWT public key |
 | `RUST_LOG` | `info` | Log level |
 
 ## Links
 
-- [GitHub Repository](https://github.com/bwalia/nebulacr)
-- [Documentation](https://github.com/bwalia/nebulacr/tree/main/docs)
-- [Helm Chart](https://github.com/bwalia/nebulacr/tree/main/deploy/helm/nebulacr)
+- [GitHub Repository](https://github.com/spectonio/spectoncr)
+- [Documentation](https://github.com/spectonio/spectoncr/tree/main/docs)
+- [Helm Chart](https://github.com/spectonio/spectoncr/tree/main/deploy/helm/spectoncr)
 
 ## License
 

@@ -1,0 +1,746 @@
+## SpectonCR Helm Chart Values
+## ===========================
+##
+## Quick Start — Pull-through cache for Docker Hub:
+##
+##   helm install spectoncr ./deploy/helm/spectoncr
+##
+## That's it! The default values enable pull-through caching for Docker Hub,
+## GHCR, GCR, Quay.io, and registry.k8s.io. No auth config needed.
+##
+## Then configure your container runtime to use SpectonCR as a mirror.
+## Example for containerd (/etc/containerd/config.toml):
+##
+##   [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
+##     endpoint = ["http://spectoncr-registry.spectoncr.svc.cluster.local:5000"]
+##
+## Or pull directly:
+##   docker pull <spectoncr-host>:5000/library/nginx:latest
+##   docker pull <spectoncr-host>:5000/ghcr.io/org/repo:tag
+##
+## To add Docker Hub credentials (avoids rate limits):
+##
+##   helm install spectoncr ./deploy/helm/spectoncr \
+##     --set pullThroughCache.upstreams.docker\.io.username=myuser \
+##     --set pullThroughCache.upstreams.docker\.io.password=mytoken
+
+## -- Global settings --
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+## -- Dashboard authentication --
+dashboardAuth:
+  enabled: true
+  username: admin
+  # SHA-256 hash of "admin" — change this in production!
+  passwordHash: "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"
+  realm: "SpectonCR Dashboard"
+
+## -- Registry service --
+registry:
+  image:
+    repository: ghcr.io/spectonio/spectoncr
+    tag: ""  # Defaults to appVersion
+    pullPolicy: Always
+  replicas: 2
+  port: 5000
+  metricsPort: 9090
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  podAnnotations: {}
+  podLabels: {}
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+## -- Auth service --
+auth:
+  image:
+    repository: ghcr.io/spectonio/spectoncr
+    tag: ""  # Defaults to appVersion
+    pullPolicy: Always
+  replicas: 2
+  port: 5001
+  metricsPort: 9091
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  podAnnotations: {}
+  podLabels: {}
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    fsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+## -- Pull-through cache / registry mirror --
+## When enabled, SpectonCR acts as a transparent caching proxy.
+## Images not found locally are fetched from the upstream registry,
+## cached, and served on subsequent pulls.
+pullThroughCache:
+  enabled: true
+
+  # Default upstream used when no prefix matches (e.g. "nginx" → Docker Hub)
+  defaultUpstream: docker.io
+
+  # How long cached manifests/tags are considered fresh before re-checking upstream (seconds)
+  ttl: 86400  # 24 hours
+
+  # Pre-configured upstream registries
+  # Each entry maps a prefix to an upstream URL and optional credentials.
+  # Pull "myregistry:5000/ghcr/org/repo:tag" to fetch from ghcr.io/org/repo:tag
+  upstreams:
+    docker.io:
+      url: "https://registry-1.docker.io"
+      # Docker Hub credentials (recommended to avoid rate limits)
+      username: ""
+      password: ""
+      existingSecret: ""
+      usernameField: "username"
+      passwordField: "password"
+
+    ghcr.io:
+      url: "https://ghcr.io"
+      username: ""
+      password: ""
+      existingSecret: ""
+      usernameField: "username"
+      passwordField: "password"
+
+    gcr.io:
+      url: "https://gcr.io"
+      username: ""
+      password: ""
+      existingSecret: ""
+      usernameField: "username"
+      passwordField: "password"
+
+    quay.io:
+      url: "https://quay.io"
+      username: ""
+      password: ""
+      existingSecret: ""
+      usernameField: "username"
+      passwordField: "password"
+
+    registry.k8s.io:
+      url: "https://registry.k8s.io"
+      username: ""
+      password: ""
+      existingSecret: ""
+      usernameField: "username"
+      passwordField: "password"
+
+    # Add custom upstreams:
+    # my.private.registry:
+    #   url: "https://my.private.registry"
+    #   existingSecret: "my-registry-creds"
+    #   usernameField: "user"
+    #   passwordField: "pass"
+
+## -- OIDC provider configuration --
+oidc:
+  # Disabled by default for easy cache-only install; enable for multi-tenant auth
+  enabled: false
+  issuerUrl: "https://accounts.google.com"
+  clientId: ""
+  clientSecret: ""
+  # Additional OIDC scopes beyond openid
+  scopes:
+    - openid
+    - profile
+    - email
+  # Claim used for mapping to tenant identity
+  tenantClaim: "org_id"
+  # Where to redirect after auth
+  redirectUri: ""
+
+## -- JWT signing key configuration --
+jwt:
+  # Provide an existing secret name or leave empty to generate
+  existingSecret: ""
+  # RSA private key PEM (base64-encoded); only used if existingSecret is empty
+  signingKey: ""
+  # RSA public key PEM (base64-encoded); only used if existingSecret is empty
+  verificationKey: ""
+  # Token lifetime in seconds
+  accessTokenTtl: 3600
+  refreshTokenTtl: 86400
+
+## -- Storage backend --
+storage:
+  # One of: filesystem, s3, gcs, azure
+  backend: filesystem
+
+  filesystem:
+    rootDirectory: /var/lib/spectoncr/data
+    persistence:
+      enabled: true
+      storageClass: ""
+      accessMode: ReadWriteOnce
+      size: 50Gi
+      existingClaim: ""
+
+  s3:
+    bucket: ""
+    region: "us-east-1"
+    endpoint: ""
+    accessKey: ""
+    secretKey: ""
+    existingSecret: ""
+    # secretKey keys inside the Secret
+    accessKeyField: "access-key"
+    secretKeyField: "secret-key"
+    pathStyle: false
+    encrypt: true
+    sseAlgorithm: "AES256"
+
+  gcs:
+    bucket: ""
+    keyfile: ""
+    existingSecret: ""
+    # Key inside the Secret that holds the service account JSON
+    keyfileField: "keyfile.json"
+
+  azure:
+    container: ""
+    accountName: ""
+    accountKey: ""
+    existingSecret: ""
+    accountKeyField: "account-key"
+
+## -- Rate limiting --
+rateLimiting:
+  enabled: true
+  # Requests per second per client IP
+  requestsPerSecond: 100
+  # Burst size
+  burst: 200
+  # Pull rate per tenant (per minute)
+  pullRatePerTenant: 1000
+  # Push rate per tenant (per minute)
+  pushRatePerTenant: 500
+
+## -- Observability --
+observability:
+  logLevel: info
+  # Set to "json" for structured logging
+  logFormat: json
+  # OpenTelemetry collector endpoint (gRPC)
+  otlpEndpoint: ""
+  # Enable trace propagation
+  tracing:
+    enabled: false
+    samplingRatio: 0.1
+
+## -- Horizontal Pod Autoscaler --
+autoscaling:
+  registry:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+      scaleUp:
+        stabilizationWindowSeconds: 60
+
+  auth:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+      scaleUp:
+        stabilizationWindowSeconds: 60
+
+## -- Ingress --
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+  host: registry.example.com
+  tls:
+    enabled: false
+    secretName: ""
+  # Path routing
+  registryPath: /v2
+  authPath: /auth
+
+  # Security controls for auth endpoint exposure
+  security:
+    # When false (default), only /auth/token and /auth/.well-known/jwks.json
+    # are exposed via ingress. /auth/audit, /auth/introspect, /health, and
+    # /metrics remain cluster-internal only.
+    # Set to true to expose the entire /auth prefix (NOT recommended).
+    exposeAllAuthPaths: false
+    # Expose /auth/github-actions/token for CI/CD OIDC token exchange
+    exposeGitHubActions: false
+
+  # Dashboard UI served by the registry at /dashboard
+  dashboard:
+    enabled: false
+
+## -- Prometheus ServiceMonitor --
+serviceMonitor:
+  enabled: false
+  namespace: ""
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  # Additional metric relabelings
+  metricRelabelings: []
+  # Additional relabelings
+  relabelings: []
+
+## -- SpectonCR Grafana dashboard ConfigMaps --
+##
+## Two dashboards ship in deploy/helm/spectoncr/dashboards/:
+##   - spectoncr-overview.json — exec view: storage, image count,
+##     monthly cost projection, mirror status, CVE posture.
+##   - spectoncr-detail.json   — operations view: image-size
+##     distribution, too-large outliers, request volume, GC reaper
+##     rate, scan queue depth.
+##
+## Both use templated datasources for a Prometheus instance and a
+## Postgres instance (the registry's scanner/GC pool). Default off
+## — flip on when your Grafana sidecar is configured to scan this
+## namespace, OR when grafana.enabled=true (the in-chart subchart's
+## sidecar will pick them up automatically).
+##
+## NOTE: this used to be `grafana.dashboards.*`. Renamed once the
+## chart added a real Grafana subchart so the `grafana.*` block
+## could belong entirely to the upstream chart's values.
+##
+## Reference for the discovery label:
+##   https://github.com/grafana/helm-charts/tree/main/charts/grafana
+##   (search "sidecar.dashboards.label").
+spectoncrDashboards:
+  enabled: false
+  # Label the in-chart subchart's sidecar (or
+  # kube-prometheus-stack / kiwigrid) watches for.
+  discoveryLabel: grafana_dashboard
+  # Extra labels to attach to each ConfigMap, e.g. to scope by
+  # multi-tenant Grafana folder.
+  extraLabels: {}
+  annotations: {}
+
+## -- In-chart Grafana subchart (grafana/grafana) --
+##
+## When grafana.enabled=true, the upstream Grafana chart is pulled
+## in and pre-configured to:
+##   - admin/admin
+##   - sidecar that auto-discovers ConfigMaps with the
+##     `grafana_dashboard: "1"` label (matches our spectoncrDashboards
+##     output)
+##   - Prometheus datasource pointing at the in-cluster registry's
+##     /metrics endpoint
+##   - Postgres datasource pointing at the in-chart `postgres`
+##     StatefulSet (when postgres.enabled=true) or an external one
+##
+## Override anything from the upstream chart by adding it under
+## `grafana.<key>` here — values are passed through verbatim.
+## See the upstream chart's values for the full surface:
+##   https://github.com/grafana/helm-charts/blob/main/charts/grafana/values.yaml
+grafana:
+  enabled: false
+  fullnameOverride: ""
+  ## NOTE: per the upstream chart, set credentials via either
+  ## adminUser/adminPassword inline OR a secret keyRef. The default
+  ## here is the chart's standard "admin/strongpassword" pattern;
+  ## production deployments should set admin.existingSecret and
+  ## point at a Vault-managed secret.
+  adminUser: admin
+  adminPassword: admin
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  ## Sidecar auto-loads dashboards + datasources from any namespace
+  ## the discovery label is found in. Required for the
+  ## spectoncrDashboards ConfigMaps to land in Grafana automatically.
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+      folder: /tmp/dashboards
+      provider:
+        foldersFromFilesStructure: false
+    datasources:
+      enabled: true
+      label: grafana_datasource
+      labelValue: "1"
+      searchNamespace: ALL
+
+  ## Datasources.
+  ##
+  ## We don't use the upstream chart's `datasources.datasources.yaml`
+  ## block because the Postgres datasource needs to reference the
+  ## chart's existing postgres secret rather than embed the password.
+  ## The actual datasource Secrets are rendered by
+  ## templates/grafana-datasources.yaml using a `grafana_datasource:
+  ## "1"` label so the chart's own sidecar (configured above) picks
+  ## them up from this namespace.
+  ##
+  ## We also wire envFromSecret to pull POSTGRES_DS_PASSWORD into
+  ## the grafana container's env so Grafana's runtime ${VAR}
+  ## interpolation can resolve the postgres datasource password
+  ## without the secret leaking into the rendered Secret YAML.
+
+  ## Disable the chart's built-in inline datasource block — we
+  ## render Secret-shaped datasources from the parent chart's
+  ## templates/grafana-datasources.yaml so the postgres password
+  ## can reference the chart's existing postgres secret.
+  datasources: {}
+
+  ## Per-key env var lookups. The Postgres datasource references
+  ## ${POSTGRES_DS_PASSWORD} which Grafana resolves from container
+  ## env at runtime — this injects the value from the chart's own
+  ## postgres secret. Override for an external Postgres by setting
+  ## `spectoncrGrafanaDatasources.postgres.passwordSecret.{name,key}`.
+  envValueFrom: {}
+    # POSTGRES_DS_PASSWORD:
+    #   secretKeyRef:
+    #     name: <release>-postgres
+    #     key:  password
+
+  ## Persistence — small PVC by default so dashboards/preferences
+  ## survive pod restarts.
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClassName: ""
+
+  ## Ingress for the in-cluster grafana. Defaults off; flip on +
+  ## set host per environment (see values-acc.yaml).
+  ingress:
+    enabled: false
+    ingressClassName: ""
+    annotations: {}
+    hosts: []
+    tls: []
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+## -- Datasources for the in-chart Grafana --
+##
+## Rendered by templates/grafana-datasources.yaml as Secrets labelled
+## `grafana_datasource: "1"`. The Grafana sidecar (configured above
+## under `grafana.sidecar.datasources.enabled=true`) auto-discovers
+## them. Defaults assume the registry + scanner + postgres are all
+## in the same namespace; override per environment.
+spectoncrGrafanaDatasources:
+  enabled: true
+  prometheus:
+    # When a kube-prometheus-stack Prometheus already exists, point
+    # at it. Default is the URL the chart's docker-compose
+    # observability stack uses; in-cluster operators will typically
+    # set this to e.g. http://kube-prometheus-stack-prometheus.monitoring:9090.
+    url: ""    # default: http://prometheus.{{ .Release.Namespace }}.svc:9090
+  postgres:
+    # When postgres.enabled=true the chart's own postgres service is
+    # used and the password is pulled from the chart's secret.
+    # Override .host / .user / .database when pointing at an
+    # external Postgres; password is taken from `passwordSecret`.
+    host: ""           # default: <release>-postgres.<ns>.svc:5432
+    user: ""           # default: scanner.postgresUser or "spectoncr"
+    database: ""       # default: scanner.postgresDb or "spectoncr"
+    sslmode: disable
+    passwordSecret:
+      # When empty, falls back to the chart-managed postgres secret
+      # rendered by spectoncr.postgres.secretName.
+      name: ""
+      key: password
+
+## -- Prometheus alerting rules (PrometheusRule CRD) --
+## Ships the same alert set bundled at deploy/observability/prometheus/rules/.
+## Disabled by default — enable when prometheus-operator is installed.
+prometheusRule:
+  enabled: false
+  namespace: ""
+  labels: {}
+  # Override per-alert thresholds without forking the chart.
+  thresholds:
+    http5xxRatio: 0.05
+    httpP99LatencySeconds: 2
+    storageP99LatencySeconds: 5
+    storageErrorRate: 0.1
+    retryExhaustionRate: 1
+    mirrorUpstreamErrorRate: 0.5
+    mirrorCacheMissRatio: 0.5
+    replicationLagSeconds: 300
+    replicationQueueDepth: 800
+    replicationFailureRate: 0.1
+    authFailureRate: 5
+    webhookFailureRate: 0.05
+
+## -- Service accounts --
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # For IRSA / Workload Identity
+  # annotations:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/spectoncr
+
+## -- Pod disruption budget --
+podDisruptionBudget:
+  registry:
+    enabled: true
+    minAvailable: 1
+  auth:
+    enabled: true
+    minAvailable: 1
+
+## -- Multi-region HA --
+multiRegion:
+  enabled: false
+  # Name of the local region
+  localRegion: ""
+  # Health check interval in seconds
+  healthCheckIntervalSecs: 10
+  # Internal replication port
+  internalPort: 5002
+  # Replication policy
+  replication:
+    mode: "async"    # "async" or "semi_sync"
+    maxLagSecs: 60
+    batchSize: 50
+    sweepIntervalSecs: 10
+  # All regions (including self)
+  # regions:
+  #   - name: "primary"
+  #     endpoint: "https://registry-primary.example.com"
+  #     internalEndpoint: "http://registry-primary-internal:5002"
+  #     isPrimary: true
+  #     priority: 1
+  #   - name: "mirror"
+  #     endpoint: "https://registry-mirror.example.com"
+  #     internalEndpoint: "http://registry-mirror-internal:5002"
+  #     isPrimary: false
+  #     priority: 2
+  regions: []
+
+## -- Scanner (CVE scanning — runs in-process inside the registry) --
+## When enabled, every manifest push enqueues a scan; workers materialize
+## results to Redis (1h TTL) and Postgres (audit log + suppressions). The
+## endpoint `/v2/scan/live/{digest}` reads from those stores.
+scanner:
+  enabled: false
+  # osv = per-scan HTTP lookups against OSV.dev (zero infra). Use "specton"
+  # for a local DB populated by the ingester (needs NVD / GHSA tokens).
+  vulndb: osv
+  workers: 2
+  ingest:
+    enabled: false
+    intervalSecs: 21600    # 6h
+    nvdEnabled: false
+    # nvdApiKeySecret: { name: spectoncr-ingest, key: nvd-api-key }
+    ghsaEnabled: false
+    # ghsaTokenSecret: { name: spectoncr-ingest, key: ghsa-token }
+  ai:
+    enabled: false
+    # Ollama (or compatible) endpoint used when ai.enabled=true.
+    endpoint: "http://127.0.0.1:11434"
+    model: "qwen2.5-coder:7b"
+  # Standalone scan-worker Deployment (runs `specton-scanner` binary).
+  # Disabled by default — in-process workers in the registry pod cover
+  # most use cases. Enable this to scale scans independently of the
+  # registry data plane. Requires scanner.enabled=true and a Postgres
+  # queue (both flip automatically when worker.enabled=true). The
+  # registry switches to enqueue-only so there are no double-claims.
+  worker:
+    enabled: false
+    replicas: 0                      # start at 0 so rollout is a no-op
+    workers: 2                       # worker goroutines per pod
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+    nodeSelector: {}
+    extraEnv: []
+
+## -- Lazy pulling / TOC indexer (010) --
+## When enabled, every blob upload enqueues an indexer job that
+## records a TOC artifact + a referrer of the source layer. Slice 2
+## ships a stub indexer (records metadata only); slice 3 plugs in
+## the real eStargz / zstd-chunked / SOCI rewriters.
+lazy:
+  enabled: false
+  format: "estargz"
+
+## -- Ephemeral repos / TTL tags (013) --
+## When ttl.reaper.enabled=true, a continuous reaper drains
+## expired tag rows from the `tags` table. The underlying manifest
+## blobs are removed by online GC (009) once their refcount hits 0.
+ttl:
+  reaper:
+    enabled: false
+    batch: 100
+    idleSleepSecs: 60
+
+## -- Usage / cost telemetry (017) --
+## When enabled, every blob/manifest op writes a row to
+## usage_events_staging. The drainer + rollup loop ship in slice 2;
+## slice 1 just collects raw events. Reuses the GC Postgres pool.
+usage:
+  enabled: false
+
+## -- Online GC (009 — refcount-based, zero read-only window) --
+## When enabled, every manifest push records blob edges in Postgres
+## and a continuous reaper drains zero-refcount blobs once they age
+## past the grace period. Existing deployments are unaffected when
+## gc.online.enabled=false (the manifest path uses the no-op
+## refcounter and the reaper is not spawned).
+##
+## The pool used by the scanner is reused when scanner.enabled=true;
+## otherwise set gc.online.postgresUrl explicitly.
+gc:
+  online:
+    enabled: false
+    # Postgres URL when scanner is disabled. Leave empty to inherit
+    # the chart's in-cluster postgres or the scanner's pool.
+    postgresUrl: ""
+    reaper:
+      # Spawn the continuous reaper on registry startup. Set false
+      # to enable refcounting only and run reaps from a CronJob.
+      enabled: true
+      # Minimum time a row must sit at refcount=0 before it is
+      # eligible for deletion. Bound on worst-case upload duration
+      # — keep > longest acceptable push.
+      graceSecs: 86400        # 24h
+      # Maximum rows reaped per drain cycle.
+      batch: 200
+      # Idle sleep when no rows are eligible.
+      idleSleepSecs: 30
+      # Token-bucket cap on storage delete operations per second.
+      qps: 100
+
+## -- Postgres (scanner metadata store) --
+## In-chart singleton StatefulSet. Set enabled=false + point scanner at an
+## external URL for HA deployments. Password is auto-generated on first
+## install and preserved across upgrades via `lookup` + a kept Secret.
+postgres:
+  enabled: false
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  username: spectoncr
+  database: spectoncr
+  # Leave empty to auto-generate (stable across helm upgrades). Set to
+  # override (e.g. when reusing an existing Secret manually).
+  password: ""
+  # existingSecret: ""  # must expose keys: username, password, database
+  persistence:
+    size: 50Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""     # e.g. "local-path"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  nodeSelector: {}
+
+## -- Redis (scanner ephemeral result cache) --
+redis:
+  enabled: false
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  maxmemory: "512mb"
+  maxmemoryPolicy: "allkeys-lru"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+  nodeSelector: {}
+
+## -- Network policy --
+networkPolicy:
+  enabled: false
+  # Namespace where the ingress controller runs
+  ingressNamespace: "wslproxy-system"
+  # Namespace for Prometheus metrics scraping (leave empty to disable)
+  monitoringNamespace: "monitoring"
+  # Additional namespaces allowed to access registry and auth (e.g. CI runners)
+  extraAllowedNamespaces: []

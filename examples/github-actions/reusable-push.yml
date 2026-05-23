@@ -1,7 +1,7 @@
 # ============================================================================
-# NebulaCR Reusable Workflow: Build and Push Image
+# SpectonCR Reusable Workflow: Build and Push Image
 #
-# A reusable workflow that encapsulates the entire NebulaCR zero-trust OIDC
+# A reusable workflow that encapsulates the entire SpectonCR zero-trust OIDC
 # flow. Other repositories can call this workflow without duplicating the
 # authentication and push logic.
 #
@@ -9,7 +9,7 @@
 #
 #   jobs:
 #     push-image:
-#       uses: my-org/nebulacr-workflows/.github/workflows/reusable-push.yml@main
+#       uses: my-org/spectoncr-workflows/.github/workflows/reusable-push.yml@main
 #       permissions:
 #         id-token: write      # Required -- delegates OIDC to this workflow
 #         contents: read
@@ -29,12 +29,12 @@
 #   - No secrets are required. Authentication uses GitHub OIDC tokens.
 #   - The calling workflow MUST have `permissions: id-token: write` for the
 #     OIDC token request to succeed (permissions are inherited).
-#   - Each invocation gets its own short-lived NebulaCR token (5 min TTL).
+#   - Each invocation gets its own short-lived SpectonCR token (5 min TTL).
 #   - The token is scoped to exactly the tenant/project/image specified.
 #
 # ============================================================================
 
-name: NebulaCR Build and Push (Reusable)
+name: SpectonCR Build and Push (Reusable)
 
 on:
   workflow_call:
@@ -42,19 +42,19 @@ on:
     # All configuration is passed as inputs. No secrets needed for OIDC.
     inputs:
       registry_url:
-        description: 'NebulaCR registry endpoint (host:port)'
+        description: 'SpectonCR registry endpoint (host:port)'
         required: true
         type: string
       auth_url:
-        description: 'NebulaCR auth API endpoint (https://...)'
+        description: 'SpectonCR auth API endpoint (https://...)'
         required: true
         type: string
       tenant:
-        description: 'NebulaCR tenant name'
+        description: 'SpectonCR tenant name'
         required: true
         type: string
       project:
-        description: 'NebulaCR project name'
+        description: 'SpectonCR project name'
         required: true
         type: string
       image_name:
@@ -152,7 +152,7 @@ jobs:
         run: |
           OIDC_TOKEN=$(curl -sSf \
             -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=nebulacr" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=spectoncr" \
             | jq -r '.value')
 
           if [ -z "${OIDC_TOKEN}" ] || [ "${OIDC_TOKEN}" = "null" ]; then
@@ -163,9 +163,9 @@ jobs:
           echo "::add-mask::${OIDC_TOKEN}"
           echo "token=${OIDC_TOKEN}" >> "${GITHUB_OUTPUT}"
 
-      # ── OIDC: Exchange for NebulaCR token ────────────────────────────────
-      - name: Authenticate to NebulaCR
-        id: nebulacr-auth
+      # ── OIDC: Exchange for SpectonCR token ────────────────────────────────
+      - name: Authenticate to SpectonCR
+        id: spectoncr-auth
         run: |
           ACTIONS='["pull", "push"]'
           if [ "${{ inputs.push }}" != "true" ]; then
@@ -189,7 +189,7 @@ jobs:
           BODY=$(echo "${RESPONSE}" | sed '$d')
 
           if [ "${HTTP_CODE}" != "200" ]; then
-            echo "::error::NebulaCR authentication failed (HTTP ${HTTP_CODE})"
+            echo "::error::SpectonCR authentication failed (HTTP ${HTTP_CODE})"
             echo "${BODY}" | jq -r '.message // .error // "Unknown error"' >&2
             exit 1
           fi
@@ -197,12 +197,12 @@ jobs:
           ACCESS_TOKEN=$(echo "${BODY}" | jq -r '.token')
           echo "::add-mask::${ACCESS_TOKEN}"
           echo "token=${ACCESS_TOKEN}" >> "${GITHUB_OUTPUT}"
-          echo "NebulaCR token obtained (expires in $(echo "${BODY}" | jq -r '.expires_in')s)"
+          echo "SpectonCR token obtained (expires in $(echo "${BODY}" | jq -r '.expires_in')s)"
 
       # ── Docker login ─────────────────────────────────────────────────────
-      - name: Docker login to NebulaCR
+      - name: Docker login to SpectonCR
         run: |
-          echo "${{ steps.nebulacr-auth.outputs.token }}" | \
+          echo "${{ steps.spectoncr-auth.outputs.token }}" | \
             docker login "${{ inputs.registry_url }}" \
               --username "github-actions" \
               --password-stdin

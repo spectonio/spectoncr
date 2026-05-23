@@ -1,15 +1,15 @@
-# Contributing to NebulaCR
+# Contributing to SpectonCR
 
-Thank you for your interest in contributing to NebulaCR! We welcome contributions of all kinds, whether you are reporting a bug, suggesting a feature, improving documentation, or writing code.
+Thank you for your interest in contributing to SpectonCR! We welcome contributions of all kinds, whether you are reporting a bug, suggesting a feature, improving documentation, or writing code.
 
 ## Reporting Bugs
 
-If you find a bug, please open a GitHub issue at <https://github.com/bwalia/nebulacr/issues> and include:
+If you find a bug, please open a GitHub issue at <https://github.com/spectonio/spectoncr/issues> and include:
 
 - A clear, descriptive title.
 - Steps to reproduce the issue.
 - Expected behavior versus actual behavior.
-- Your environment details (OS, Rust version, NebulaCR version).
+- Your environment details (OS, Rust version, SpectonCR version).
 - Any relevant logs or error messages.
 
 ## Suggesting Features
@@ -24,13 +24,13 @@ We will discuss the proposal in the issue before any implementation begins.
 
 ## Development Setup
 
-NebulaCR is written in Rust. To get started:
+SpectonCR is written in Rust. To get started:
 
 1. Install the Rust toolchain via [rustup](https://rustup.rs/).
 2. Clone the repository:
    ```
-   git clone https://github.com/bwalia/nebulacr.git
-   cd nebulacr
+   git clone https://github.com/spectonio/spectoncr.git
+   cd spectoncr
    ```
 3. Build the project:
    ```
@@ -65,4 +65,4 @@ NebulaCR is written in Rust. To get started:
 
 ## License
 
-By contributing to NebulaCR, you agree that your contributions will be licensed under the Apache License 2.0.
+By contributing to SpectonCR, you agree that your contributions will be licensed under the Apache License 2.0.

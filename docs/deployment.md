@@ -1,6 +1,6 @@
 # Deployment
 
-This guide covers deploying NebulaCR in Docker (single container and docker-compose), Kubernetes with Helm, and the associated configuration for storage backends, TLS, and ingress.
+This guide covers deploying SpectonCR in Docker (single container and docker-compose), Kubernetes with Helm, and the associated configuration for storage backends, TLS, and ingress.
 
 ## Table of Contents
 
@@ -25,36 +25,36 @@ openssl genrsa -out keys/private.pem 4096
 openssl rsa -in keys/private.pem -pubout -out keys/public.pem
 
 # Run the auth service
-docker run -d --name nebula-auth \
+docker run -d --name specton-auth \
   -p 5001:5001 \
-  -v $(pwd)/keys:/etc/nebulacr/keys \
+  -v $(pwd)/keys:/etc/spectoncr/keys \
   -e RUST_LOG=info \
-  -e NEBULACR_SERVER__AUTH_LISTEN_ADDR=0.0.0.0:5001 \
-  -e NEBULACR_AUTH__ISSUER=nebulacr \
-  -e NEBULACR_AUTH__AUDIENCE=nebulacr-registry \
-  -e NEBULACR_AUTH__SIGNING_ALGORITHM=RS256 \
-  -e NEBULACR_AUTH__SIGNING_KEY_PATH=/etc/nebulacr/keys/private.pem \
-  -e NEBULACR_AUTH__VERIFICATION_KEY_PATH=/etc/nebulacr/keys/public.pem \
-  -e NEBULACR_AUTH__TOKEN_TTL_SECONDS=300 \
-  -e NEBULACR_AUTH__BOOTSTRAP_ADMIN__USERNAME=admin \
-  -e 'NEBULACR_AUTH__BOOTSTRAP_ADMIN__PASSWORD_HASH=8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918' \
-  ghcr.io/bwalia/nebulacr:latest nebula-auth
+  -e SPECTONCR_SERVER__AUTH_LISTEN_ADDR=0.0.0.0:5001 \
+  -e SPECTONCR_AUTH__ISSUER=spectoncr \
+  -e SPECTONCR_AUTH__AUDIENCE=spectoncr-registry \
+  -e SPECTONCR_AUTH__SIGNING_ALGORITHM=RS256 \
+  -e SPECTONCR_AUTH__SIGNING_KEY_PATH=/etc/spectoncr/keys/private.pem \
+  -e SPECTONCR_AUTH__VERIFICATION_KEY_PATH=/etc/spectoncr/keys/public.pem \
+  -e SPECTONCR_AUTH__TOKEN_TTL_SECONDS=300 \
+  -e SPECTONCR_AUTH__BOOTSTRAP_ADMIN__USERNAME=admin \
+  -e 'SPECTONCR_AUTH__BOOTSTRAP_ADMIN__PASSWORD_HASH=8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918' \
+  ghcr.io/spectonio/spectoncr:latest specton-auth
 
 # Run the registry service
-docker run -d --name nebula-registry \
+docker run -d --name specton-registry \
   -p 5000:5000 -p 9090:9090 \
-  -v $(pwd)/keys:/etc/nebulacr/keys:ro \
-  -v nebulacr-data:/var/lib/nebulacr/data \
+  -v $(pwd)/keys:/etc/spectoncr/keys:ro \
+  -v spectoncr-data:/var/lib/spectoncr/data \
   -e RUST_LOG=info \
-  -e NEBULACR_SERVER__LISTEN_ADDR=0.0.0.0:5000 \
-  -e NEBULACR_SERVER__METRICS_ADDR=0.0.0.0:9090 \
-  -e NEBULACR_AUTH__ISSUER=nebulacr \
-  -e NEBULACR_AUTH__AUDIENCE=nebulacr-registry \
-  -e NEBULACR_AUTH__SIGNING_ALGORITHM=RS256 \
-  -e NEBULACR_AUTH__VERIFICATION_KEY_PATH=/etc/nebulacr/keys/public.pem \
-  -e NEBULACR_STORAGE__BACKEND=filesystem \
-  -e NEBULACR_STORAGE__ROOT=/var/lib/nebulacr/data \
-  ghcr.io/bwalia/nebulacr:latest nebula-registry
+  -e SPECTONCR_SERVER__LISTEN_ADDR=0.0.0.0:5000 \
+  -e SPECTONCR_SERVER__METRICS_ADDR=0.0.0.0:9090 \
+  -e SPECTONCR_AUTH__ISSUER=spectoncr \
+  -e SPECTONCR_AUTH__AUDIENCE=spectoncr-registry \
+  -e SPECTONCR_AUTH__SIGNING_ALGORITHM=RS256 \
+  -e SPECTONCR_AUTH__VERIFICATION_KEY_PATH=/etc/spectoncr/keys/public.pem \
+  -e SPECTONCR_STORAGE__BACKEND=filesystem \
+  -e SPECTONCR_STORAGE__ROOT=/var/lib/spectoncr/data \
+  ghcr.io/spectonio/spectoncr:latest specton-registry
 ```
 
 ### Docker Compose (Recommended for Development)
@@ -84,11 +84,11 @@ docker compose --profile minio up -d
 Then set the registry to use MinIO by adding these environment variables to the registry service:
 
 ```bash
-NEBULACR_STORAGE__BACKEND=minio
-NEBULACR_STORAGE__ROOT=nebulacr
-NEBULACR_STORAGE__ENDPOINT=http://minio:9000
-NEBULACR_STORAGE__ACCESS_KEY=minioadmin
-NEBULACR_STORAGE__SECRET_KEY=minioadmin
+SPECTONCR_STORAGE__BACKEND=minio
+SPECTONCR_STORAGE__ROOT=spectoncr
+SPECTONCR_STORAGE__ENDPOINT=http://minio:9000
+SPECTONCR_STORAGE__ACCESS_KEY=minioadmin
+SPECTONCR_STORAGE__SECRET_KEY=minioadmin
 ```
 
 ### Stopping and Cleaning Up
@@ -105,16 +105,16 @@ docker compose down -v
 
 ## Kubernetes with Helm
 
-NebulaCR provides a Helm chart published to GHCR:
+SpectonCR provides a Helm chart published to GHCR:
 
 ```bash
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr
 ```
 
 Or from the local chart:
 
 ```bash
-helm install nebulacr ./deploy/helm/nebulacr
+helm install spectoncr ./deploy/helm/spectoncr
 ```
 
 ### Minimal Install (Pull-Through Cache)
@@ -122,22 +122,22 @@ helm install nebulacr ./deploy/helm/nebulacr
 The default values enable pull-through caching for Docker Hub, GHCR, GCR, Quay.io, and registry.k8s.io with no auth configuration required:
 
 ```bash
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
-  --namespace nebulacr --create-namespace
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
+  --namespace spectoncr --create-namespace
 ```
 
-Configure your container runtime to use NebulaCR as a mirror. For containerd (`/etc/containerd/config.toml`):
+Configure your container runtime to use SpectonCR as a mirror. For containerd (`/etc/containerd/config.toml`):
 
 ```toml
 [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
-  endpoint = ["http://nebulacr-registry.nebulacr.svc.cluster.local:5000"]
+  endpoint = ["http://spectoncr-registry.spectoncr.svc.cluster.local:5000"]
 ```
 
 ### Production with OIDC + S3
 
 ```bash
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
-  --namespace nebulacr --create-namespace \
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
+  --namespace spectoncr --create-namespace \
   --values production-values.yaml
 ```
 
@@ -176,15 +176,15 @@ oidc:
     - email
 
 jwt:
-  existingSecret: "nebulacr-jwt-keys"
+  existingSecret: "spectoncr-jwt-keys"
   accessTokenTtl: 300
 
 storage:
   backend: s3
   s3:
-    bucket: "my-nebulacr-bucket"
+    bucket: "my-spectoncr-bucket"
     region: "us-east-1"
-    existingSecret: "nebulacr-s3-credentials"
+    existingSecret: "spectoncr-s3-credentials"
     encrypt: true
 
 ingress:
@@ -231,14 +231,14 @@ Create the required secrets before installing:
 
 ```bash
 # JWT signing keys
-kubectl create secret generic nebulacr-jwt-keys \
-  --namespace nebulacr \
+kubectl create secret generic spectoncr-jwt-keys \
+  --namespace spectoncr \
   --from-file=private.pem=./keys/private.pem \
   --from-file=public.pem=./keys/public.pem
 
 # S3 credentials (if not using IRSA)
-kubectl create secret generic nebulacr-s3-credentials \
-  --namespace nebulacr \
+kubectl create secret generic spectoncr-s3-credentials \
+  --namespace spectoncr \
   --from-literal=access-key=AKIAIOSFODNN7EXAMPLE \
   --from-literal=secret-key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 ```
@@ -277,12 +277,12 @@ Instead of static S3 credentials, use IAM Roles for Service Accounts:
 serviceAccount:
   create: true
   annotations:
-    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/nebulacr"
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/spectoncr"
 
 storage:
   backend: s3
   s3:
-    bucket: "my-nebulacr-bucket"
+    bucket: "my-spectoncr-bucket"
     region: "us-east-1"
     # No accessKey/secretKey needed -- IRSA provides credentials
 ```
@@ -290,8 +290,8 @@ storage:
 ### Upgrading
 
 ```bash
-helm upgrade nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
-  --namespace nebulacr \
+helm upgrade spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
+  --namespace spectoncr \
   --values production-values.yaml
 ```
 
@@ -306,7 +306,7 @@ Best for development and single-node deployments:
 ```toml
 [storage]
 backend = "filesystem"
-root = "/var/lib/nebulacr/data"
+root = "/var/lib/spectoncr/data"
 ```
 
 Helm values:
@@ -315,7 +315,7 @@ Helm values:
 storage:
   backend: filesystem
   filesystem:
-    rootDirectory: /var/lib/nebulacr/data
+    rootDirectory: /var/lib/spectoncr/data
     persistence:
       enabled: true
       storageClass: "gp3"
@@ -327,7 +327,7 @@ storage:
 ```toml
 [storage]
 backend = "s3"
-root = "my-nebulacr-bucket"
+root = "my-spectoncr-bucket"
 region = "us-east-1"
 # For non-AWS S3-compatible services:
 # endpoint = "https://s3.us-east-1.amazonaws.com"
@@ -342,11 +342,11 @@ Helm values:
 storage:
   backend: s3
   s3:
-    bucket: "my-nebulacr-bucket"
+    bucket: "my-spectoncr-bucket"
     region: "us-east-1"
     encrypt: true
     sseAlgorithm: "AES256"
-    existingSecret: "nebulacr-s3-credentials"
+    existingSecret: "spectoncr-s3-credentials"
 ```
 
 ### MinIO (S3-compatible)
@@ -354,7 +354,7 @@ storage:
 ```toml
 [storage]
 backend = "minio"
-root = "nebulacr"
+root = "spectoncr"
 endpoint = "http://minio:9000"
 access_key = "minioadmin"
 secret_key = "minioadmin"
@@ -367,7 +367,7 @@ The `minio` backend automatically enables path-style addressing and allows HTTP 
 ```toml
 [storage]
 backend = "gcs"
-root = "my-nebulacr-bucket"
+root = "my-spectoncr-bucket"
 ```
 
 GCS uses Application Default Credentials. On GKE, use Workload Identity. For local development, set `GOOGLE_APPLICATION_CREDENTIALS`.
@@ -378,8 +378,8 @@ Helm values:
 storage:
   backend: gcs
   gcs:
-    bucket: "my-nebulacr-bucket"
-    existingSecret: "nebulacr-gcs-keyfile"
+    bucket: "my-spectoncr-bucket"
+    existingSecret: "spectoncr-gcs-keyfile"
     keyfileField: "keyfile.json"
 ```
 
@@ -388,7 +388,7 @@ storage:
 ```toml
 [storage]
 backend = "azure"
-root = "my-nebulacr-container"
+root = "my-spectoncr-container"
 ```
 
 Helm values:
@@ -397,9 +397,9 @@ Helm values:
 storage:
   backend: azure
   azure:
-    container: "my-nebulacr-container"
+    container: "my-spectoncr-container"
     accountName: "myaccount"
-    existingSecret: "nebulacr-azure-credentials"
+    existingSecret: "spectoncr-azure-credentials"
     accountKeyField: "account-key"
 ```
 
@@ -453,7 +453,7 @@ openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt \
 # Create Kubernetes secret
 kubectl create secret tls registry-tls \
   --cert=tls.crt --key=tls.key \
-  --namespace nebulacr
+  --namespace spectoncr
 ```
 
 To use self-signed certificates with Docker, add the certificate to Docker's trusted certificates:
@@ -480,74 +480,74 @@ registry:
         secretName: registry-tls
   extraVolumeMounts:
     - name: tls
-      mountPath: /etc/nebulacr/tls
+      mountPath: /etc/spectoncr/tls
       readOnly: true
   extraEnv:
-    - name: NEBULACR_SERVER__TLS_CERT_PATH
-      value: /etc/nebulacr/tls/tls.crt
-    - name: NEBULACR_SERVER__TLS_KEY_PATH
-      value: /etc/nebulacr/tls/tls.key
+    - name: SPECTONCR_SERVER__TLS_CERT_PATH
+      value: /etc/spectoncr/tls/tls.crt
+    - name: SPECTONCR_SERVER__TLS_KEY_PATH
+      value: /etc/spectoncr/tls/tls.key
 ```
 
 ---
 
 ## Environment Variables Reference
 
-All configuration options can be set via environment variables. The prefix is `NEBULACR_` and nesting uses double underscores (`__`).
+All configuration options can be set via environment variables. The prefix is `SPECTONCR_` and nesting uses double underscores (`__`).
 
 ### Server
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEBULACR_SERVER__LISTEN_ADDR` | `0.0.0.0:5000` | Registry API bind address |
-| `NEBULACR_SERVER__AUTH_LISTEN_ADDR` | `0.0.0.0:5001` | Auth service bind address |
-| `NEBULACR_SERVER__METRICS_ADDR` | `0.0.0.0:9090` | Prometheus metrics bind address |
+| `SPECTONCR_SERVER__LISTEN_ADDR` | `0.0.0.0:5000` | Registry API bind address |
+| `SPECTONCR_SERVER__AUTH_LISTEN_ADDR` | `0.0.0.0:5001` | Auth service bind address |
+| `SPECTONCR_SERVER__METRICS_ADDR` | `0.0.0.0:9090` | Prometheus metrics bind address |
 
 ### Authentication
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEBULACR_AUTH__SIGNING_ALGORITHM` | `RS256` | JWT signing algorithm (`RS256` or `EdDSA`) |
-| `NEBULACR_AUTH__SIGNING_KEY_PATH` | `/etc/nebulacr/keys/private.pem` | Path to private signing key |
-| `NEBULACR_AUTH__VERIFICATION_KEY_PATH` | `/etc/nebulacr/keys/public.pem` | Path to public verification key |
-| `NEBULACR_AUTH__TOKEN_TTL_SECONDS` | `300` | Access token lifetime in seconds |
-| `NEBULACR_AUTH__ISSUER` | `nebulacr` | JWT issuer claim |
-| `NEBULACR_AUTH__AUDIENCE` | `nebulacr-registry` | JWT audience claim |
-| `NEBULACR_AUTH__BOOTSTRAP_ADMIN__USERNAME` | (none) | Bootstrap admin username |
-| `NEBULACR_AUTH__BOOTSTRAP_ADMIN__PASSWORD_HASH` | (none) | Bootstrap admin password SHA-256 hash |
+| `SPECTONCR_AUTH__SIGNING_ALGORITHM` | `RS256` | JWT signing algorithm (`RS256` or `EdDSA`) |
+| `SPECTONCR_AUTH__SIGNING_KEY_PATH` | `/etc/spectoncr/keys/private.pem` | Path to private signing key |
+| `SPECTONCR_AUTH__VERIFICATION_KEY_PATH` | `/etc/spectoncr/keys/public.pem` | Path to public verification key |
+| `SPECTONCR_AUTH__TOKEN_TTL_SECONDS` | `300` | Access token lifetime in seconds |
+| `SPECTONCR_AUTH__ISSUER` | `spectoncr` | JWT issuer claim |
+| `SPECTONCR_AUTH__AUDIENCE` | `spectoncr-registry` | JWT audience claim |
+| `SPECTONCR_AUTH__BOOTSTRAP_ADMIN__USERNAME` | (none) | Bootstrap admin username |
+| `SPECTONCR_AUTH__BOOTSTRAP_ADMIN__PASSWORD_HASH` | (none) | Bootstrap admin password SHA-256 hash |
 
 ### Storage
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEBULACR_STORAGE__BACKEND` | `filesystem` | Backend type: `filesystem`, `s3`, `minio`, `gcs`, `azure` |
-| `NEBULACR_STORAGE__ROOT` | `/var/lib/nebulacr/data` | Root path or bucket name |
-| `NEBULACR_STORAGE__ENDPOINT` | (none) | S3-compatible endpoint URL |
-| `NEBULACR_STORAGE__REGION` | (none) | AWS region for S3 |
-| `NEBULACR_STORAGE__ACCESS_KEY` | (none) | Static access key for S3/MinIO |
-| `NEBULACR_STORAGE__SECRET_KEY` | (none) | Static secret key for S3/MinIO |
+| `SPECTONCR_STORAGE__BACKEND` | `filesystem` | Backend type: `filesystem`, `s3`, `minio`, `gcs`, `azure` |
+| `SPECTONCR_STORAGE__ROOT` | `/var/lib/spectoncr/data` | Root path or bucket name |
+| `SPECTONCR_STORAGE__ENDPOINT` | (none) | S3-compatible endpoint URL |
+| `SPECTONCR_STORAGE__REGION` | (none) | AWS region for S3 |
+| `SPECTONCR_STORAGE__ACCESS_KEY` | (none) | Static access key for S3/MinIO |
+| `SPECTONCR_STORAGE__SECRET_KEY` | (none) | Static secret key for S3/MinIO |
 
 ### Observability
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RUST_LOG` | `info` | Log level filter (tracing env-filter syntax) |
-| `NEBULACR_OBSERVABILITY__LOG_LEVEL` | `info` | Log level |
-| `NEBULACR_OBSERVABILITY__LOG_FORMAT` | `json` | Log format: `json` or `pretty` |
-| `NEBULACR_OBSERVABILITY__OTLP_ENDPOINT` | (none) | OpenTelemetry OTLP collector endpoint |
+| `SPECTONCR_OBSERVABILITY__LOG_LEVEL` | `info` | Log level |
+| `SPECTONCR_OBSERVABILITY__LOG_FORMAT` | `json` | Log format: `json` or `pretty` |
+| `SPECTONCR_OBSERVABILITY__OTLP_ENDPOINT` | (none) | OpenTelemetry OTLP collector endpoint |
 
 ### Rate Limiting
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEBULACR_RATE_LIMIT__DEFAULT_RPS` | `100` | Default requests/second per tenant |
-| `NEBULACR_RATE_LIMIT__IP_RPS` | `50` | Requests/second per IP (unauthenticated) |
-| `NEBULACR_RATE_LIMIT__TOKEN_ISSUE_RPM` | `60` | Token issuance requests/minute per tenant |
+| `SPECTONCR_RATE_LIMIT__DEFAULT_RPS` | `100` | Default requests/second per tenant |
+| `SPECTONCR_RATE_LIMIT__IP_RPS` | `50` | Requests/second per IP (unauthenticated) |
+| `SPECTONCR_RATE_LIMIT__TOKEN_ISSUE_RPM` | `60` | Token issuance requests/minute per tenant |
 
 ### Configuration Loading Order
 
 Configuration is loaded in this order (later sources override earlier):
 
 1. Compiled defaults
-2. Config file (`/etc/nebulacr/config.toml` or path from `NEBULACR_CONFIG_PATH`)
-3. Environment variables (prefixed with `NEBULACR_`, double-underscore for nesting)
+2. Config file (`/etc/spectoncr/config.toml` or path from `SPECTONCR_CONFIG_PATH`)
+3. Environment variables (prefixed with `SPECTONCR_`, double-underscore for nesting)

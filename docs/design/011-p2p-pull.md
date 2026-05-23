@@ -17,25 +17,25 @@ Even with HPA + storage CDN, registry egress and pod-start latency
 both suffer. Spegel (Xenit) and Kraken (Uber) solved this for
 plain-Distribution registries; ACR has "ACR-on-Arc" and "ACR
 Connected Registry" as managed equivalents. Nexus has nothing in
-this space. Shipping a P2P pull mesh as a first-class NebulaCR
+this space. Shipping a P2P pull mesh as a first-class SpectonCR
 feature gives cluster operators rollout speeds the closed-source
 registries cannot match without paid tiers.
 
 ## b. Proposed approach
 
-New crate `nebula-peer` shipped as a separate binary
-`nebula-peer` (NOT linked into the registry). Architecture:
+New crate `specton-peer` shipped as a separate binary
+`specton-peer` (NOT linked into the registry). Architecture:
 
 ```
                     +-----------------------------+
-                    |  NebulaCR registry (origin) |
+                    |  SpectonCR registry (origin) |
                     +--------------+--------------+
                                    |
                 +------------------+------------------+
                 |                                     |
         +-------+-------+                     +-------+-------+
         |   Node A      |  libp2p gossip      |   Node B      |
-        |  nebula-peer  |<------------------> |  nebula-peer  |
+        |  specton-peer  |<------------------> |  specton-peer  |
         |   sidecar     |                     |   sidecar     |
         +-------+-------+                     +-------+-------+
                 | local blob store                    | local blob store
@@ -43,7 +43,7 @@ New crate `nebula-peer` shipped as a separate binary
          containerd CRI                        containerd CRI
 ```
 
-Each `nebula-peer` instance:
+Each `specton-peer` instance:
 
 1. **Registers as a containerd mirror** for the registry's hostname
    via `/etc/containerd/certs.d/<registry>/hosts.toml`. Pulls from
@@ -52,7 +52,7 @@ Each `nebula-peer` instance:
    `localhost:5001`. On a hit it streams from local containerd
    content store; on a miss it asks peers, falling back to the origin.
 3. **Joins a libp2p gossip mesh** — peers announce digests they
-   currently hold under topic `nebulacr/<cluster-id>/digests`. A
+   currently hold under topic `spectoncr/<cluster-id>/digests`. A
    bloom filter is published every 30 s; full digest-list on demand.
 4. **Authenticates against the registry** with the same OIDC token
    the pod uses (IRSA / WI). On miss-and-fetch, the peer reuses the
@@ -68,7 +68,7 @@ Public trait so the mesh layer is swappable (libp2p today, gRPC
 mesh tomorrow):
 
 ```rust
-// crates/nebula-peer/src/mesh/mod.rs
+// crates/specton-peer/src/mesh/mod.rs
 #[async_trait]
 pub trait PeerMesh: Send + Sync {
     async fn announce(&self, digests: &[Digest]) -> Result<(), MeshError>;
@@ -84,16 +84,16 @@ derived from the node's serviceAccount-issued OIDC token (so
 membership is bounded by the cluster's token issuer).
 
 CLI (operator-side, talks to local peer):
-`nebula-peer status` (mesh size, hit ratio, bytes saved),
-`nebula-peer drop <digest>` (evict from local cache),
-`nebula-peer pin <ref>` (pre-pull on this node).
-The main `nebulacr` CLI gains `nebulacr peer install` (renders the
+`specton-peer status` (mesh size, hit ratio, bytes saved),
+`specton-peer drop <digest>` (evict from local cache),
+`specton-peer pin <ref>` (pre-pull on this node).
+The main `spectoncr` CLI gains `spectoncr peer install` (renders the
 DaemonSet manifest for the active context).
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: PeerMesh
 metadata:
   name: cluster-prod
@@ -106,7 +106,7 @@ spec:
   upstreamConcurrency: 4            # max parallel fetches from origin per node
   meshTransport:
     type: libp2p                    # libp2p | grpc (future)
-    bootstrapServiceName: nebula-peer-headless
+    bootstrapServiceName: specton-peer-headless
   prefetch:
     enabled: true
     triggerOnAdmission: true        # push admission-cleared digests to mesh
@@ -120,7 +120,7 @@ the registry can target prefetch hints (see `prefetch` block).
 
 ## d. New HTTP routes
 
-Peer-side (served by `nebula-peer`):
+Peer-side (served by `specton-peer`):
 
 | Method | Path                                      | Auth scope         | Notes                                            |
 | ------ | ----------------------------------------- | ------------------ | ------------------------------------------------ |
@@ -194,7 +194,7 @@ membership and rollup stats.
   on the mesh transport, only on the HTTP API.
 - **Cache thrash on tiny nodes.** LRU eviction; `cache_bytes_used`
   metric exposed; alert at >90 % full so operators can size up.
-- **Nebula-peer pod crash.** Containerd falls through to the origin
+- **Specton-peer pod crash.** Containerd falls through to the origin
   via the `hosts.toml` fallback. Pulls are slower but unaffected.
 - **Origin admission gate (002) blocks an image.** The peer respects
   the same admission decision via cached verdicts (Redis admission
@@ -205,13 +205,13 @@ membership and rollup stats.
 
 Peer mesh is opt-in per cluster. `[peer_mesh] enabled = false` on the
 registry side ships a no-op control plane; the daemonset binary is a
-separate artifact (`bwalia/nebula-peer:<version>`) and is not
+separate artifact (`bwalia/specton-peer:<version>`) and is not
 deployed by default.
 
 Operators install via:
 
 ```bash
-nebulacr peer install --cluster prod \
+spectoncr peer install --cluster prod \
   --registry registry.example.com \
   --cache-bytes 20Gi
 ```
@@ -224,11 +224,11 @@ config patch (`hosts.toml`); the install command emits it.
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| Mesh announce/lookup | `crates/nebula-peer/tests/mesh_libp2p.rs`            | 5-node in-process mesh                      |
-| Hash verify         | `crates/nebula-peer/tests/poison_resist.rs`           | Inject corrupt blob; assert mismatch dropped |
+| Mesh announce/lookup | `crates/specton-peer/tests/mesh_libp2p.rs`            | 5-node in-process mesh                      |
+| Hash verify         | `crates/specton-peer/tests/poison_resist.rs`           | Inject corrupt blob; assert mismatch dropped |
 | Containerd integration | `tests/e2e/p2p_kind.sh`                            | kind cluster, 5 nodes, image rollout test    |
-| Bearer reuse        | `crates/nebula-peer/tests/bearer_passthrough.rs`      | Short-lived JWT; peer reuses on miss        |
-| Stats rollup        | `crates/nebula-registry/tests/peer_stats.rs`          | Hourly aggregation correctness               |
+| Bearer reuse        | `crates/specton-peer/tests/bearer_passthrough.rs`      | Short-lived JWT; peer reuses on miss        |
+| Stats rollup        | `crates/specton-registry/tests/peer_stats.rs`          | Hourly aggregation correctness               |
 
 External CI dep: `kind` cluster harness + `containerd` 1.7+ with the
 mirror config feature. Already used by other registry e2e tests.
@@ -237,11 +237,11 @@ mirror config feature. Already used by other registry e2e tests.
 
 5 slices, ~5 weeks (largest of the bunch — mesh code is non-trivial):
 
-1. `nebula-peer` crate scaffold + OCI v2 read-only HTTP server +
+1. `specton-peer` crate scaffold + OCI v2 read-only HTTP server +
    containerd content-store reader. Single-node only — no mesh yet.
 2. `PeerMesh` trait + `Libp2pMesh` impl + announce/lookup/fetch.
 3. Registry-side `PeerMesh` CRD + reconciler + `_peer/register`,
    `_peer/clusters`, `_peer/prefetch` routes.
-4. Stats rollup + Helm DaemonSet template + `nebulacr peer install`.
+4. Stats rollup + Helm DaemonSet template + `spectoncr peer install`.
 5. e2e on kind, hardening (bearer passthrough, poison resistance,
    cache eviction), docs.

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "deploy/helm/nebulacr/**"
+      - "deploy/helm/spectoncr/**"
   workflow_dispatch:
     inputs:
       environment:
@@ -16,8 +16,8 @@ on:
           - acc
 
 env:
-  RELEASE_NAME: nebulacr
-  CHART_PATH: deploy/helm/nebulacr
+  RELEASE_NAME: spectoncr
+  CHART_PATH: deploy/helm/spectoncr
 
 jobs:
   deploy:
@@ -104,8 +104,8 @@ jobs:
           helm template "$RELEASE_NAME" "$CHART_PATH" \
             -n "$NS" \
             -f "${{ steps.values.outputs.file }}" \
-            --set "registry.podAnnotations.nebulacr\\.io/rolled-at=${ROLL_ID}" \
-            --set "auth.podAnnotations.nebulacr\\.io/rolled-at=${ROLL_ID}" \
+            --set "registry.podAnnotations.spectoncr\\.io/rolled-at=${ROLL_ID}" \
+            --set "auth.podAnnotations.spectoncr\\.io/rolled-at=${ROLL_ID}" \
             > "$RENDER"
           # Skip kinds that fight SSA reclaim:
           #   - StatefulSet: handled in step 2 below.
@@ -143,12 +143,12 @@ jobs:
           # carries a `helm.sh/chart` label and the chart template
           # no longer emits one, the upgrade will conflict — drop
           # the StatefulSet now (orphan keeps pod + PVC).
-          if kubectl get statefulset nebulacr-postgres -n "$NS" >/dev/null 2>&1; then
-            LIVE_VCT_CHART=$(kubectl get statefulset nebulacr-postgres -n "$NS" \
+          if kubectl get statefulset spectoncr-postgres -n "$NS" >/dev/null 2>&1; then
+            LIVE_VCT_CHART=$(kubectl get statefulset spectoncr-postgres -n "$NS" \
               -o jsonpath='{.spec.volumeClaimTemplates[0].metadata.labels.helm\.sh/chart}' 2>/dev/null || true)
             if [ -n "$LIVE_VCT_CHART" ]; then
-              echo "Orphan-deleting nebulacr-postgres (live VCT has helm.sh/chart=$LIVE_VCT_CHART; new chart drops it)"
-              kubectl delete statefulset nebulacr-postgres -n "$NS" --cascade=orphan --wait=true
+              echo "Orphan-deleting spectoncr-postgres (live VCT has helm.sh/chart=$LIVE_VCT_CHART; new chart drops it)"
+              kubectl delete statefulset spectoncr-postgres -n "$NS" --cascade=orphan --wait=true
             fi
           fi
 
@@ -168,8 +168,8 @@ jobs:
           helm upgrade --install "$RELEASE_NAME" "$CHART_PATH" \
             -n "${{ steps.values.outputs.namespace }}" \
             -f "${{ steps.values.outputs.file }}" \
-            --set "registry.podAnnotations.nebulacr\\.io/rolled-at=${ROLL_ID}" \
-            --set "auth.podAnnotations.nebulacr\\.io/rolled-at=${ROLL_ID}" \
+            --set "registry.podAnnotations.spectoncr\\.io/rolled-at=${ROLL_ID}" \
+            --set "auth.podAnnotations.spectoncr\\.io/rolled-at=${ROLL_ID}" \
             --take-ownership \
             --wait --timeout 10m
 
@@ -178,17 +178,17 @@ jobs:
         run: |
           NS="${{ steps.values.outputs.namespace }}"
           echo "=== Pod status ==="
-          kubectl get pods -n "$NS" -l app.kubernetes.io/part-of=nebulacr -o wide || true
+          kubectl get pods -n "$NS" -l app.kubernetes.io/part-of=spectoncr -o wide || true
           echo ""
           echo "=== Deployment status ==="
-          kubectl get deploy -n "$NS" -l app.kubernetes.io/part-of=nebulacr -o wide || true
+          kubectl get deploy -n "$NS" -l app.kubernetes.io/part-of=spectoncr -o wide || true
           echo ""
           echo "=== Recent events ==="
           kubectl get events -n "$NS" --sort-by=.lastTimestamp | tail -40 || true
           echo ""
           for kind in registry auth; do
             POD=$(kubectl get pods -n "$NS" \
-              -l "app.kubernetes.io/component=$kind,app.kubernetes.io/instance=nebulacr" \
+              -l "app.kubernetes.io/component=$kind,app.kubernetes.io/instance=spectoncr" \
               -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
             if [ -n "$POD" ]; then
               echo "=== describe $POD ==="
@@ -204,17 +204,17 @@ jobs:
         run: |
           echo "=== Pod status ==="
           kubectl get pods -n "${{ steps.values.outputs.namespace }}" \
-            -l app.kubernetes.io/part-of=nebulacr -o wide
+            -l app.kubernetes.io/part-of=spectoncr -o wide
 
           echo ""
           echo "=== Deployment status ==="
           kubectl get deploy -n "${{ steps.values.outputs.namespace }}" \
-            -l app.kubernetes.io/part-of=nebulacr
+            -l app.kubernetes.io/part-of=spectoncr
 
           echo ""
           echo "=== Ingress ==="
           kubectl get ingress -n "${{ steps.values.outputs.namespace }}" \
-            -l app.kubernetes.io/part-of=nebulacr
+            -l app.kubernetes.io/part-of=spectoncr
 
       - name: Smoke test
         run: |
@@ -270,10 +270,10 @@ jobs:
           # fallback). The registry image ships busybox-style wget so this
           # works without sidecars.
           POD=$(kubectl get pods -n "$NS" \
-            -l app.kubernetes.io/name=nebulacr-registry \
+            -l app.kubernetes.io/name=spectoncr-registry \
             -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           if [ -z "$POD" ]; then
-            echo "::error::No registry pods labelled app.kubernetes.io/name=nebulacr-registry in $NS"
+            echo "::error::No registry pods labelled app.kubernetes.io/name=spectoncr-registry in $NS"
             exit 1
           fi
           echo "Probing pod: $POD"

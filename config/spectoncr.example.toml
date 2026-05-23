@@ -1,0 +1,364 @@
+# ============================================================================
+# SpectonCR Configuration
+#
+# This file documents all available configuration options with their defaults.
+# Copy this to /etc/spectoncr/config.toml and adjust for your environment.
+#
+# Configuration is loaded in this order (later sources override earlier):
+#   1. Compiled defaults
+#   2. Config file (/etc/spectoncr/config.toml or SPECTONCR_CONFIG_PATH)
+#   3. Environment variables (prefixed with SPECTONCR_, double-underscore for nesting)
+#
+# Environment variable examples:
+#   SPECTONCR_SERVER__LISTEN_ADDR=0.0.0.0:5000
+#   SPECTONCR_AUTH__TOKEN_TTL_SECONDS=600
+#   SPECTONCR_STORAGE__BACKEND=s3
+# ============================================================================
+
+
+# ── Server ─────────────────────────────────────────────────────────────────
+[server]
+
+# Bind address for the OCI registry API (Docker Registry HTTP API V2).
+# This is the main endpoint that Docker clients connect to.
+listen_addr = "0.0.0.0:5000"
+
+# Bind address for the auth / token issuance service.
+# Typically run as a separate process or sidecar, but can be co-located.
+auth_listen_addr = "0.0.0.0:5001"
+
+# Bind address for the Prometheus metrics endpoint.
+# Should NOT be exposed to the public internet.
+metrics_addr = "0.0.0.0:9090"
+
+
+# ── Authentication ─────────────────────────────────────────────────────────
+[auth]
+
+# JWT signing algorithm. Supported values: "RS256", "EdDSA".
+# RS256 uses RSA PKCS#1 v1.5 with SHA-256.
+# EdDSA uses Ed25519 (faster, smaller keys, recommended for new deployments).
+signing_algorithm = "RS256"
+
+# Path to the PEM-encoded private key used to sign access tokens.
+# For RS256: RSA private key (minimum 4096 bits recommended).
+# For EdDSA: Ed25519 private key.
+# Must be readable by the service user. Recommended permissions: 0640.
+signing_key_path = "/etc/spectoncr/keys/private.pem"
+
+# Path to the PEM-encoded public key used to verify access tokens.
+# The registry service uses this to validate tokens issued by the auth service.
+verification_key_path = "/etc/spectoncr/keys/public.pem"
+
+# Lifetime of issued access tokens in seconds.
+# Shorter values improve security (less time for a stolen token to be useful).
+# Longer values reduce load on the auth service (fewer re-authentications).
+# Default: 300 (5 minutes). Range: 60-3600.
+token_ttl_seconds = 300
+
+# The "iss" (issuer) claim in issued JWTs.
+# Must be consistent across all auth service replicas.
+issuer = "spectoncr"
+
+# The "aud" (audience) claim in issued JWTs.
+# The registry validates this claim when accepting tokens.
+audience = "spectoncr-registry"
+
+
+# ── OIDC Providers ─────────────────────────────────────────────────────────
+# Configure one or more OIDC identity providers. The auth service validates
+# incoming identity tokens against these providers' JWKS endpoints.
+#
+# You can configure multiple providers for different CI/CD systems or IdPs.
+
+# Example: GitHub Actions OIDC provider
+# [[auth.oidc_providers]]
+# # The OIDC issuer URL. Used to discover the JWKS endpoint.
+# issuer_url = "https://token.actions.githubusercontent.com"
+#
+# # The client ID (audience) that GitHub includes in its OIDC tokens.
+# # This must match the audience you request when obtaining the GitHub token.
+# client_id = "spectoncr"
+#
+# # Client secret (optional, not needed for GitHub Actions OIDC).
+# # client_secret = "your-secret-here"
+#
+# # The JWT claim used to identify the subject (user/service).
+# # For GitHub: "sub" contains "repo:org/repo:ref:refs/heads/main"
+# subject_claim = "sub"
+#
+# # The JWT claim used to resolve tenant membership (optional).
+# # If set, the value of this claim is used to look up the tenant.
+# # If not set, the tenant must be specified in the token request.
+# # tenant_claim = "repository_owner"
+
+# Example: GitLab CI OIDC provider
+# [[auth.oidc_providers]]
+# issuer_url = "https://gitlab.com"
+# client_id = "spectoncr"
+# subject_claim = "sub"
+# # GitLab sub format: "project_path:group/project:ref_type:branch:ref:main"
+
+# Example: Google Workspace / Cloud Identity
+# [[auth.oidc_providers]]
+# issuer_url = "https://accounts.google.com"
+# client_id = "your-google-client-id.apps.googleusercontent.com"
+# client_secret = "your-google-client-secret"
+# subject_claim = "email"
+# tenant_claim = "hd"   # Hosted domain claim for Google Workspace
+
+# Example: Azure AD / Entra ID
+# [[auth.oidc_providers]]
+# issuer_url = "https://login.microsoftonline.com/{tenant-id}/v2.0"
+# client_id = "your-azure-client-id"
+# subject_claim = "sub"
+# tenant_claim = "tid"
+
+
+# ── Bootstrap Admin ────────────────────────────────────────────────────────
+# Emergency admin account for initial setup. Authenticates via HTTP Basic auth.
+# DISABLE THIS IN PRODUCTION after configuring OIDC providers and access policies.
+#
+# [auth.bootstrap_admin]
+# username = "admin"
+# # SHA-256 hex digest of the password.
+# # Generate with: echo -n 'your-password' | sha256sum | cut -d' ' -f1
+# password_hash = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"
+
+
+# ── Storage ────────────────────────────────────────────────────────────────
+[storage]
+
+# Storage backend type. Supported values:
+#   "filesystem" - Local filesystem (development, single-node)
+#   "s3"         - Amazon S3 or S3-compatible (Ceph RGW)
+#   "minio"      - MinIO (sets path-style access and allows HTTP automatically)
+#   "gcs"        - Google Cloud Storage
+#   "azure"      - Azure Blob Storage
+#
+# Note: "s3" also works with MinIO if you set the endpoint, but "minio" is
+# a convenience that enables path-style addressing and HTTP by default.
+backend = "filesystem"
+
+# Root path (filesystem) or bucket name (cloud storage).
+# Filesystem: absolute path where registry data is stored.
+# S3/GCS/Azure: bucket or container name.
+root = "/var/lib/spectoncr/data"
+
+# S3-compatible endpoint URL (required for S3 backend, optional for AWS S3).
+# For AWS S3: leave unset (uses default AWS endpoint).
+# For MinIO: "http://minio:9000"
+# For Ceph RGW: "https://rgw.example.com"
+# endpoint = "https://s3.us-east-1.amazonaws.com"
+
+# AWS region (required for S3 backend).
+# region = "us-east-1"
+
+# Static credentials for S3/GCS/Azure (optional).
+# Prefer IAM roles or workload identity over static credentials.
+# If using IAM roles (recommended), leave these unset.
+# access_key = "AKIAIOSFODNN7EXAMPLE"
+# secret_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+
+# ── Observability ──────────────────────────────────────────────────────────
+[observability]
+
+# Log level filter. Uses the `tracing` env-filter syntax.
+# Examples: "info", "debug", "specton_registry=debug,specton_auth=info"
+log_level = "info"
+
+# Log output format.
+#   "json"   - Structured JSON (recommended for production)
+#   "pretty" - Human-readable colored output (for development)
+log_format = "json"
+
+# OpenTelemetry OTLP exporter endpoint for distributed tracing.
+# Set to your OTLP collector address to enable trace export.
+# Supports gRPC (default) and HTTP protocols.
+# Examples:
+#   "http://otel-collector:4317"       (gRPC)
+#   "http://otel-collector:4318/v1/traces"  (HTTP)
+#   "http://tempo:4317"                (Grafana Tempo)
+#   "http://jaeger:4317"               (Jaeger)
+# otlp_endpoint = "http://otel-collector:4317"
+
+
+# ── Rate Limiting ──────────────────────────────────────────────────────────
+[rate_limit]
+
+# Default requests per second allowed per tenant.
+# Applies to all authenticated API requests (pull, push, etc.).
+# Individual tenants can override this via tenant configuration.
+default_rps = 100
+
+# Requests per second allowed per source IP for unauthenticated requests.
+# Protects the /v2/ endpoint and auth challenge responses.
+ip_rps = 50
+
+# Token issuance requests per minute per tenant.
+# Protects the auth service from brute-force and token flooding attacks.
+# This is intentionally a lower limit than the general API rate limit.
+token_issue_rpm = 60
+
+
+# ── Resilience (HA) ──────────────────────────────────────────────────────
+# Connection-level resilience with retry logic and circuit breaker protection.
+# Wraps the storage backend to handle transient failures automatically.
+
+# [resilience.retry]
+# # Maximum number of retry attempts for failed storage operations.
+# max_retries = 3
+# # Base delay in milliseconds for exponential backoff.
+# base_delay_ms = 100
+# # Maximum delay in milliseconds (caps exponential growth).
+# max_delay_ms = 5000
+# # Add random jitter to delays to avoid thundering herd.
+# jitter = true
+
+# [resilience.circuit_breaker]
+# # Number of consecutive failures before the circuit opens.
+# failure_threshold = 5
+# # Number of consecutive successes in half-open state before closing.
+# success_threshold = 3
+# # Duration in seconds the circuit stays open before allowing a test request.
+# open_duration_secs = 30
+
+
+# ── Mirror (Pull-Through Cache) ──────────────────────────────────────────
+# Pull-through cache that transparently fetches images from upstream registries
+# when they are not found locally. Fetched content is cached for future requests.
+
+# [mirror]
+# # Enable pull-through mirroring.
+# enabled = true
+# # Default cache TTL in seconds. Manifests older than this are re-fetched.
+# cache_ttl_secs = 3600
+
+# # Mirror scope: which (tenant, project) pairs are eligible for upstream
+# # pullthrough. If omitted, the default is "default_tenant_only" with
+# # default_tenant = "_", so private multi-tenant projects never contact
+# # upstream registries. This prevents push-time blob probes from tripping
+# # upstream circuit breakers and returning 502 on subsequent pushes.
+# #
+# # Modes:
+# #   "default_tenant_only" (default) — only the default tenant "_" hits upstream
+# #   "allowlist"                     — only listed tenants / projects
+# #   "denylist"                      — everything except listed tenants / projects
+# #   "manifest_linked"               — only blobs linked to an upstream-cached manifest
+# #   "all"                           — legacy behaviour, NOT recommended
+# #
+# # [mirror.scope]
+# # mode = "allowlist"
+# # tenants = ["_"]
+# # projects = ["public-proxy/library"]
+# # default_tenant = "_"
+
+# # Configure upstream registries. Multiple upstreams can be configured.
+# # On a local miss, upstreams are tried in order (tenant-specific first).
+
+# [[mirror.upstreams]]
+# # Unique name for this upstream.
+# name = "docker-hub"
+# # Base URL of the upstream OCI registry.
+# url = "https://registry-1.docker.io"
+# # Only mirror for repositories in this tenant (optional, omit for all tenants).
+# # tenant_prefix = "library"
+# # Credentials for private upstreams (optional).
+# # username = "myuser"
+# # password = "mypassword"
+# # Override the default cache TTL for this upstream (optional).
+# # cache_ttl_secs = 7200
+
+# [[mirror.upstreams]]
+# name = "ghcr"
+# url = "https://ghcr.io"
+# tenant_prefix = "github"
+
+
+# ── Multi-Region Replication & Failover ───────────────────────────────────
+# Configure multi-region deployment with automatic replication and failover.
+# Each region runs its own SpectonCR instance. The primary region accepts writes
+# and replicates to secondaries. Secondaries serve reads and can be promoted
+# on primary failure.
+
+# [multi_region]
+# # Name of this region (must match one of the entries in [[multi_region.regions]]).
+# local_region = "us-east-1"
+# # Health check interval in seconds for failover monitoring.
+# health_check_interval_secs = 10
+# # Port for the internal replication API (not exposed to clients).
+# internal_port = 5002
+
+# [multi_region.replication]
+# # Replication mode:
+# #   "async"     - Eventual consistency. Writes return immediately. (default)
+# #   "semi_sync" - Wait for at least one secondary to acknowledge.
+# mode = "async"
+# # Maximum acceptable replication lag in seconds before alerting.
+# max_lag_secs = 60
+# # Number of objects to replicate per batch.
+# batch_size = 50
+# # Interval in seconds between replication sweeps.
+# sweep_interval_secs = 10
+
+# [[multi_region.regions]]
+# name = "us-east-1"
+# # Public registry endpoint for this region.
+# endpoint = "https://registry-us.example.com"
+# # Internal endpoint for replication traffic (not exposed to clients).
+# internal_endpoint = "http://registry-us-internal:5002"
+# # Whether this is the primary region (accepts writes).
+# is_primary = true
+# # Failover priority (lower = promoted first). Primary should have lowest.
+# priority = 1
+
+# [[multi_region.regions]]
+# name = "eu-west-1"
+# endpoint = "https://registry-eu.example.com"
+# internal_endpoint = "http://registry-eu-internal:5002"
+# is_primary = false
+# priority = 2
+
+# [[multi_region.regions]]
+# name = "ap-southeast-1"
+# endpoint = "https://registry-ap.example.com"
+# internal_endpoint = "http://registry-ap-internal:5002"
+# is_primary = false
+# priority = 3
+
+
+# ── Webhooks (External Notifications) ──────────────────────────────────
+# Send HTTP POST notifications to external systems (e.g. OpsAPI) when
+# images are pushed or deleted. Useful for maintaining metadata catalogs,
+# triggering CI/CD pipelines, or auditing registry activity.
+
+# [webhooks]
+# # Enable webhook notifications.
+# enabled = true
+# # Timeout in milliseconds for webhook HTTP requests.
+# timeout_ms = 5000
+# # Maximum number of retry attempts for failed deliveries.
+# max_retries = 3
+
+# # OpsAPI endpoint for storing image metadata, categories, and tags.
+# [[webhooks.endpoints]]
+# name = "opsapi"
+# url = "http://opsapi:8080/api/v2/registry/events"
+# # HMAC-SHA256 shared secret for verifying webhook signatures.
+# # The signature is sent in the X-SpectonCR-Signature header.
+# secret = "your-webhook-secret-here"
+# # Event types to deliver. Empty list = all events.
+# # Supported: "manifest.push", "manifest.delete", "blob.push"
+# events = ["manifest.push", "manifest.delete"]
+# # Optional extra headers (e.g. namespace or API key).
+# # [webhooks.endpoints.headers]
+# # X-Namespace-Id = "your-namespace-id"
+# # Authorization = "Bearer your-api-key"
+
+# # Example: CI/CD trigger on image push
+# [[webhooks.endpoints]]
+# name = "ci-trigger"
+# url = "https://ci.example.com/webhooks/registry"
+# secret = "ci-webhook-secret"
+# events = ["manifest.push"]

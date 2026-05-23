@@ -1,14 +1,14 @@
 name: "Nightly Registry Health Test"
 
-# Comprehensive nightly test suite for NebulaCR registry.
+# Comprehensive nightly test suite for SpectonCR registry.
 # Tests: health, auth, push/pull (3-seg + 2-seg), pull-through cache,
 # large image handling, catalog API, tag listing, metrics, dashboard, and mirror.
 #
 # Required GitHub Secrets:
-#   NEBULACR_USERNAME       - Registry username (e.g. "admin")
-#   NEBULACR_PASSWORD       - Registry password
-#   NEBULACR_REGISTRY       - Primary registry host (e.g. "acc-nebulacr.diytaxreturn.co.uk")
-#   NEBULACR_MIRROR         - Mirror registry host (e.g. "acc-nebulacr-mirror.diytaxreturn.co.uk")
+#   SPECTONCR_USERNAME       - Registry username (e.g. "admin")
+#   SPECTONCR_PASSWORD       - Registry password
+#   SPECTONCR_REGISTRY       - Primary registry host (e.g. "acc-spectoncr.diytaxreturn.co.uk")
+#   SPECTONCR_MIRROR         - Mirror registry host (e.g. "acc-spectoncr-mirror.diytaxreturn.co.uk")
 #   SLACK_WEBHOOK_URL       - Slack incoming webhook URL for failure notifications
 
 on:
@@ -17,8 +17,8 @@ on:
   workflow_dispatch:
 
 env:
-  PRIMARY_EXTERNAL: ${{ secrets.NEBULACR_REGISTRY }}
-  MIRROR_EXTERNAL: ${{ secrets.NEBULACR_MIRROR }}
+  PRIMARY_EXTERNAL: ${{ secrets.SPECTONCR_REGISTRY }}
+  MIRROR_EXTERNAL: ${{ secrets.SPECTONCR_MIRROR }}
   IMAGE_NAME: demo/default/nightly-test
   IMAGE_NAME_2SEG: nightly/test-2seg
   IMAGE_TAG: nightly-${{ github.run_number }}
@@ -44,8 +44,8 @@ jobs:
 
           # For Docker push/pull, detect if we can use the internal path
           # (avoids external proxy issues with large blobs)
-          if curl -sf --max-time 3 http://nebulacr-registry.acc.svc.cluster.local:5000/health > /dev/null 2>&1; then
-            echo "DOCKER_REGISTRY=nebulacr-registry.acc.svc.cluster.local:5000" >> "$GITHUB_ENV"
+          if curl -sf --max-time 3 http://spectoncr-registry.acc.svc.cluster.local:5000/health > /dev/null 2>&1; then
+            echo "DOCKER_REGISTRY=spectoncr-registry.acc.svc.cluster.local:5000" >> "$GITHUB_ENV"
             echo "Using INTERNAL ClusterIP for Docker push/pull"
           else
             echo "DOCKER_REGISTRY=${PRIMARY_EXTERNAL}" >> "$GITHUB_ENV"
@@ -74,8 +74,8 @@ jobs:
       - name: Authenticate to primary
         id: auth-primary
         run: |
-          RESPONSE=$(curl -sf --connect-timeout 10 -u "${{ secrets.NEBULACR_USERNAME }}:${{ secrets.NEBULACR_PASSWORD }}" \
-            "${PRIMARY_SCHEME}://${PRIMARY}/auth/token?service=nebulacr-registry" 2>&1) || {
+          RESPONSE=$(curl -sf --connect-timeout 10 -u "${{ secrets.SPECTONCR_USERNAME }}:${{ secrets.SPECTONCR_PASSWORD }}" \
+            "${PRIMARY_SCHEME}://${PRIMARY}/auth/token?service=spectoncr-registry" 2>&1) || {
             echo "result=FAIL" >> "$GITHUB_OUTPUT"
             echo "error=Auth endpoint unreachable" >> "$GITHUB_OUTPUT"
             exit 0
@@ -93,8 +93,8 @@ jobs:
       - name: Authenticate to mirror
         id: auth-mirror
         run: |
-          RESPONSE=$(curl -sf --connect-timeout 10 -u "${{ secrets.NEBULACR_USERNAME }}:${{ secrets.NEBULACR_PASSWORD }}" \
-            "${MIRROR}/auth/token?service=nebulacr-registry" 2>&1) || {
+          RESPONSE=$(curl -sf --connect-timeout 10 -u "${{ secrets.SPECTONCR_USERNAME }}:${{ secrets.SPECTONCR_PASSWORD }}" \
+            "${MIRROR}/auth/token?service=spectoncr-registry" 2>&1) || {
             echo "result=FAIL" >> "$GITHUB_OUTPUT"
             echo "error=Mirror auth unreachable" >> "$GITHUB_OUTPUT"
             exit 0
@@ -210,7 +210,7 @@ jobs:
       - name: Build test image
         id: build
         run: |
-          echo "NebulaCR nightly test $(date -u +%Y-%m-%dT%H:%M:%SZ) run=${{ github.run_number }}" > /tmp/BUILD_INFO
+          echo "SpectonCR nightly test $(date -u +%Y-%m-%dT%H:%M:%SZ) run=${{ github.run_number }}" > /tmp/BUILD_INFO
           cp /tmp/BUILD_INFO /tmp/Dockerfile.info
           cat > /tmp/Dockerfile <<'DOCKERFILE'
           FROM scratch
@@ -223,8 +223,8 @@ jobs:
         if: steps.auth-primary.outputs.result == 'PASS'
         run: |
           docker logout "${DOCKER_REGISTRY}" 2>/dev/null || true
-          echo "${{ secrets.NEBULACR_PASSWORD }}" | \
-            docker login "${DOCKER_REGISTRY}" -u "${{ secrets.NEBULACR_USERNAME }}" --password-stdin
+          echo "${{ secrets.SPECTONCR_PASSWORD }}" | \
+            docker login "${DOCKER_REGISTRY}" -u "${{ secrets.SPECTONCR_USERNAME }}" --password-stdin
 
       - name: Push image to primary (3-segment)
         id: push
@@ -296,7 +296,7 @@ jobs:
       - name: Build 2-segment test image
         id: build-2seg
         run: |
-          echo "NebulaCR 2-seg test $(date -u +%Y-%m-%dT%H:%M:%SZ) run=${{ github.run_number }}" > /tmp/BUILD_INFO_2SEG
+          echo "SpectonCR 2-seg test $(date -u +%Y-%m-%dT%H:%M:%SZ) run=${{ github.run_number }}" > /tmp/BUILD_INFO_2SEG
           cat > /tmp/Dockerfile.2seg <<'DOCKERFILE'
           FROM scratch
           COPY BUILD_INFO_2SEG /BUILD_INFO
@@ -337,9 +337,9 @@ jobs:
           fi
 
       # ── Pull-Through Cache Test ────────────────────────────────────
-      # Pull a real Docker Hub image through NebulaCR's cache.
+      # Pull a real Docker Hub image through SpectonCR's cache.
       # First pull goes to Docker Hub, second pull should be served from cache.
-      - name: "Pull-through cache: fetch from Docker Hub via NebulaCR"
+      - name: "Pull-through cache: fetch from Docker Hub via SpectonCR"
         id: cache-pull
         if: steps.auth-primary.outputs.result == 'PASS'
         run: |
@@ -554,7 +554,7 @@ jobs:
                 "type": "header",
                 "text": {
                   "type": "plain_text",
-                  "text": ":rotating_light: NebulaCR Nightly Test FAILED",
+                  "text": ":rotating_light: SpectonCR Nightly Test FAILED",
                   "emoji": true
                 }
               },
@@ -601,7 +601,7 @@ jobs:
         run: |
           if [ "$(date +%u)" = "1" ]; then
             curl -sf -X POST -H 'Content-type: application/json' \
-              --data "{\"text\":\":white_check_mark: NebulaCR weekly health check passed — ${{ steps.results.outputs.pass }}/${{ steps.results.outputs.tests }} tests OK. Primary: \`${PRIMARY}\` Mirror: \`${MIRROR}\`\"}" \
+              --data "{\"text\":\":white_check_mark: SpectonCR weekly health check passed — ${{ steps.results.outputs.pass }}/${{ steps.results.outputs.tests }} tests OK. Primary: \`${PRIMARY}\` Mirror: \`${MIRROR}\`\"}" \
               "${{ secrets.SLACK_WEBHOOK_URL }}" || true
           fi
 

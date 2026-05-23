@@ -1,10 +1,11 @@
-# NebulaCR
+# SpectonCR
 
-[![Build](https://github.com/bwalia/nebulacr/actions/workflows/ci.yml/badge.svg)](https://github.com/bwalia/nebulacr/actions/workflows/ci.yml)
-[![Docker Hub](https://img.shields.io/docker/v/bwalia/nebulacr?label=Docker%20Hub&sort=semver)](https://hub.docker.com/r/bwalia/nebulacr)
-[![Docker Pulls](https://img.shields.io/docker/pulls/bwalia/nebulacr)](https://hub.docker.com/r/bwalia/nebulacr)
-[![License](https://img.shields.io/github/license/bwalia/nebulacr)](LICENSE)
-[![GHCR](https://img.shields.io/badge/GHCR-ghcr.io%2Fbwalia%2Fnebulacr-blue)](https://github.com/bwalia/nebulacr/pkgs/container/nebulacr)
+[![Website](https://img.shields.io/badge/website-specton.io-38bdf8)](https://specton.io)
+[![Build](https://github.com/spectonio/spectoncr/actions/workflows/ci.yml/badge.svg)](https://github.com/spectonio/spectoncr/actions/workflows/ci.yml)
+[![Docker Hub](https://img.shields.io/docker/v/specton/spectoncr?label=Docker%20Hub&sort=semver)](https://hub.docker.com/r/specton/spectoncr)
+[![Docker Pulls](https://img.shields.io/docker/pulls/specton/spectoncr)](https://hub.docker.com/r/specton/spectoncr)
+[![License](https://img.shields.io/github/license/spectonio/spectoncr)](LICENSE)
+[![GHCR](https://img.shields.io/badge/GHCR-ghcr.io%2Fspectonio%2Fspectoncr-blue)](https://github.com/spectonio/spectoncr/pkgs/container/spectoncr)
 
 A cloud-native Docker/OCI container registry built in Rust with multi-tenancy, zero-trust authentication, and pull-through caching.
 
@@ -44,24 +45,24 @@ A cloud-native Docker/OCI container registry built in Rust with multi-tenancy, z
 
 | Service | Port | Metrics | Purpose |
 |---------|------|---------|---------|
-| `nebula-registry` | 5000 | 9090 | OCI Distribution API, blob/manifest storage, pull-through cache |
-| `nebula-auth` | 5001 | 9091 | OIDC validation, JWT issuance, RBAC policy resolution |
+| `specton-registry` | 5000 | 9090 | OCI Distribution API, blob/manifest storage, pull-through cache |
+| `specton-auth` | 5001 | 9091 | OIDC validation, JWT issuance, RBAC policy resolution |
 
 ## Quick Start (Local)
 
-Run NebulaCR locally in under 5 minutes.
+Run SpectonCR locally in under 5 minutes.
 
 ### Option A: Docker Run (Simplest)
 
 ```bash
-docker run -d --name nebulacr -p 5000:5000 bwalia/nebulacr:latest
+docker run -d --name spectoncr -p 5000:5000 specton/spectoncr:latest
 ```
 
 ### Option B: Docker Compose (Full Stack)
 
 ```bash
-git clone https://github.com/bwalia/nebulacr.git
-cd nebulacr
+git clone https://github.com/spectonio/spectoncr.git
+cd spectoncr
 docker compose up -d
 ```
 
@@ -87,20 +88,20 @@ docker pull localhost:5000/myorg/nginx:latest
 
 ```bash
 # OCI registry (recommended)
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
-  --namespace nebulacr --create-namespace
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
+  --namespace spectoncr --create-namespace
 
 # Or via Helm repository
-helm repo add nebulacr https://bwalia.github.io/nebulacr
+helm repo add spectoncr https://bwalia.github.io/spectoncr
 helm repo update
-helm install nebulacr nebulacr/nebulacr \
-  --namespace nebulacr --create-namespace
+helm install spectoncr spectoncr/spectoncr \
+  --namespace spectoncr --create-namespace
 ```
 
 ### Verify
 
 ```bash
-kubectl port-forward -n nebulacr svc/nebulacr-registry 5000:5000 &
+kubectl port-forward -n spectoncr svc/spectoncr-registry 5000:5000 &
 curl http://localhost:5000/health
 # {"status":"healthy"}
 ```
@@ -117,7 +118,7 @@ docker login registry.example.com -u admin -p admin
 
 # Request a short-lived token via API
 TOKEN=$(curl -s -u admin:admin \
-  "https://registry.example.com/auth/token?service=nebulacr-registry&scope=repository:myorg/myapp:push,pull" \
+  "https://registry.example.com/auth/token?service=spectoncr-registry&scope=repository:myorg/myapp:push,pull" \
   | jq -r '.token')
 
 # Use the token
@@ -127,7 +128,7 @@ docker login registry.example.com -u token -p "$TOKEN"
 ### OIDC (Production)
 
 ```bash
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
   --set oidc.enabled=true \
   --set oidc.issuerUrl="https://accounts.google.com" \
   --set oidc.clientId="YOUR_CLIENT_ID" \
@@ -138,7 +139,7 @@ See [docs/authentication.md](docs/authentication.md) for full details including 
 
 ## Multi-Tenant Example
 
-NebulaCR supports both standard Docker 2-segment paths and multi-tenant 3-segment paths:
+SpectonCR supports both standard Docker 2-segment paths and multi-tenant 3-segment paths:
 
 ```bash
 # Standard Docker (2-segment -- uses default tenant automatically)
@@ -153,7 +154,7 @@ docker push registry.example.com/tenant-a/project-1/nginx:latest
 Manage tenants via Kubernetes CRDs:
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Tenant
 metadata:
   name: my-org
@@ -171,19 +172,19 @@ See [docs/multi-tenancy.md](docs/multi-tenancy.md) for full details.
 
 ## Pull-Through Cache
 
-Deploy NebulaCR as a caching proxy with zero configuration:
+Deploy SpectonCR as a caching proxy with zero configuration:
 
 ```bash
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
-  --namespace nebulacr --create-namespace
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
+  --namespace spectoncr --create-namespace
 ```
 
 Pull images through the cache:
 
 ```bash
-docker pull <nebulacr-host>:5000/library/nginx:latest       # Docker Hub
-docker pull <nebulacr-host>:5000/ghcr.io/org/repo:tag       # GHCR
-docker pull <nebulacr-host>:5000/quay.io/prometheus/prometheus:latest  # Quay
+docker pull <spectoncr-host>:5000/library/nginx:latest       # Docker Hub
+docker pull <spectoncr-host>:5000/ghcr.io/org/repo:tag       # GHCR
+docker pull <spectoncr-host>:5000/quay.io/prometheus/prometheus:latest  # Quay
 ```
 
 ### Configure containerd Mirror
@@ -192,15 +193,15 @@ Add to `/etc/containerd/config.toml`:
 
 ```toml
 [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
-  endpoint = ["http://nebulacr-registry.nebulacr.svc.cluster.local:5000"]
+  endpoint = ["http://spectoncr-registry.spectoncr.svc.cluster.local:5000"]
 ```
 
 ## Mirror / HA Example
 
-NebulaCR supports multi-region replication with automatic failover:
+SpectonCR supports multi-region replication with automatic failover:
 
 ```bash
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
   --set registry.replicas=3 \
   --set auth.replicas=2 \
   --set multiRegion.enabled=true \
@@ -219,22 +220,22 @@ curl http://localhost:5000/metrics
 ```
 
 Key metrics:
-- `nebulacr_http_requests_total` -- request count by method, path, status
-- `nebulacr_http_request_duration_seconds` -- request latency histogram
-- `nebulacr_storage_operations_total` -- storage operations by backend
-- `nebulacr_auth_tokens_issued_total` -- token issuance count
+- `spectoncr_http_requests_total` -- request count by method, path, status
+- `spectoncr_http_request_duration_seconds` -- request latency histogram
+- `spectoncr_storage_operations_total` -- storage operations by backend
+- `spectoncr_auth_tokens_issued_total` -- token issuance count
 
 Enable automatic scraping with Prometheus Operator:
 
 ```bash
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
   --set serviceMonitor.enabled=true
 ```
 
 ### OpenTelemetry Tracing
 
 ```bash
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
   --set observability.otlpEndpoint=http://otel-collector:4317 \
   --set observability.tracing.enabled=true
 ```
@@ -243,7 +244,7 @@ See [docs/observability.md](docs/observability.md) for Grafana dashboards and sc
 
 ## Image Vulnerability Scanning
 
-NebulaCR ships with a built-in CVE scanner (`nebula-scanner` crate) that runs
+SpectonCR ships with a built-in CVE scanner (`specton-scanner` crate) that runs
 on every push and exposes results over HTTP, WebSocket, and a dashboard panel.
 
 ### What gets scanned
@@ -259,7 +260,7 @@ The output is a CycloneDX SBOM plus a list of matched vulnerabilities.
 ### Vulnerability data sources
 
 - **OSV** -- bootstrap source, queried directly for low-volume deploys.
-- **NebulaVulnDb** -- local Postgres mirror ingested from OSV, GitHub
+- **SpectonVulnDb** -- local Postgres mirror ingested from OSV, GitHub
   Security Advisories (GHSA), and NVD; ecosystem-aware version matchers
   (`apk`, `deb`, `rpm`, `pep440`, `semver`, Go pseudo-versions).
 - **VEX** -- ingest CycloneDX VEX statements at `POST /v2/vex` to mark
@@ -325,8 +326,8 @@ locally with `bash scripts/nightly-scan-all.sh`.
 ### With OIDC and S3 Storage
 
 ```bash
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
-  --namespace nebulacr --create-namespace \
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
+  --namespace spectoncr --create-namespace \
   --set oidc.enabled=true \
   --set oidc.issuerUrl="https://accounts.google.com" \
   --set oidc.clientId="YOUR_CLIENT_ID" \
@@ -342,7 +343,7 @@ helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
 ### Docker Hub Credentials (Avoid Rate Limits)
 
 ```bash
-helm install nebulacr oci://ghcr.io/bwalia/charts/nebulacr \
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
   --set pullThroughCache.upstreams.docker\\.io.username=myuser \
   --set pullThroughCache.upstreams.docker\\.io.password=mytoken
 ```
@@ -351,7 +352,7 @@ See [docs/deployment.md](docs/deployment.md) for all deployment options.
 
 ## Configuration Reference
 
-See [`config/nebulacr.example.toml`](config/nebulacr.example.toml) for all available settings.
+See [`config/spectoncr.example.toml`](config/spectoncr.example.toml) for all available settings.
 
 ### Storage Backends
 
@@ -386,8 +387,8 @@ Ready-to-use examples for all major CI/CD platforms:
 ### GitHub Actions Example
 
 ```yaml
-- name: Login to NebulaCR
-  uses: ./examples/github-actions/nebulacr-login-action
+- name: Login to SpectonCR
+  uses: ./examples/github-actions/spectoncr-login-action
   with:
     registry_url: registry.example.com
     tenant: my-org
@@ -401,14 +402,14 @@ Ready-to-use examples for all major CI/CD platforms:
 
 ## Docker Images
 
-NebulaCR is published to both Docker Hub and GHCR:
+SpectonCR is published to both Docker Hub and GHCR:
 
 ```bash
 # Docker Hub
-docker pull bwalia/nebulacr:latest
+docker pull specton/spectoncr:latest
 
 # GitHub Container Registry
-docker pull ghcr.io/bwalia/nebulacr:latest
+docker pull ghcr.io/spectonio/spectoncr:latest
 ```
 
 | Tag | Description |
@@ -423,19 +424,19 @@ Multi-architecture: `linux/amd64` and `linux/arm64`.
 ## Project Structure
 
 ```
-nebulacr/
+spectoncr/
 ├── crates/
-│   ├── nebula-auth/          # Auth service binary
-│   ├── nebula-registry/      # Registry service binary
-│   ├── nebula-common/        # Shared library (models, auth, storage)
-│   ├── nebula-controller/    # Kubernetes CRD controller
-│   ├── nebula-mirror/        # Pull-through cache engine
-│   ├── nebula-resilience/    # Retry, circuit breaker, failover
-│   ├── nebula-replication/   # Multi-region replication
-│   ├── nebula-scanner/       # CVE scanner (SBOM, vulndb match, policy, AI)
-│   ├── nebula-db/            # Postgres-backed vulndb + suppression store
-│   └── nebula-ai/            # Ollama client for CVE analysis + Dockerfile fixes
-├── deploy/helm/nebulacr/     # Helm chart
+│   ├── specton-auth/          # Auth service binary
+│   ├── specton-registry/      # Registry service binary
+│   ├── specton-common/        # Shared library (models, auth, storage)
+│   ├── specton-controller/    # Kubernetes CRD controller
+│   ├── specton-mirror/        # Pull-through cache engine
+│   ├── specton-resilience/    # Retry, circuit breaker, failover
+│   ├── specton-replication/   # Multi-region replication
+│   ├── specton-scanner/       # CVE scanner (SBOM, vulndb match, policy, AI)
+│   ├── specton-db/            # Postgres-backed vulndb + suppression store
+│   └── specton-ai/            # Ollama client for CVE analysis + Dockerfile fixes
+├── deploy/helm/spectoncr/     # Helm chart
 ├── config/                   # Example configuration
 ├── docs/                     # Documentation
 ├── examples/                 # CI/CD and Kubernetes examples
@@ -452,10 +453,10 @@ cargo build --workspace --release
 cargo test --workspace
 
 # Build Docker image
-docker build -t nebulacr:latest .
+docker build -t spectoncr:latest .
 
 # Build optimized (distroless) image
-docker build -f Dockerfile.scratch -t nebulacr:scratch .
+docker build -f Dockerfile.scratch -t spectoncr:scratch .
 ```
 
 ## Documentation
@@ -469,21 +470,21 @@ docker build -f Dockerfile.scratch -t nebulacr:scratch .
 - [Threat Model](docs/threat-model.md)
 - [Security Audit Checklist](docs/security-audit-checklist.md)
 - [System Architecture Diagrams](docs/system-architecture-diagrams.md)
-- [Helm Chart Reference](deploy/helm/nebulacr/README.md)
-- [Configuration Reference](config/nebulacr.example.toml)
+- [Helm Chart Reference](deploy/helm/spectoncr/README.md)
+- [Configuration Reference](config/spectoncr.example.toml)
 
 ## Website
 
-Marketing / landing page. Served by `https://nebulacr.org/` (primary),
+Marketing / landing page. Served by `https://spectoncr.org/` (primary),
 with the S3 origin available for direct testing.
 
 | Endpoint | URL |
 |---|---|
-| Primary | https://nebulacr.org/ |
-| GitHub Pages | https://bwalia.github.io/nebulacr/landing/ |
-| Test URL (object) | https://nebulacr-docs.s3.eu-west-2.amazonaws.com/index.html |
-| S3 website | http://nebulacr-docs.s3-website.eu-west-2.amazonaws.com/ |
-| Landing path | https://nebulacr-docs.s3.eu-west-2.amazonaws.com/landing/index.html |
+| Primary | https://spectoncr.org/ |
+| GitHub Pages | https://bwalia.github.io/spectoncr/landing/ |
+| Test URL (object) | https://spectoncr-docs.s3.eu-west-2.amazonaws.com/index.html |
+| S3 website | http://spectoncr-docs.s3-website.eu-west-2.amazonaws.com/ |
+| Landing path | https://spectoncr-docs.s3.eu-west-2.amazonaws.com/landing/index.html |
 
 Source: [`docs/landing/`](docs/landing/) — auto-published on `main` pushes
 via [`.github/workflows/publish-landing.yml`](.github/workflows/publish-landing.yml).

@@ -8,27 +8,27 @@
 > re-wraps DEKs without re-encrypting blobs — fast and bandwidth-free.
 >
 > **Constraint discovered while reading the code.** There is no
-> `Storage` trait in `nebula-common` (`crates/nebula-common/src/storage.rs`
+> `Storage` trait in `specton-common` (`crates/specton-common/src/storage.rs`
 > exposes only path builders). The registry talks to
 > `object_store::ObjectStore` directly (e.g.
-> `crates/nebula-registry/src/main.rs:920`). 008 must therefore
+> `crates/specton-registry/src/main.rs:920`). 008 must therefore
 > introduce a new wrapping trait — see (b).
 
 ## a. Problem statement
 
 ACR has CMK with Azure Key Vault; Nexus has IQ-managed encryption.
-NebulaCR encrypts in transit (TLS) and relies on backend defaults at
+SpectonCR encrypts in transit (TLS) and relies on backend defaults at
 rest (S3 SSE-S3, etc.) — fine for many, insufficient for FedRAMP/
 ITAR/HIPAA where the customer must hold the key. Without CMK,
-NebulaCR can't enter regulated procurement.
+SpectonCR can't enter regulated procurement.
 
 ## b. Proposed approach
 
-New crate `nebula-crypto` introducing the missing Storage trait
+New crate `specton-crypto` introducing the missing Storage trait
 abstraction:
 
 ```rust
-// crates/nebula-crypto/src/lib.rs
+// crates/specton-crypto/src/lib.rs
 #[async_trait]
 pub trait KeyProvider: Send + Sync {
     /// Wrap a plaintext DEK with the tenant's KEK. Returns ciphertext
@@ -59,7 +59,7 @@ Impls:
 
 - `AwsKmsProvider`, `GcpKmsProvider`, `AzureKeyVaultProvider`,
   `VaultTransitProvider` (reuses
-  `crates/nebula-common/src/config.rs:322`), `LocalDevProvider`
+  `crates/specton-common/src/config.rs:322`), `LocalDevProvider`
   (file-on-disk, dev only, refuses to start if `enabled=true` in prod).
 - `EnvelopeEncryptedStore<S: ObjectStore>` wraps any existing
   `object_store::ObjectStore`. On `put_blob`: generate DEK,
@@ -73,19 +73,19 @@ enabled, blob handlers route through it; when disabled, raw store
 path is unchanged. Manifests are not encrypted — they're public-by-
 content-addressing already and contain only digests/sizes.
 
-Key rotation: `nebulacr key rotate --tenant acme` calls
+Key rotation: `spectoncr key rotate --tenant acme` calls
 `KeyProvider::rotate`, then a background `rewrap_dek` job iterates
 `wrapped_deks WHERE key_id = old_id`, unwraps with old, wraps with
 new, atomically updates the row. Blobs are untouched.
 
-CLI: `nebulacr key list`, `nebulacr key rotate <tenant>`,
-`nebulacr key migrate --from <provider> --to <provider>`. MCP:
+CLI: `spectoncr key list`, `spectoncr key rotate <tenant>`,
+`spectoncr key migrate --from <provider> --to <provider>`. MCP:
 `rotate_kek`, `list_wrapped_deks`.
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: TenantKey
 metadata:
   name: acme-cmk
@@ -168,7 +168,7 @@ CREATE TABLE rewrap_jobs (
   size at 10 k entries.
 - **DEK row missing for an existing blob.** Means encryption was
   enabled mid-flight without re-encryption. Return 500 with explicit
-  message; admin runs `nebulacr key migrate --to <provider>` which
+  message; admin runs `spectoncr key migrate --to <provider>` which
   encrypts existing plaintext blobs in place and writes DEK rows.
 - **Rotation crashes mid-rewrap.** `rewrap_jobs` resumes from
   `MAX(rewrapped_at)`. Old key id stays valid until job completes —
@@ -182,7 +182,7 @@ CREATE TABLE rewrap_jobs (
 `encrypted_store` is `None` and all blob IO goes through the existing
 raw `state.store` path — zero behaviour change. To enable: deploy with
 `enabled = true`, create `TenantKey` CRD per tenant, run
-`nebulacr key migrate --tenant acme` to encrypt existing blobs (a
+`spectoncr key migrate --tenant acme` to encrypt existing blobs (a
 streamed re-write — slow but resumable; uses `pending_uploads` table
 from 004 to lock the operation).
 
@@ -190,22 +190,22 @@ from 004 to lock the operation).
 
 | Layer              | Where                                                 | Notes                                            |
 | ------------------ | ----------------------------------------------------- | ------------------------------------------------ |
-| Round-trip         | `crates/nebula-crypto/tests/roundtrip.rs`             | `LocalDevProvider`; encrypt then decrypt 1 GB    |
-| AWS KMS            | `crates/nebula-crypto/tests/aws_kms.rs`               | LocalStack KMS                                   |
-| Vault Transit      | `crates/nebula-crypto/tests/vault_transit.rs`         | Vault testcontainer                              |
-| Rotation + rewrap  | `crates/nebula-crypto/tests/rotation.rs`              | Two key ids, batch rewrap, verify all readable   |
-| Push/pull e2e      | `crates/nebula-registry/tests/cmk_e2e.rs`             | Real registry with encrypted store enabled       |
-| KMS-down failure   | `crates/nebula-crypto/tests/kms_outage.rs`            | Simulated 503; assert push/pull both 503         |
+| Round-trip         | `crates/specton-crypto/tests/roundtrip.rs`             | `LocalDevProvider`; encrypt then decrypt 1 GB    |
+| AWS KMS            | `crates/specton-crypto/tests/aws_kms.rs`               | LocalStack KMS                                   |
+| Vault Transit      | `crates/specton-crypto/tests/vault_transit.rs`         | Vault testcontainer                              |
+| Rotation + rewrap  | `crates/specton-crypto/tests/rotation.rs`              | Two key ids, batch rewrap, verify all readable   |
+| Push/pull e2e      | `crates/specton-registry/tests/cmk_e2e.rs`             | Real registry with encrypted store enabled       |
+| KMS-down failure   | `crates/specton-crypto/tests/kms_outage.rs`            | Simulated 503; assert push/pull both 503         |
 
 ## i. Implementation slice count
 
 4 slices, ~4 weeks:
 
-1. `nebula-crypto` crate, `KeyProvider` + `EncryptedStore` traits,
+1. `specton-crypto` crate, `KeyProvider` + `EncryptedStore` traits,
    `LocalDevProvider`, schema, round-trip tests.
 2. `EnvelopeEncryptedStore` + integration into `put_blob`/`get_blob`/
    `complete_blob_upload` paths in `main.rs`. Provider trait impls
    (start with Vault Transit, add AWS KMS).
 3. `TenantKey` CRD + reconciler + rotation + rewrap job + CLI.
-4. Migration tool (`nebulacr key migrate`), GCP/Azure providers,
+4. Migration tool (`spectoncr key migrate`), GCP/Azure providers,
    docs, Helm wiring, dashboard key list page (007 dependency).

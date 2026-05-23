@@ -1,5 +1,5 @@
 # ============================================================================
-# NebulaCR Local Development Stack
+# SpectonCR Local Development Stack
 #
 # Usage:
 #   docker compose up -d          # Start all services
@@ -18,40 +18,40 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["nebula-registry"]
+    command: ["specton-registry"]
     ports:
       - "5000:5000"   # Registry API
       - "9095:9090"   # Prometheus metrics (9090 used by kubepilot on host)
     environment:
-      RUST_LOG: "info,nebula_registry=debug,nebula_common=debug"
-      NEBULACR_SERVER__LISTEN_ADDR: "0.0.0.0:5000"
-      NEBULACR_EXTERNAL_URL: "http://localhost:5000"
-      NEBULACR_AUTH_SERVICE_URL: "http://auth:5001"
-      NEBULACR_SERVER__METRICS_ADDR: "0.0.0.0:9090"
-      NEBULACR_AUTH__ISSUER: "nebulacr"
-      NEBULACR_AUTH__AUDIENCE: "nebulacr-registry"
-      NEBULACR_AUTH__SIGNING_ALGORITHM: "RS256"
-      NEBULACR_AUTH__VERIFICATION_KEY_PATH: "/etc/nebulacr/keys/public.pem"
-      NEBULACR_AUTH__TOKEN_TTL_SECONDS: "300"
-      NEBULACR_STORAGE__BACKEND: "filesystem"
-      NEBULACR_STORAGE__ROOT: "/var/lib/nebulacr/data"
-      NEBULACR_RATE_LIMIT__DEFAULT_RPS: "100"
-      NEBULACR_RATE_LIMIT__IP_RPS: "50"
+      RUST_LOG: "info,specton_registry=debug,specton_common=debug"
+      SPECTONCR_SERVER__LISTEN_ADDR: "0.0.0.0:5000"
+      SPECTONCR_EXTERNAL_URL: "http://localhost:5000"
+      SPECTONCR_AUTH_SERVICE_URL: "http://auth:5001"
+      SPECTONCR_SERVER__METRICS_ADDR: "0.0.0.0:9090"
+      SPECTONCR_AUTH__ISSUER: "spectoncr"
+      SPECTONCR_AUTH__AUDIENCE: "spectoncr-registry"
+      SPECTONCR_AUTH__SIGNING_ALGORITHM: "RS256"
+      SPECTONCR_AUTH__VERIFICATION_KEY_PATH: "/etc/spectoncr/keys/public.pem"
+      SPECTONCR_AUTH__TOKEN_TTL_SECONDS: "300"
+      SPECTONCR_STORAGE__BACKEND: "filesystem"
+      SPECTONCR_STORAGE__ROOT: "/var/lib/spectoncr/data"
+      SPECTONCR_RATE_LIMIT__DEFAULT_RPS: "100"
+      SPECTONCR_RATE_LIMIT__IP_RPS: "50"
       # Scanner backends
-      NEBULACR_SCANNER__ENABLED: "true"
-      NEBULACR_SCANNER__POSTGRES_URL: "postgres://nebulacr:nebulacr@postgres:5432/nebulacr"
-      NEBULACR_SCANNER__REDIS_URL: "redis://redis:6379"
-      NEBULACR_SCANNER__VULNDB: "nebula"
-      NEBULACR_SCANNER__AI_ENABLED: "true"
-      NEBULACR_SCANNER__AI_ENDPOINT: "http://host.docker.internal:11434"
-      NEBULACR_SCANNER__AI_MODEL: "qwen2.5-coder:7b"
+      SPECTONCR_SCANNER__ENABLED: "true"
+      SPECTONCR_SCANNER__POSTGRES_URL: "postgres://spectoncr:spectoncr@postgres:5432/spectoncr"
+      SPECTONCR_SCANNER__REDIS_URL: "redis://redis:6379"
+      SPECTONCR_SCANNER__VULNDB: "specton"
+      SPECTONCR_SCANNER__AI_ENABLED: "true"
+      SPECTONCR_SCANNER__AI_ENDPOINT: "http://host.docker.internal:11434"
+      SPECTONCR_SCANNER__AI_MODEL: "qwen2.5-coder:7b"
       # Webhook notifications to OpsAPI (uncomment to enable)
-      # NEBULACR_WEBHOOKS__ENABLED: "true"
-      # NEBULACR_WEBHOOKS__TIMEOUT_MS: "5000"
-      # NEBULACR_WEBHOOKS__MAX_RETRIES: "3"
+      # SPECTONCR_WEBHOOKS__ENABLED: "true"
+      # SPECTONCR_WEBHOOKS__TIMEOUT_MS: "5000"
+      # SPECTONCR_WEBHOOKS__MAX_RETRIES: "3"
     volumes:
-      - registry-data:/var/lib/nebulacr/data
-      - jwt-keys:/etc/nebulacr/keys:ro
+      - registry-data:/var/lib/spectoncr/data
+      - jwt-keys:/etc/spectoncr/keys:ro
     depends_on:
       auth:
         condition: service_healthy
@@ -69,31 +69,31 @@ services:
       start_period: 10s
     restart: unless-stopped
     networks:
-      - nebulacr
+      - spectoncr
 
   # ── Auth / Token Service ──────────────────────────────────────────────────
   auth:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["nebula-auth"]
+    command: ["specton-auth"]
     ports:
       - "5001:5001"   # Auth API
     environment:
-      RUST_LOG: "info,nebula_auth=debug,nebula_common=debug"
-      NEBULACR_SERVER__AUTH_LISTEN_ADDR: "0.0.0.0:5001"
-      NEBULACR_AUTH__ISSUER: "nebulacr"
-      NEBULACR_AUTH__AUDIENCE: "nebulacr-registry"
-      NEBULACR_AUTH__SIGNING_ALGORITHM: "RS256"
-      NEBULACR_AUTH__SIGNING_KEY_PATH: "/etc/nebulacr/keys/private.pem"
-      NEBULACR_AUTH__VERIFICATION_KEY_PATH: "/etc/nebulacr/keys/public.pem"
-      NEBULACR_AUTH__TOKEN_TTL_SECONDS: "300"
+      RUST_LOG: "info,specton_auth=debug,specton_common=debug"
+      SPECTONCR_SERVER__AUTH_LISTEN_ADDR: "0.0.0.0:5001"
+      SPECTONCR_AUTH__ISSUER: "spectoncr"
+      SPECTONCR_AUTH__AUDIENCE: "spectoncr-registry"
+      SPECTONCR_AUTH__SIGNING_ALGORITHM: "RS256"
+      SPECTONCR_AUTH__SIGNING_KEY_PATH: "/etc/spectoncr/keys/private.pem"
+      SPECTONCR_AUTH__VERIFICATION_KEY_PATH: "/etc/spectoncr/keys/public.pem"
+      SPECTONCR_AUTH__TOKEN_TTL_SECONDS: "300"
       # Bootstrap admin credentials (development only -- password: "admin")
-      NEBULACR_AUTH__BOOTSTRAP_ADMIN__USERNAME: "admin"
-      NEBULACR_AUTH__BOOTSTRAP_ADMIN__PASSWORD_HASH: "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"
-      NEBULACR_RATE_LIMIT__TOKEN_ISSUE_RPM: "60"
+      SPECTONCR_AUTH__BOOTSTRAP_ADMIN__USERNAME: "admin"
+      SPECTONCR_AUTH__BOOTSTRAP_ADMIN__PASSWORD_HASH: "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"
+      SPECTONCR_RATE_LIMIT__TOKEN_ISSUE_RPM: "60"
     volumes:
-      - jwt-keys:/etc/nebulacr/keys
+      - jwt-keys:/etc/spectoncr/keys
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
       interval: 10s
@@ -102,12 +102,12 @@ services:
       start_period: 30s
     restart: unless-stopped
     networks:
-      - nebulacr
+      - spectoncr
 
   # ── MinIO Object Storage ─────────────────────────────────────────────────
   # S3-compatible object storage for production-like setups.
   # Access the MinIO console at http://localhost:9001
-  # To use: set NEBULACR_STORAGE__BACKEND=minio and NEBULACR_STORAGE__ROOT=nebulacr
+  # To use: set SPECTONCR_STORAGE__BACKEND=minio and SPECTONCR_STORAGE__ROOT=spectoncr
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -127,7 +127,7 @@ services:
       start_period: 10s
     restart: unless-stopped
     networks:
-      - nebulacr
+      - spectoncr
     profiles:
       - minio
 
@@ -139,12 +139,12 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      mc alias set nebulacr http://minio:9000 minioadmin minioadmin;
-      mc mb --ignore-existing nebulacr/nebulacr;
+      mc alias set spectoncr http://minio:9000 minioadmin minioadmin;
+      mc mb --ignore-existing spectoncr/spectoncr;
       echo 'Bucket ready.';
       "
     networks:
-      - nebulacr
+      - spectoncr
     profiles:
       - minio
 
@@ -154,20 +154,20 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: nebulacr
-      POSTGRES_PASSWORD: nebulacr
-      POSTGRES_DB: nebulacr
+      POSTGRES_USER: spectoncr
+      POSTGRES_PASSWORD: spectoncr
+      POSTGRES_DB: spectoncr
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nebulacr -d nebulacr"]
+      test: ["CMD-SHELL", "pg_isready -U spectoncr -d spectoncr"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 10s
     restart: unless-stopped
     networks:
-      - nebulacr
+      - spectoncr
 
   # ── Redis (scanner ephemeral results, 1h TTL) ─────────────────────────────
   redis:
@@ -183,7 +183,7 @@ services:
       start_period: 5s
     restart: unless-stopped
     networks:
-      - nebulacr
+      - spectoncr
 
   # ── Key Generator (init container) ────────────────────────────────────────
   # Generates RSA key pair for JWT signing on first run.
@@ -219,5 +219,5 @@ volumes:
     driver: local
 
 networks:
-  nebulacr:
+  spectoncr:
     driver: bridge

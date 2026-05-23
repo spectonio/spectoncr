@@ -1,19 +1,19 @@
-# NebulaCR — Next-Major-Release Design Prompt
+# SpectonCR — Next-Major-Release Design Prompt
 
 > Hand this prompt to a planning agent (or paste into a fresh Claude session)
 > to generate the per-feature design documents under `docs/design/`.
 
 ---
 
-You are designing the next major release of NebulaCR, a Rust-based OCI
-container registry (https://github.com/bwalia/nebulacr).
+You are designing the next major release of SpectonCR, a Rust-based OCI
+container registry (https://github.com/spectonio/spectoncr).
 
 ## Current state
 
-- Workspace crates: `nebula-registry`, `nebula-auth`, `nebula-common`,
-  `nebula-controller`, `nebula-mirror`, `nebula-resilience`,
-  `nebula-replication`, `nebula-scanner` (in-progress), `nebula-ai`,
-  `nebula-db`.
+- Workspace crates: `specton-registry`, `specton-auth`, `specton-common`,
+  `specton-controller`, `specton-mirror`, `specton-resilience`,
+  `specton-replication`, `specton-scanner` (in-progress), `specton-ai`,
+  `specton-db`.
 - OCI Distribution v2 + pull-through cache (Docker Hub, GHCR, GCR, Quay,
   registry.k8s.io).
 - Multi-tenancy via CRDs: `Tenant`, `Project`, `AccessPolicy`, `TokenPolicy`.
@@ -23,7 +23,7 @@ container registry (https://github.com/bwalia/nebulacr).
 - Scanner slice in flight: own CVE DB (OSV / NVD / GHSA → Postgres),
   Ollama-based AI remediation, suppressions in Postgres, scan results in
   Redis (ephemeral, 1h TTL).
-- CLI binary: `nebulacr`. MCP server: `nebula-mcp`.
+- CLI binary: `spectoncr`. MCP server: `specton-mcp`.
 
 ## Goal
 
@@ -64,7 +64,7 @@ i. **Implementation slice count** — calibrated against the scanner work
   scanner). Do NOT introduce a new datastore. Redis stays ephemeral-only.
 - **All new APIs must work** with both 2-segment (default-tenant) and
   3-segment (tenant/project/repo) paths.
-- **Every feature must have a kill-switch** in `nebulacr.toml` and default
+- **Every feature must have a kill-switch** in `spectoncr.toml` and default
   to OFF for the first release that ships it. Existing deployments must
   not break on upgrade.
 - **Honour the locked decisions** in project memory:
@@ -73,8 +73,8 @@ i. **Implementation slice count** — calibrated against the scanner work
   - Suppressions / audit Postgres-persisted; scan results Redis-ephemeral.
   - Distro-version collapsed to family in `affected_ranges.ecosystem`.
   - `vulnerabilities.source` classified by advisory-ID prefix.
-- **CLI + MCP surfaces** (`nebulacr sign / verify / promote / gc / audit / key`,
-  `nebula-mcp` tools) must be designed alongside each feature, not bolted on later.
+- **CLI + MCP surfaces** (`spectoncr sign / verify / promote / gc / audit / key`,
+  `specton-mcp` tools) must be designed alongside each feature, not bolted on later.
 
 ## Output format
 

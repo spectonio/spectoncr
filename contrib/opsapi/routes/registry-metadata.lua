@@ -1,8 +1,8 @@
 -- ============================================================================
--- NebulaCR Registry Metadata CRUD API
+-- SpectonCR Registry Metadata CRUD API
 --
 -- REST API for managing container repository metadata, categories, and tags.
--- Used by the NebulaCR dashboard and admin tools.
+-- Used by the SpectonCR dashboard and admin tools.
 --
 -- Routes:
 --   GET    /api/v2/container-repositories          List repositories

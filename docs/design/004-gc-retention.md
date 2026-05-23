@@ -4,7 +4,7 @@
 > blobs and manifests using reference counts (manifests → blobs, tags →
 > manifests). **Retention** is a per-Project policy (the
 > `RetentionPolicy` struct already exists at
-> `crates/nebula-controller/src/main.rs:88`) that deletes tags older
+> `crates/specton-controller/src/main.rs:88`) that deletes tags older
 > than D days, beyond N most recent, or matching a regex. Both run as
 > controller-managed jobs with grace periods to avoid racing in-flight
 > uploads.
@@ -12,18 +12,18 @@
 ## a. Problem statement
 
 ACR has `az acr run --cmd 'acr purge'` and Nexus has cleanup policies.
-NebulaCR has a `RetentionPolicy` field on the Project CRD with no
+SpectonCR has a `RetentionPolicy` field on the Project CRD with no
 implementation behind it. Storage usage grows monotonically forever.
 This is the most-requested operational feature for any registry past
 six months in production.
 
 ## b. Proposed approach
 
-New crate `nebula-gc` (or module under `nebula-controller`; pick
+New crate `specton-gc` (or module under `specton-controller`; pick
 controller for now — it has the kube client wired up). Two services:
 
 ```rust
-// crates/nebula-controller/src/gc/mod.rs
+// crates/specton-controller/src/gc/mod.rs
 pub struct GcRunner { store: Arc<dyn ObjectStore>, db: PgPool }
 
 impl GcRunner {
@@ -48,15 +48,15 @@ impl RetentionRunner {
 
 Critical invariant: **upload sessions register themselves**. The
 existing `initiate_blob_upload` at
-`crates/nebula-registry/src/main.rs:1338` writes a row to a new
+`crates/specton-registry/src/main.rs:1338` writes a row to a new
 `pending_uploads` table on start. The sweep ignores any blob whose
 digest matches an unfinished upload OR whose mtime is within
 `grace_period` (default 24 h). This solves the in-flight race without
 distributed locks.
 
 The mark phase is the only place that walks manifest JSON to extract
-blob descriptors; reuse `nebula_common::models::Manifest`
-(`crates/nebula-common/src/models.rs:55`).
+blob descriptors; reuse `specton_common::models::Manifest`
+(`crates/specton-common/src/models.rs:55`).
 
 Retention rules per project (CRD additions on top of the existing
 `RetentionPolicy`):
@@ -74,8 +74,8 @@ Schedule: a `Kubernetes CronJob` provisioned by the controller per
 tenant. GC runs nightly at a tenant-randomised UTC hour; retention
 runs hourly.
 
-CLI: `nebulacr gc run [--dry-run]`, `nebulacr gc status`,
-`nebulacr retention apply --project acme/prod`. MCP: `start_gc_run`,
+CLI: `spectoncr gc run [--dry-run]`, `spectoncr gc status`,
+`spectoncr retention apply --project acme/prod`. MCP: `start_gc_run`,
 `get_gc_status`.
 
 ## c. New/changed CRDs
@@ -83,7 +83,7 @@ CLI: `nebulacr gc run [--dry-run]`, `nebulacr gc status`,
 Project CRD extension only; no new CRD:
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Project
 metadata:
   name: prod
@@ -189,11 +189,11 @@ memory.
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| Mark walker        | `crates/nebula-controller/tests/gc_mark.rs`            | In-memory `ObjectStore`, fake manifests     |
-| Sweep grace period | `crates/nebula-controller/tests/gc_grace.rs`           | Asserts in-flight upload survives           |
-| Retention regex    | `crates/nebula-controller/tests/retention_regex.rs`    | Postgres testcontainer, real CRD           |
+| Mark walker        | `crates/specton-controller/tests/gc_mark.rs`            | In-memory `ObjectStore`, fake manifests     |
+| Sweep grace period | `crates/specton-controller/tests/gc_grace.rs`           | Asserts in-flight upload survives           |
+| Retention regex    | `crates/specton-controller/tests/retention_regex.rs`    | Postgres testcontainer, real CRD           |
 | End-to-end         | `tests/e2e/gc_e2e.sh`                                  | Push 100 images, retain top 10, run GC      |
-| Recovery           | `crates/nebula-controller/tests/gc_recovery.rs`        | Kill mid-mark; assert sweeper recovers      |
+| Recovery           | `crates/specton-controller/tests/gc_recovery.rs`        | Kill mid-mark; assert sweeper recovers      |
 
 ## i. Implementation slice count
 

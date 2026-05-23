@@ -20,16 +20,16 @@ the same one our deployments are using?" — without a separate
 chart museum, a separate WASM tool, and a separate ML registry.
 ACR has typed-artifact support behind paid tiers (Helm, OCI WASM
 in preview); Nexus has separate format types (a major source of
-its operational complexity and licensing cost). NebulaCR can do all
+its operational complexity and licensing cost). SpectonCR can do all
 this in one OCI registry by reading the media type and dispatching
 to a per-type validator + viewer.
 
 ## b. Proposed approach
 
-New crate `nebula-artifact-types`. Single registry of validators:
+New crate `specton-artifact-types`. Single registry of validators:
 
 ```rust
-// crates/nebula-artifact-types/src/lib.rs
+// crates/specton-artifact-types/src/lib.rs
 #[async_trait]
 pub trait ArtifactType: Send + Sync {
     fn type_id(&self) -> &'static str;            // "helm" | "wasm" | "model" | "tfmodule"
@@ -50,7 +50,7 @@ pub struct TerraformModuleType; // application/vnd.opentofu.modulepkg
 ```
 
 Wiring point: `put_manifest` at
-`crates/nebula-registry/src/main.rs:886`. After the manifest is
+`crates/specton-registry/src/main.rs:886`. After the manifest is
 written, a registry of `ArtifactType` impls is consulted; the first
 that matches runs `validate`. On error, the manifest is rejected
 (opt-in per project). On success, parsed metadata is stored in
@@ -94,16 +94,16 @@ Per-type retention: Helm keeps last 5 minor versions per major;
 WASM keeps last 10 versions; models keep last 3 (storage cost).
 Configurable; see CRD.
 
-CLI: `nebulacr helm push|pull|list|inspect`,
-`nebulacr wasm inspect`, `nebulacr model inspect`,
-`nebulacr terraform inspect`. Each is a thin wrapper around the
+CLI: `spectoncr helm push|pull|list|inspect`,
+`spectoncr wasm inspect`, `spectoncr model inspect`,
+`spectoncr terraform inspect`. Each is a thin wrapper around the
 generic OCI plumbing + the typed metadata endpoint. MCP:
 `list_typed_artifacts`, `inspect_artifact`.
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Project
 spec:
   tenantRef: acme
@@ -198,26 +198,26 @@ and the index.
 `[artifact_types] enabled = false`. Existing pushes still work
 unchanged. Operators enable types per project; backfill can re-walk
 existing manifests of matching media types via a one-shot
-`nebulacr artifact reindex --project ...` job (uses the existing
+`spectoncr artifact reindex --project ...` job (uses the existing
 controller worker pool).
 
 ## h. Test plan
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| Helm validate      | `crates/nebula-artifact-types/tests/helm.rs`           | bitnami chart fixtures                      |
-| WASM validate      | `crates/nebula-artifact-types/tests/wasm.rs`           | Component Model + plain WASM module         |
-| Model validate     | `crates/nebula-artifact-types/tests/model.rs`          | CNCF model spec sample artifacts            |
-| TF module validate | `crates/nebula-artifact-types/tests/tfmodule.rs`       | OpenTofu module fixtures                    |
-| Index materialise  | `crates/nebula-artifact-types/tests/index.rs`          | Push → index refresh assertions             |
+| Helm validate      | `crates/specton-artifact-types/tests/helm.rs`           | bitnami chart fixtures                      |
+| WASM validate      | `crates/specton-artifact-types/tests/wasm.rs`           | Component Model + plain WASM module         |
+| Model validate     | `crates/specton-artifact-types/tests/model.rs`          | CNCF model spec sample artifacts            |
+| TF module validate | `crates/specton-artifact-types/tests/tfmodule.rs`       | OpenTofu module fixtures                    |
+| Index materialise  | `crates/specton-artifact-types/tests/index.rs`          | Push → index refresh assertions             |
 | End-to-end Helm    | `tests/e2e/helm_push_pull.sh`                          | `helm push oci://...` → list → install      |
-| Strict reject      | `crates/nebula-artifact-types/tests/strict_reject.rs`  | Malformed Helm chart blocked under strict   |
+| Strict reject      | `crates/specton-artifact-types/tests/strict_reject.rs`  | Malformed Helm chart blocked under strict   |
 
 ## i. Implementation slice count
 
 4 slices, ~4 weeks:
 
-1. `nebula-artifact-types` scaffold + `ArtifactType` trait + Helm
+1. `specton-artifact-types` scaffold + `ArtifactType` trait + Helm
    impl + `artifact_meta` schema + `put_manifest` integration.
 2. WASM type + per-project validation modes + artifact-meta endpoint.
 3. Model type + Terraform module type + artifact-index + reindex

@@ -96,9 +96,9 @@ jobs:
           # `docker compose create` would also do this, but creating
           # the volumes directly avoids spinning up the (still
           # un-configured) services first.
-          for v in nebulacr_prometheus-config \
-                   nebulacr_grafana-provisioning \
-                   nebulacr_grafana-dashboards; do
+          for v in spectoncr_prometheus-config \
+                   spectoncr_grafana-provisioning \
+                   spectoncr_grafana-dashboards; do
             docker volume create "$v" >/dev/null
           done
 
@@ -114,20 +114,20 @@ jobs:
 
           # prometheus-config: prometheus.yml at root + rules/ subdir.
           stage "deploy/observability/prometheus" "prometheus.yml rules" \
-            nebulacr_prometheus-config ""
+            spectoncr_prometheus-config ""
 
           # grafana-provisioning: the whole tree under provisioning/.
           stage "deploy/observability/grafana/provisioning" "." \
-            nebulacr_grafana-provisioning ""
+            spectoncr_grafana-provisioning ""
 
           # grafana-dashboards: every JSON.
           stage "deploy/observability/grafana/dashboards" "." \
-            nebulacr_grafana-dashboards ""
+            spectoncr_grafana-dashboards ""
 
           # Verify the staged content is visible inside a fresh
           # container — proves the volume populate worked.
           docker run --rm \
-            -v nebulacr_prometheus-config:/p \
+            -v spectoncr_prometheus-config:/p \
             busybox:1.37 sh -c 'ls -la /p && head -5 /p/prometheus.yml'
 
       - name: Pull images
@@ -202,7 +202,7 @@ jobs:
             | python3 -c "import sys,json;print(' '.join(d['uid'] for d in json.load(sys.stdin)))" || echo "")
           echo "Loaded dashboards: ${DASHBOARDS}"
 
-          MUST_HAVE=(nebulacr-enterprise-overview nebulacr-enterprise-detail)
+          MUST_HAVE=(spectoncr-enterprise-overview spectoncr-enterprise-detail)
           for uid in "${MUST_HAVE[@]}"; do
             if ! echo "$DASHBOARDS" | grep -qw "$uid"; then
               echo "::warning::expected dashboard uid ${uid} not present — provisioning may still be loading"
@@ -233,8 +233,8 @@ jobs:
               echo ""
               echo "## Pre-loaded dashboards"
               echo ""
-              echo "- [Enterprise Overview](http://localhost:${GRAFANA_HOST_PORT}/d/nebulacr-enterprise-overview/)"
-              echo "- [Operations Detail](http://localhost:${GRAFANA_HOST_PORT}/d/nebulacr-enterprise-detail/)"
+              echo "- [Enterprise Overview](http://localhost:${GRAFANA_HOST_PORT}/d/spectoncr-enterprise-overview/)"
+              echo "- [Operations Detail](http://localhost:${GRAFANA_HOST_PORT}/d/spectoncr-enterprise-detail/)"
               echo "- Plus the existing fleet / mirror / replication / storage / tenants / auth dashboards from \`deploy/observability/grafana/dashboards/\`."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

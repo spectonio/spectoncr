@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="NebulaCR — Cloud-Native OCI Container Registry. Enterprise-grade, multi-region, Rust-powered." />
+  <meta name="description" content="SpectonCR — Cloud-Native OCI Container Registry. Enterprise-grade, multi-region, Rust-powered." />
   <meta name="theme-color" content="#0a0a1a" />
-  <title>NebulaCR — Cloud-Native OCI Container Registry</title>
+  <title>SpectonCR — Cloud-Native OCI Container Registry</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -285,7 +285,7 @@
 <!-- ===== NAVIGATION ===== -->
 <nav class="nav">
   <div class="nav-logo">
-    <span class="nav-logo-icon">&#x25C8;</span> NebulaCR
+    <span class="nav-logo-icon">&#x25C8;</span> SpectonCR
   </div>
   <div class="nav-links">
     <a href="#features">Features</a>
@@ -295,7 +295,8 @@
     <a href="#install">Install</a>
     <a href="#architecture">Architecture</a>
     <a href="api.html">API Docs</a>
-    <a href="https://github.com/bwalia/nebulacr" class="nav-cta">GitHub</a>
+    <a href="https://specton.io">specton.io</a>
+    <a href="https://github.com/spectonio/spectoncr" class="nav-cta">GitHub</a>
   </div>
   <button class="nav-mobile" onclick="document.querySelector('.nav-links').style.display=document.querySelector('.nav-links').style.display==='flex'?'none':'flex'">&#9776;</button>
 </nav>
@@ -308,13 +309,13 @@
   </div>
   <h1>Your Images.<br>Your Infrastructure.<br>Zero Compromise.</h1>
   <p class="hero-sub">
-    NebulaCR is a cloud-native OCI container registry built in Rust. Multi-region replication,
+    SpectonCR is a cloud-native OCI container registry built in Rust. Multi-region replication,
     enterprise AD/OIDC authentication, pull-through caching, and a real-time dashboard &mdash;
     all in a single binary.
   </p>
   <div class="hero-buttons">
     <a href="#install" class="btn btn-primary">Get Started</a>
-    <a href="https://github.com/bwalia/nebulacr" class="btn btn-secondary">View on GitHub</a>
+    <a href="https://github.com/spectonio/spectoncr" class="btn btn-secondary">View on GitHub</a>
   </div>
   <div class="hero-trust">
     <span class="trust-item"><span class="trust-dot" style="background:var(--green)"></span> OCI Distribution Spec</span>
@@ -361,7 +362,7 @@
     <div class="section-header">
       <div class="section-divider"></div>
       <h2>Everything You Need for Container Images</h2>
-      <p>From development to production, NebulaCR covers the entire container image lifecycle.</p>
+      <p>From development to production, SpectonCR covers the entire container image lifecycle.</p>
     </div>
     <div class="features-grid">
 
@@ -429,11 +430,11 @@
         <div class="feature-icon-box">&#x1F50E;</div>
         <div class="feature-title">Image Vulnerability Scanning</div>
         <div class="feature-desc">
-          Every push is scanned in-process by the embedded <code>nebula-scanner</code>. SBOMs are built natively in Rust &mdash; no Trivy/Grype shell-out &mdash; then matched against OSV, GHSA, and NVD with ecosystem-aware version comparators.
+          Every push is scanned in-process by the embedded <code>specton-scanner</code>. SBOMs are built natively in Rust &mdash; no Trivy/Grype shell-out &mdash; then matched against OSV, GHSA, and NVD with ecosystem-aware version comparators.
         </div>
         <ul class="feature-list">
           <li>SBOM parsers: dpkg, apk, rpm, npm, pypi, cargo, go, ELF</li>
-          <li>OSV bootstrap + local NebulaVulnDb (OSV/GHSA/NVD ingest)</li>
+          <li>OSV bootstrap + local SpectonVulnDb (OSV/GHSA/NVD ingest)</li>
           <li>Version matchers for apk, deb, rpm, semver, pep440, Go</li>
           <li>VEX 1.4 ingestion (not_affected / fixed / under_investigation)</li>
           <li>Pass/fail policy gate with per-severity thresholds</li>
@@ -580,7 +581,7 @@
         <div class="enterprise-card-icon">&#x1F465;</div>
         <div class="enterprise-card-title">Group-Based Access Control</div>
         <div class="enterprise-card-desc">
-          Map AD groups to NebulaCR roles: nebulacr-admins to Admin, nebulacr-devs to Maintainer, nebulacr-viewers to Reader. Per-tenant and per-project granularity.
+          Map AD groups to SpectonCR roles: spectoncr-admins to Admin, spectoncr-devs to Maintainer, spectoncr-viewers to Reader. Per-tenant and per-project granularity.
         </div>
       </div>
 
@@ -604,7 +605,7 @@
         <div class="enterprise-card-icon">&#x1F4CB;</div>
         <div class="enterprise-card-title">SCIM 2.0 Provisioning &mdash; Automated User Lifecycle</div>
         <div class="enterprise-card-desc">
-          NebulaCR implements the SCIM 2.0 protocol (RFC 7644), enabling Azure AD, Okta, and OneLogin to automatically provision and deprovision users. When someone joins your org, SCIM pre-creates their registry access instantly &mdash; no first-login delay. When they leave, access is revoked in seconds, not minutes. Group membership changes sync immediately without requiring a new login.
+          SpectonCR implements the SCIM 2.0 protocol (RFC 7644), enabling Azure AD, Okta, and OneLogin to automatically provision and deprovision users. When someone joins your org, SCIM pre-creates their registry access instantly &mdash; no first-login delay. When they leave, access is revoked in seconds, not minutes. Group membership changes sync immediately without requiring a new login.
         </div>
         <table class="config-table" style="margin-top:16px;">
           <tr><th>Scenario</th><th>Without SCIM</th><th>With SCIM</th></tr>
@@ -630,7 +631,7 @@
   <div class="steps-grid">
     <div class="step-card">
       <div class="step-title">Deploy Registry</div>
-      <div class="step-desc">Deploy NebulaCR via Helm chart to Kubernetes, Docker Compose, or as a native binary on bare metal. Single binary, no runtime dependencies.</div>
+      <div class="step-desc">Deploy SpectonCR via Helm chart to Kubernetes, Docker Compose, or as a native binary on bare metal. Single binary, no runtime dependencies.</div>
     </div>
     <div class="step-card">
       <div class="step-title">Configure Auth</div>
@@ -659,7 +660,7 @@
     <div class="steps-grid">
       <div class="step-card">
         <div class="step-title">Push Triggers Scan</div>
-        <div class="step-desc">A successful manifest push enqueues a scan keyed by digest. The scanner runs in-process inside <code>nebula-registry</code>, or in a dedicated <code>nebula-scanner</code> worker.</div>
+        <div class="step-desc">A successful manifest push enqueues a scan keyed by digest. The scanner runs in-process inside <code>specton-registry</code>, or in a dedicated <code>specton-scanner</code> worker.</div>
       </div>
       <div class="step-card">
         <div class="step-title">SBOM Extraction</div>
@@ -716,7 +717,7 @@
     <div class="section-header">
       <div class="section-divider"></div>
       <h2>Installation</h2>
-      <p>Three ways to get started with NebulaCR.</p>
+      <p>Three ways to get started with SpectonCR.</p>
     </div>
 
     <div class="install-tabs">
@@ -727,13 +728,13 @@
 
     <div class="install-content active" id="tab-helm">
       <h4>Deploy to Kubernetes with Helm</h4>
-<div class="code-block"><span class="code-comment"># Install NebulaCR</span>
-helm install nebulacr deploy/helm/nebulacr \
-  -n nebulacr --create-namespace \
+<div class="code-block"><span class="code-comment"># Install SpectonCR</span>
+helm install spectoncr deploy/helm/spectoncr \
+  -n spectoncr --create-namespace \
   -f values-production.yaml
 
 <span class="code-comment"># Verify</span>
-kubectl -n nebulacr get pods
+kubectl -n spectoncr get pods
 curl https://registry.example.com/health
 
 <span class="code-comment"># Push your first image</span>
@@ -746,11 +747,11 @@ open https://registry.example.com/dashboard</div>
 
     <div class="install-content" id="tab-docker">
       <h4>Run with Docker</h4>
-<div class="code-block"><span class="code-comment"># Pull and run NebulaCR</span>
-docker run -d --name nebulacr \
+<div class="code-block"><span class="code-comment"># Pull and run SpectonCR</span>
+docker run -d --name spectoncr \
   -p 5000:5000 -p 5001:5001 \
-  -v nebulacr-data:/var/lib/nebulacr/data \
-  ghcr.io/bwalia/nebulacr:latest
+  -v spectoncr-data:/var/lib/spectoncr/data \
+  ghcr.io/spectonio/spectoncr:latest
 
 <span class="code-comment"># Push an image</span>
 docker tag myapp:latest localhost:5000/demo/default/myapp:latest
@@ -763,8 +764,8 @@ open http://localhost:5000/dashboard</div>
     <div class="install-content" id="tab-source">
       <h4>Build from Source (Rust 1.80+)</h4>
 <div class="code-block"><span class="code-comment"># Clone and build</span>
-git clone https://github.com/bwalia/nebulacr.git
-cd nebulacr
+git clone https://github.com/spectonio/spectoncr.git
+cd spectoncr
 cargo build --release
 
 <span class="code-comment"># Generate JWT keys</span>
@@ -772,10 +773,10 @@ openssl genrsa -out private.pem 2048
 openssl rsa -in private.pem -pubout -out public.pem
 
 <span class="code-comment"># Run the registry</span>
-./target/release/nebula-registry --config=config.yaml
+./target/release/specton-registry --config=config.yaml
 
 <span class="code-comment"># Run the auth service</span>
-./target/release/nebula-auth --config=config.yaml</div>
+./target/release/specton-auth --config=config.yaml</div>
     </div>
   </div>
 </section>
@@ -785,7 +786,7 @@ openssl rsa -in private.pem -pubout -out public.pem
   <div class="section-header">
     <div class="section-divider"></div>
     <h2>Architecture</h2>
-    <p>NebulaCR is composed of modular Rust crates, each handling a specific concern.</p>
+    <p>SpectonCR is composed of modular Rust crates, each handling a specific concern.</p>
   </div>
   <div class="arch-container">
 <pre>
@@ -795,7 +796,7 @@ openssl rsa -in private.pem -pubout -out public.pem
                                     |
                     +---------------+----------------+
                     |                                |
-              nebula-registry (:5000)          nebula-auth (:5001)
+              specton-registry (:5000)          specton-auth (:5001)
               /    |     |     \                /    |    \
          Manifests Blobs Tags Dashboard    OIDC  JWT  Robot
             |       |     |      |          |     |    Accounts
@@ -805,7 +806,7 @@ openssl rsa -in private.pem -pubout -out public.pem
       | filesystem | ... | S3 / GCS   |
       +------------+     +------------+
 
-              nebula-replication
+              specton-replication
               /        |        \
          Events    Circuit     Failover
                    Breaker     Manager
@@ -841,17 +842,17 @@ openssl rsa -in private.pem -pubout -out public.pem
 
   <div style="margin-top:32px;">
     <div class="section-header" style="margin-bottom:16px;"><h2 style="font-size:1.1rem;">Project Structure</h2></div>
-<div class="code-block" style="color:var(--text-secondary);">nebulacr/
+<div class="code-block" style="color:var(--text-secondary);">spectoncr/
   crates/
-    nebula-registry/       <span style="color:var(--text-muted)"># OCI registry + dashboard</span>
-    nebula-auth/           <span style="color:var(--text-muted)"># Auth service (OIDC, JWT, RBAC)</span>
-    nebula-common/         <span style="color:var(--text-muted)"># Shared models, config, storage</span>
-    nebula-replication/    <span style="color:var(--text-muted)"># Multi-region replication</span>
-    nebula-mirror/         <span style="color:var(--text-muted)"># Pull-through cache</span>
-    nebula-resilience/     <span style="color:var(--text-muted)"># Circuit breaker + retry</span>
-    nebula-controller/     <span style="color:var(--text-muted)"># Kubernetes CRD controller</span>
+    specton-registry/       <span style="color:var(--text-muted)"># OCI registry + dashboard</span>
+    specton-auth/           <span style="color:var(--text-muted)"># Auth service (OIDC, JWT, RBAC)</span>
+    specton-common/         <span style="color:var(--text-muted)"># Shared models, config, storage</span>
+    specton-replication/    <span style="color:var(--text-muted)"># Multi-region replication</span>
+    specton-mirror/         <span style="color:var(--text-muted)"># Pull-through cache</span>
+    specton-resilience/     <span style="color:var(--text-muted)"># Circuit breaker + retry</span>
+    specton-controller/     <span style="color:var(--text-muted)"># Kubernetes CRD controller</span>
   deploy/
-    helm/nebulacr/         <span style="color:var(--text-muted)"># Helm chart</span>
+    helm/spectoncr/         <span style="color:var(--text-muted)"># Helm chart</span>
     ansible/               <span style="color:var(--text-muted)"># Native deployment playbooks</span>
   docs/landing/            <span style="color:var(--text-muted)"># This landing page</span></div>
   </div>
@@ -860,21 +861,22 @@ openssl rsa -in private.pem -pubout -out public.pem
 <!-- ===== CTA ===== -->
 <section class="cta-section">
   <h2>Ready to Own Your Container Registry?</h2>
-  <p>Deploy NebulaCR and take full control of your container images. Open source, enterprise-ready.</p>
+  <p>Deploy SpectonCR and take full control of your container images. Open source, enterprise-ready.</p>
   <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;position:relative;">
     <a href="#install" class="btn btn-primary">Get Started</a>
-    <a href="https://github.com/bwalia/nebulacr" class="btn btn-secondary">Star on GitHub</a>
+    <a href="https://github.com/spectonio/spectoncr" class="btn btn-secondary">Star on GitHub</a>
   </div>
 </section>
 
 <!-- ===== FOOTER ===== -->
 <footer class="footer">
   <div class="footer-links">
-    <a href="https://github.com/bwalia/nebulacr">GitHub</a>
-    <a href="https://github.com/bwalia/nebulacr#readme">Documentation</a>
-    <a href="https://github.com/bwalia/nebulacr/issues">Issues</a>
+    <a href="https://specton.io">specton.io</a>
+    <a href="https://github.com/spectonio/spectoncr">GitHub</a>
+    <a href="https://github.com/spectonio/spectoncr#readme">Documentation</a>
+    <a href="https://github.com/spectonio/spectoncr/issues">Issues</a>
   </div>
-  <div>&copy; 2026 NebulaCR &mdash; Cloud-Native OCI Container Registry</div>
+  <div>&copy; 2026 <a href="https://specton.io">specton.io</a> &mdash; SpectonCR Cloud-Native OCI Container Registry</div>
   <div style="margin-top:6px;">Built with Rust, Axum, and Tokio &middot; Open Source under MIT License</div>
 </footer>
 

@@ -1,0 +1,43 @@
+apiVersion: v2
+name: spectoncr
+description: A cloud-native Docker/OCI container registry with multi-tenancy and zero-trust authentication
+type: application
+version: 0.4.0
+appVersion: "0.3.0"
+dependencies:
+  # Optional in-chart Grafana — enabled per-environment via
+  # `grafana.enabled=true`. Pre-provisions a Prometheus + Postgres
+  # datasource pointing at the in-cluster registry/scanner stack and
+  # auto-loads every spectoncr dashboard ConfigMap (rendered by
+  # templates/grafana-dashboards.yaml when
+  # spectoncrDashboards.enabled=true) via the chart's own sidecar.
+  - name: grafana
+    version: "8.5.x"
+    repository: https://grafana.github.io/helm-charts
+    condition: grafana.enabled
+home: https://specton.io
+sources:
+  - https://github.com/spectonio/spectoncr
+keywords:
+  - container-registry
+  - oci
+  - docker
+  - multi-tenancy
+  - zero-trust
+maintainers:
+  - name: Specton
+    url: https://specton.io
+kubeVersion: ">=1.25.0-0"
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/signKey: ""
+  artifacthub.io/containsSecurityUpdates: "false"
+  artifacthub.io/changes: |
+    - kind: added
+      description: In-chart Grafana subchart with pre-provisioned Prometheus + Postgres datasources and auto-loaded enterprise dashboards
+    - kind: changed
+      description: Renamed grafana.dashboards.* control to spectoncrDashboards.* so the grafana.* tree belongs entirely to the new subchart
+    - kind: added
+      description: Pull-through cache with pre-configured upstream registries
+    - kind: added
+      description: Helm chart publishing to GitHub Pages and GHCR OCI

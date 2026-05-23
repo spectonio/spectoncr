@@ -2,9 +2,9 @@ name: Publish landing page
 
 # Publishes docs/landing/** to two places on any main push touching
 # the landing content:
-#   1. s3://nebulacr-docs/landing/  (+ /index.html for the bucket root)
+#   1. s3://spectoncr-docs/landing/  (+ /index.html for the bucket root)
 #   2. gh-pages:/landing/  (served via GitHub Pages at
-#      https://bwalia.github.io/nebulacr/landing/)
+#      https://bwalia.github.io/spectoncr/landing/)
 #
 # The two jobs run in parallel but share a concurrency group so a
 # burst of commits doesn't race on the gh-pages branch (which
@@ -12,7 +12,7 @@ name: Publish landing page
 #
 # Required repo secrets:
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY — IAM user with
-#     s3:PutObject / s3:PutObjectAcl on the nebulacr-docs bucket.
+#     s3:PutObject / s3:PutObjectAcl on the spectoncr-docs bucket.
 
 on:
   push:
@@ -33,7 +33,7 @@ concurrency:
 
 env:
   AWS_REGION: eu-west-2
-  BUCKET: nebulacr-docs
+  BUCKET: spectoncr-docs
   PREFIX: landing
 
 permissions:

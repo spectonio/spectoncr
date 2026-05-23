@@ -1,15 +1,15 @@
-# OpsAPI Integration for NebulaCR
+# OpsAPI Integration for SpectonCR
 
-This directory contains the OpsAPI-side components for integrating NebulaCR with [OpsAPI](https://github.com/bwalia/opsapi) as a metadata store.
+This directory contains the OpsAPI-side components for integrating SpectonCR with [OpsAPI](https://github.com/bwalia/opsapi) as a metadata store.
 
 ## Architecture
 
 ```
-NebulaCR Registry ──webhook──> OpsAPI ──PostgreSQL──> Metadata DB
+SpectonCR Registry ──webhook──> OpsAPI ──PostgreSQL──> Metadata DB
    (image push/delete)         (REST API)             (categories, tags, etc.)
 ```
 
-NebulaCR sends webhook events on image push/delete. OpsAPI receives these events, upserts repository and image records, and provides a REST API for managing metadata (categories, labels, descriptions).
+SpectonCR sends webhook events on image push/delete. OpsAPI receives these events, upserts repository and image records, and provides a REST API for managing metadata (categories, labels, descriptions).
 
 ## Files
 
@@ -31,7 +31,7 @@ PostgreSQL migration that creates:
 
 Webhook receiver endpoint:
 
-- `POST /api/v2/registry/events` — Receives NebulaCR webhook payloads
+- `POST /api/v2/registry/events` — Receives SpectonCR webhook payloads
   - HMAC-SHA256 signature verification
   - Idempotent event processing (deduplication by event ID)
   - Auto-creates repositories and images on `manifest.push`
@@ -82,10 +82,10 @@ cp routes/registry-metadata.lua /path/to/opsapi/routes/
 Run the migration and set the webhook secret:
 
 ```bash
-export NEBULACR_WEBHOOK_SECRET="your-shared-secret"
+export SPECTONCR_WEBHOOK_SECRET="your-shared-secret"
 ```
 
-### 2. NebulaCR Side
+### 2. SpectonCR Side
 
 Configure webhooks in `config.toml` or via environment variables:
 
@@ -121,4 +121,4 @@ events = ["manifest.push", "manifest.delete"]
 }
 ```
 
-The `X-NebulaCR-Signature` header contains `sha256=<HMAC-SHA256 hex>` computed over the raw JSON body using the shared secret.
+The `X-SpectonCR-Signature` header contains `sha256=<HMAC-SHA256 hex>` computed over the raw JSON body using the shared secret.

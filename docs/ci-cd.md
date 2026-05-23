@@ -1,6 +1,6 @@
 # CI/CD integration
 
-NebulaCR's scanner exposes a live endpoint that any CI system can poll after
+SpectonCR's scanner exposes a live endpoint that any CI system can poll after
 pushing an image. Callers authenticate with a scanner API key and either pass
 or fail the build based on the policy verdict.
 
@@ -13,7 +13,7 @@ the raw value is shown **exactly once** at creation time.
 # Admin bootstrap — while legacy "system" access is still permissive,
 # you can create the first CI key unauthenticated. Disable this as
 # soon as you have the first admin key.
-curl -s -X POST https://nebulacr.example.com/admin/scanner-keys \
+curl -s -X POST https://registry.specton.io/admin/scanner-keys \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "ci-main",
@@ -23,7 +23,7 @@ curl -s -X POST https://nebulacr.example.com/admin/scanner-keys \
 ```
 
 The response includes a `key` field — store it as a CI secret (e.g.
-`NEBULACR_SCAN_KEY` in GitHub/GitLab). You won't be able to retrieve it again.
+`SPECTONCR_SCAN_KEY` in GitHub/GitLab). You won't be able to retrieve it again.
 
 ### Permission grants
 
@@ -46,16 +46,16 @@ A CI pipeline usually only needs `scan:read` + `policy:evaluate`.
 # gate-on-scan.sh — fails the build when the policy verdict is not PASS.
 set -euo pipefail
 
-: "${NEBULACR_URL:?set to https://nebulacr.example.com}"
-: "${NEBULACR_SCAN_KEY:?export from CI secret}"
+: "${SPECTONCR_URL:?set to https://registry.specton.io}"
+: "${SPECTONCR_SCAN_KEY:?export from CI secret}"
 : "${IMAGE_DIGEST:?sha256:...}"
 
 deadline=$(( $(date +%s) + 600 ))  # 10 min budget
 
 while :; do
   body=$(curl -sS --fail \
-    -H "Authorization: Bearer ${NEBULACR_SCAN_KEY}" \
-    "${NEBULACR_URL}/v2/scan/live/${IMAGE_DIGEST}")
+    -H "Authorization: Bearer ${SPECTONCR_SCAN_KEY}" \
+    "${SPECTONCR_URL}/v2/scan/live/${IMAGE_DIGEST}")
   status=$(echo "$body" | jq -r '.status')
 
   case "$status" in
@@ -104,20 +104,20 @@ jobs:
 
       - uses: docker/login-action@v3
         with:
-          registry: nebulacr.example.com
-          username: ${{ secrets.NEBULACR_USER }}
-          password: ${{ secrets.NEBULACR_PASS }}
+          registry: registry.specton.io
+          username: ${{ secrets.SPECTONCR_USER }}
+          password: ${{ secrets.SPECTONCR_PASS }}
 
       - id: build
         uses: docker/build-push-action@v6
         with:
           push: true
-          tags: nebulacr.example.com/acme/web/api:${{ github.sha }}
+          tags: registry.specton.io/acme/web/api:${{ github.sha }}
 
       - name: Wait for scan verdict
         env:
-          NEBULACR_URL: https://nebulacr.example.com
-          NEBULACR_SCAN_KEY: ${{ secrets.NEBULACR_SCAN_KEY }}
+          SPECTONCR_URL: https://registry.specton.io
+          SPECTONCR_SCAN_KEY: ${{ secrets.SPECTONCR_SCAN_KEY }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: bash docs/examples/gate-on-scan.sh
 
@@ -135,11 +135,11 @@ scan-gate:
   before_script:
     - apk add --no-cache curl jq bash
   script:
-    - NEBULACR_URL=https://nebulacr.example.com
+    - SPECTONCR_URL=https://registry.specton.io
     - export IMAGE_DIGEST=$BUILD_DIGEST
     - bash docs/examples/gate-on-scan.sh
   variables:
-    NEBULACR_SCAN_KEY: $NEBULACR_SCAN_KEY   # masked variable
+    SPECTONCR_SCAN_KEY: $SPECTONCR_SCAN_KEY   # masked variable
 ```
 
 ## 5. Rotate or revoke a key
@@ -147,11 +147,11 @@ scan-gate:
 ```bash
 # list active keys
 curl -H "Authorization: Bearer $ADMIN_KEY" \
-  https://nebulacr.example.com/admin/scanner-keys | jq .
+  https://registry.specton.io/admin/scanner-keys | jq .
 
 # revoke by id
 curl -X DELETE -H "Authorization: Bearer $ADMIN_KEY" \
-  https://nebulacr.example.com/admin/scanner-keys/$KEY_ID
+  https://registry.specton.io/admin/scanner-keys/$KEY_ID
 ```
 
 Revoked keys immediately fail lookup (the unique index on `key_hash` is

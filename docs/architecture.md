@@ -1,22 +1,22 @@
-# NebulaCR Architecture
+# SpectonCR Architecture
 
 ## 1. System Components
 
-NebulaCR is a Rust workspace with three crates that compile into two binaries.
+SpectonCR is a Rust workspace with three crates that compile into two binaries.
 
 ```
-nebulacr/
+spectoncr/
 ├── crates/
-│   ├── nebula-common/    Shared library: models, config, auth types, storage helpers
-│   ├── nebula-auth/      Binary: token issuance service (port 5001)
-│   └── nebula-registry/  Binary: OCI Distribution API service (port 5000)
+│   ├── specton-common/    Shared library: models, config, auth types, storage helpers
+│   ├── specton-auth/      Binary: token issuance service (port 5001)
+│   └── specton-registry/  Binary: OCI Distribution API service (port 5000)
 ├── config/               Example configuration files
 ├── deploy/               Helm charts and Kubernetes manifests
 ├── docs/                 Architecture, threat model, security checklist
 └── examples/             CI/CD integration examples
 ```
 
-### 1.1 nebula-common
+### 1.1 specton-common
 
 Shared library crate containing:
 
@@ -26,7 +26,7 @@ Shared library crate containing:
 - **Storage helpers** -- Path builders for blobs, manifests, tags, and uploads following the layout `<tenant>/<project>/<repo>/<type>/<reference>`
 - **Error types** -- Structured error enum (RegistryError) that maps to HTTP status codes
 
-### 1.2 nebula-auth
+### 1.2 specton-auth
 
 Stateless token issuance service built on Axum. Responsibilities:
 
@@ -45,7 +45,7 @@ Endpoints:
 | GET    | /health        | Health check                             |
 | GET    | /metrics       | Prometheus metrics                       |
 
-### 1.3 nebula-registry
+### 1.3 specton-registry
 
 OCI Distribution Specification implementation built on Axum with `object_store` for pluggable storage backends. Responsibilities:
 
@@ -76,11 +76,11 @@ Endpoints:
 
 ### 2.1 Zero-Trust Auth with OIDC
 
-NebulaCR implements a zero-trust authentication model. No long-lived secrets are stored. CI/CD systems and users authenticate using OIDC identity tokens from trusted providers (GitHub Actions, GitLab CI, Google, Azure AD, etc.).
+SpectonCR implements a zero-trust authentication model. No long-lived secrets are stored. CI/CD systems and users authenticate using OIDC identity tokens from trusted providers (GitHub Actions, GitLab CI, Google, Azure AD, etc.).
 
 ```
 ┌──────────┐       ┌──────────────┐       ┌──────────────┐
-│  CI/CD   │       │  OIDC        │       │  nebula-auth │
+│  CI/CD   │       │  OIDC        │       │  specton-auth │
 │  Runner  │       │  Provider    │       │  :5001       │
 └────┬─────┘       └──────┬───────┘       └──────┬───────┘
      │                     │                      │
@@ -115,7 +115,7 @@ Standard Docker clients use the token authentication protocol defined by the Doc
 
 ```
 ┌──────────┐       ┌──────────────┐       ┌──────────────┐
-│  Docker  │       │ nebula-      │       │  nebula-auth │
+│  Docker  │       │ specton-     │       │  specton-auth │
 │  Client  │       │ registry     │       │  :5001       │
 └────┬─────┘       │  :5000       │       └──────┬───────┘
      │              └──────┬───────┘              │
@@ -125,7 +125,7 @@ Standard Docker clients use the token authentication protocol defined by the Doc
      │  2. 401 Unauthorized│                      │
      │     WWW-Authenticate: Bearer               │
      │       realm="https://auth:5001/auth/token" │
-     │       service="nebulacr-registry"           │
+     │       service="spectoncr-registry"           │
      │       scope="repository:tenant/proj/repo:pull"
      │<────────────────────│                      │
      │                     │                      │
@@ -192,7 +192,7 @@ Response:
 
 ## 3. Storage Layout
 
-NebulaCR uses a hierarchical content-addressable storage layout. The storage backend is pluggable via the `object_store` crate (filesystem, S3, GCS, Azure Blob).
+SpectonCR uses a hierarchical content-addressable storage layout. The storage backend is pluggable via the `object_store` crate (filesystem, S3, GCS, Azure Blob).
 
 ```
 <storage_root>/
@@ -282,10 +282,10 @@ Default: authenticated users with no explicit policy get the Reader role.
 
 ### 5.1 Stateless Services
 
-Both `nebula-auth` and `nebula-registry` are designed to be stateless (or near-stateless):
+Both `specton-auth` and `specton-registry` are designed to be stateless (or near-stateless):
 
-- **nebula-auth**: All state (tenants, projects, policies) is currently in-memory. For production HA, this will be backed by a shared database (PostgreSQL) or distributed cache.
-- **nebula-registry**: Storage is delegated to the object store backend. No local state beyond in-flight uploads.
+- **specton-auth**: All state (tenants, projects, policies) is currently in-memory. For production HA, this will be backed by a shared database (PostgreSQL) or distributed cache.
+- **specton-registry**: Storage is delegated to the object store backend. No local state beyond in-flight uploads.
 
 ### 5.2 Horizontal Scaling
 
@@ -319,8 +319,8 @@ Both `nebula-auth` and `nebula-registry` are designed to be stateless (or near-s
 
 | Component      | Replicas | Resource Profile       | Notes                         |
 |----------------|----------|------------------------|-------------------------------|
-| nebula-auth    | 2-3      | 256Mi RAM, 0.5 CPU     | Behind internal ClusterIP     |
-| nebula-registry| 3-5      | 512Mi-1Gi RAM, 1 CPU   | Behind Ingress with TLS       |
+| specton-auth    | 2-3      | 256Mi RAM, 0.5 CPU     | Behind internal ClusterIP     |
+| specton-registry| 3-5      | 512Mi-1Gi RAM, 1 CPU   | Behind Ingress with TLS       |
 | Object store   | N/A      | Managed (S3/GCS)       | Cross-AZ replication          |
 | PostgreSQL     | 2-3      | 1Gi RAM, 1 CPU         | For policy/tenant state (future) |
 
@@ -358,7 +358,7 @@ All log output is structured JSON with the following fields:
 {
   "timestamp": "2026-03-24T12:00:00.000Z",
   "level": "INFO",
-  "target": "nebula_auth::handlers",
+  "target": "specton_auth::handlers",
   "message": "token issued",
   "request_id": "a1b2c3d4-...",
   "subject": "repo:org/repo:ref:refs/heads/main",

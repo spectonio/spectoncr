@@ -1,9 +1,9 @@
 -- ============================================================================
--- NebulaCR Webhook Event Receiver
+-- SpectonCR Webhook Event Receiver
 --
 -- POST /api/v2/registry/events
 --
--- Receives webhook payloads from NebulaCR and upserts image/repository
+-- Receives webhook payloads from SpectonCR and upserts image/repository
 -- metadata. Verifies HMAC-SHA256 signatures when a shared secret is configured.
 -- ============================================================================
 
@@ -56,8 +56,8 @@ app:post("/api/v2/registry/events", function(self)
   end
 
   -- Verify webhook signature
-  local webhook_secret = os.getenv("NEBULACR_WEBHOOK_SECRET") or config.nebulacr_webhook_secret
-  local signature = ngx.req.get_headers()["X-NebulaCR-Signature"]
+  local webhook_secret = os.getenv("SPECTONCR_WEBHOOK_SECRET") or config.spectoncr_webhook_secret
+  local signature = ngx.req.get_headers()["X-SpectonCR-Signature"]
 
   if not verify_signature(body, signature, webhook_secret) then
     return { status = 401, json = { error = "Invalid webhook signature" } }

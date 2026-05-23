@@ -30,12 +30,12 @@ Every storage operation records a row to `usage_events` (Postgres,
 batch-inserted in 1-second windows by a writer task to avoid
 hot-row contention). Hooks into:
 
-- `get_blob` / `head_blob` (`crates/nebula-registry/src/main.rs` —
+- `get_blob` / `head_blob` (`crates/specton-registry/src/main.rs` —
   blob serving paths)
 - `put_blob` / `complete_blob_upload`
 - `get_manifest` / `put_manifest`
 - pull-through cache miss vs. hit (already differentiated in
-  `nebula-mirror`)
+  `specton-mirror`)
 - 011 peer mesh hits (peer reports back to registry asynchronously)
 
 Row shape:
@@ -59,7 +59,7 @@ truncated; rollups kept indefinitely (cardinality is bounded:
 Cost projection:
 
 ```rust
-// crates/nebula-cost/src/lib.rs
+// crates/specton-cost/src/lib.rs
 pub struct CostModel {
     pub egress_per_gb: f64,            // dollars
     pub storage_per_gb_month: f64,
@@ -72,7 +72,7 @@ impl CostModel {
 ```
 
 Cost models per backend (S3 us-east-1, GCS, Azure Blob, on-prem)
-shipped as defaults in `nebulacr.toml`; operators override per
+shipped as defaults in `spectoncr.toml`; operators override per
 storage backend.
 
 Quota enforcement: the existing `Tenant.spec.quotas` block has
@@ -81,15 +81,15 @@ design wires those numbers to the rollup table — when a tenant
 crosses 90 % a soft warning fires (webhook + dashboard banner);
 at 100 % the request is rate-limited or rejected per quota policy.
 
-CLI: `nebulacr usage tenant <name> --since 30d`,
-`nebulacr usage project <ref> --by repository`,
-`nebulacr cost report --month 2026-05 --format csv`. MCP:
+CLI: `spectoncr usage tenant <name> --since 30d`,
+`spectoncr usage project <ref> --by repository`,
+`spectoncr cost report --month 2026-05 --format csv`. MCP:
 `get_usage`, `get_cost_projection`.
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Tenant
 spec:
   quotas:
@@ -109,7 +109,7 @@ spec:
 ```
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: CostModel
 metadata:
   name: aws-us-east-1
@@ -231,11 +231,11 @@ day of data + a configured cost model.
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| Drainer            | `crates/nebula-cost/tests/drain.rs`                    | 10k events → 60s window → assert drained    |
-| Hourly rollup      | `crates/nebula-cost/tests/rollup.rs`                   | Postgres testcontainer; idempotent re-run   |
-| Cost projection    | `crates/nebula-cost/tests/cost_model.rs`               | Known input → known dollars                 |
-| Anomaly detector   | `crates/nebula-cost/tests/anomaly.rs`                  | Synthetic series → expected alert           |
-| Quota enforcement  | `crates/nebula-registry/tests/quota_enforce.rs`        | 1k pulls → 429 at threshold                 |
+| Drainer            | `crates/specton-cost/tests/drain.rs`                    | 10k events → 60s window → assert drained    |
+| Hourly rollup      | `crates/specton-cost/tests/rollup.rs`                   | Postgres testcontainer; idempotent re-run   |
+| Cost projection    | `crates/specton-cost/tests/cost_model.rs`               | Known input → known dollars                 |
+| Anomaly detector   | `crates/specton-cost/tests/anomaly.rs`                  | Synthetic series → expected alert           |
+| Quota enforcement  | `crates/specton-registry/tests/quota_enforce.rs`        | 1k pulls → 429 at threshold                 |
 | End-to-end         | `tests/e2e/usage_e2e.sh`                               | Push/pull churn → CSV report                |
 
 ## i. Implementation slice count

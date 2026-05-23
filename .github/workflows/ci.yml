@@ -121,8 +121,8 @@ jobs:
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
-          name: nebulacr-binaries
+          name: spectoncr-binaries
           path: |
-            target/release/nebula-auth
-            target/release/nebula-registry
+            target/release/specton-auth
+            target/release/specton-registry
           retention-days: 7

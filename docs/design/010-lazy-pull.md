@@ -17,16 +17,16 @@ bytes are never read at runtime. eStargz (Google), zstd:chunked
 making the image format range-addressable, then mounting the layer
 on-demand. None of ACR, Nexus, Harbor, or Distribution-3 ship the
 indexer — operators have to run `ctr-remote image optimize` out of
-band, then upload the converted image as a separate tag. NebulaCR
+band, then upload the converted image as a separate tag. SpectonCR
 shipping this in-registry is a real differentiator: every pushed
 image becomes lazy-pullable automatically.
 
 ## b. Proposed approach
 
-New crate `nebula-lazy` with a single trait and three implementations:
+New crate `specton-lazy` with a single trait and three implementations:
 
 ```rust
-// crates/nebula-lazy/src/lib.rs
+// crates/specton-lazy/src/lib.rs
 #[async_trait]
 pub trait TocIndexer: Send + Sync {
     fn media_type(&self) -> &'static str;
@@ -52,10 +52,10 @@ pub struct SociIndexer { /* references existing layer; just builds TOC */ }
 Pipeline:
 
 1. After `complete_blob_upload` accepts a layer
-   (`crates/nebula-registry/src/main.rs:1458`), if the layer's media
+   (`crates/specton-registry/src/main.rs:1458`), if the layer's media
    type is `application/vnd.oci.image.layer.v1.tar+gzip` (or zstd),
    enqueue a `LazyIndexJob{layer_digest, target_format}` to a new
-   `nebula_lazy::Queue` (Postgres-backed, identical pattern to the
+   `specton_lazy::Queue` (Postgres-backed, identical pattern to the
    scanner queue).
 2. Worker pulls the layer once, runs all enabled indexers in
    parallel, writes:
@@ -83,14 +83,14 @@ indexed variant if available; otherwise it returns the original.
 the indexer also runs over the cached copy, so pulls of
 `registry.example.com/library/python:3.12` benefit lazily.
 
-CLI: `nebulacr lazy index <ref> --format estargz|zstd-chunked|soci`
-forces re-indexing; `nebulacr lazy status <digest>` shows TOC
+CLI: `spectoncr lazy index <ref> --format estargz|zstd-chunked|soci`
+forces re-indexing; `spectoncr lazy status <digest>` shows TOC
 availability. MCP: `lazy_status`, `lazy_reindex`.
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Project
 metadata:
   name: prod
@@ -182,7 +182,7 @@ producers.
   match, the indexed variant remains valid. If the bytes differ, the
   upstream digest changes and a new indexing job is enqueued.
 - **Lazy-aware client requests `?fmt=estargz` before indexing
-  finishes.** Returns 404 with `WWW-NebulaCR-Indexing: in-progress,
+  finishes.** Returns 404 with `WWW-SpectonCR-Indexing: in-progress,
   poll /v2/_lazy/jobs/<id>`; client falls back to plain pull.
 
 ## g. Migration story
@@ -196,11 +196,11 @@ once). Backfill cost is bounded — same code path as on-push indexing.
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| eStargz round-trip | `crates/nebula-lazy/tests/estargz_roundtrip.rs`        | Build → index → mount via stargz-snapshotter container |
-| zstd:chunked       | `crates/nebula-lazy/tests/zstd_chunked.rs`             | Trailer index validation                    |
-| SOCI artifact      | `crates/nebula-lazy/tests/soci_artifact.rs`            | Validate JSON against AWS schema            |
-| Referrers API      | `crates/nebula-registry/tests/referrers_api.rs`        | OCI conformance tests                       |
-| Range fetch        | `crates/nebula-registry/tests/range_serve.rs`          | Concurrent partial range pulls              |
+| eStargz round-trip | `crates/specton-lazy/tests/estargz_roundtrip.rs`        | Build → index → mount via stargz-snapshotter container |
+| zstd:chunked       | `crates/specton-lazy/tests/zstd_chunked.rs`             | Trailer index validation                    |
+| SOCI artifact      | `crates/specton-lazy/tests/soci_artifact.rs`            | Validate JSON against AWS schema            |
+| Referrers API      | `crates/specton-registry/tests/referrers_api.rs`        | OCI conformance tests                       |
+| Range fetch        | `crates/specton-registry/tests/range_serve.rs`          | Concurrent partial range pulls              |
 | End-to-end         | `tests/e2e/lazy_pull_e2e.sh`                           | Pull big image, measure time to /bin/sh prompt |
 
 External test deps: `containerd-stargz-grpc` snapshotter container
@@ -210,7 +210,7 @@ for eStargz validation. Pinned to a known-good image in CI.
 
 4 slices, ~4 weeks:
 
-1. `nebula-lazy` crate scaffold + `TocIndexer` trait +
+1. `specton-lazy` crate scaffold + `TocIndexer` trait +
    `EstargzIndexer` impl + schema. Indexer enqueued from
    `complete_blob_upload`, no client-facing changes yet.
 2. Referrers API (`/v2/<name>/referrers/<digest>`) + `referrers`

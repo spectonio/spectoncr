@@ -12,18 +12,18 @@
 
 ACR ships `az acr import --signed`, native cosign verification on pull, and
 keyless OIDC signing via Notation. Nexus has Sonatype Lifecycle policy
-hooks for signed-image enforcement. NebulaCR today emits a webhook on push
-(`crates/nebula-registry/src/main.rs:964`) and stops. There is no
+hooks for signed-image enforcement. SpectonCR today emits a webhook on push
+(`crates/specton-registry/src/main.rs:964`) and stops. There is no
 signature primitive, no verification on pull, and no policy CRD wiring.
 Without this, users cannot meet supply-chain compliance requirements
 (SLSA L3, FedRAMP, EU CRA).
 
 ## b. Proposed approach
 
-New crate `nebula-signing` exposing two traits:
+New crate `specton-signing` exposing two traits:
 
 ```rust
-// crates/nebula-signing/src/lib.rs
+// crates/specton-signing/src/lib.rs
 #[async_trait]
 pub trait Signer: Send + Sync {
     /// Sign the descriptor of a manifest by digest. Returns a cosign
@@ -63,7 +63,7 @@ Two impls:
 - `SigstoreSigner` / `SigstoreVerifier` using the `sigstore` crate
   (cosign-bundle compatible). Backed by a `KeyProvider` that resolves
   `cosign://<name>` → PEM bytes from Vault Transit (reuse the existing
-  `VaultConfig` at `crates/nebula-common/src/config.rs:322`) or static
+  `VaultConfig` at `crates/specton-common/src/config.rs:322`) or static
   PEM file.
 - `NotationStub` returning `SignError::NotImplemented` for now — keeps
   the trait pluggable.
@@ -72,14 +72,14 @@ Storage convention (cosign):
 
 - Signed manifest: `sha256:<digest>` already at
   `<tenant>/<project>/<repo>/manifests/<digest>` (see
-  `manifest_path` helper in `crates/nebula-common/src/storage.rs:18`).
+  `manifest_path` helper in `crates/specton-common/src/storage.rs:18`).
 - Signature artifact: pushed as a normal manifest at tag
   `sha256-<hex>.sig` in the same repo. This is the cosign convention and
   the OCI 1.1 referrers API resolves it correctly without registry-side
   knowledge.
 
 Verification hook lives in `get_manifest` after the bytes are loaded
-(today `crates/nebula-registry/src/main.rs:838`). Order:
+(today `crates/specton-registry/src/main.rs:838`). Order:
 
 1. Resolve manifest bytes (existing path).
 2. If `policy.signature_required` for this repo, fetch
@@ -87,14 +87,14 @@ Verification hook lives in `get_manifest` after the bytes are loaded
    `MANIFEST_BLOB_UNKNOWN` if not trusted.
 3. Otherwise serve normally.
 
-CLI: `nebulacr sign <ref> [--key vault://transit/cosign-key]`,
-`nebulacr verify <ref> [--policy production]`. MCP exposes `sign_image`,
+CLI: `spectoncr sign <ref> [--key vault://transit/cosign-key]`,
+`spectoncr verify <ref> [--policy production]`. MCP exposes `sign_image`,
 `verify_image`, and `list_signers`.
 
 ## c. New/changed CRDs
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: ImageVerificationPolicy
 metadata:
   name: production-must-be-signed
@@ -129,7 +129,7 @@ No change to `Project` or `Tenant`.
 | GET    | `/v2/{tenant}/{project}/{repo}/referrers/{digest}`                                                  | `repo:pull`              | OCI 1.1 referrers index                      |
 | POST   | `/v2/_verify`                                                                                       | `repo:pull` on subject   | `{ ref, policy }` → `{ trusted, signers }`   |
 
-Existing `put_manifest` (`crates/nebula-registry/src/main.rs:886`) is the
+Existing `put_manifest` (`crates/specton-registry/src/main.rs:886`) is the
 mount point for the post-sign verification hook on tagged pushes when the
 referenced manifest is itself a signature.
 
@@ -175,7 +175,7 @@ reconciler keeps `verification_policies` rows in lockstep with the CRD.
   `Retry-After: 5`; do NOT degrade to unsigned. Push of the signature
   artifact returns the same error.
 - **Verifier fetches policy from Postgres miss.** Treat as
-  `required=false` with a `WARN` log and a `nebulacr_signing_policy_miss_total`
+  `required=false` with a `WARN` log and a `spectoncr_signing_policy_miss_total`
   counter — fail open is the safe default; ops alerts on the counter.
 - **Rekor unreachable** when `requireTransparencyLogEntry=true`. Fail
   closed. Cache the last 1024 verified `(digest, log_index)` pairs in
@@ -185,7 +185,7 @@ reconciler keeps `verification_policies` rows in lockstep with the CRD.
 
 ## g. Migration story
 
-`[signing]` section of `nebulacr.toml`:
+`[signing]` section of `spectoncr.toml`:
 
 ```toml
 [signing]
@@ -198,26 +198,26 @@ When `enabled = false`, the `signatures` table is created but never read;
 the verification middleware is not mounted. Existing clients (Docker,
 crane, podman) work unchanged. To migrate: deploy with
 `enabled = true`, push signatures for existing images via
-`nebulacr sign --bulk`, then flip `require_for_pull = true`.
+`spectoncr sign --bulk`, then flip `require_for_pull = true`.
 
 ## h. Test plan
 
 | Layer                | Where                                                       | Mocks / reality                                    |
 | -------------------- | ----------------------------------------------------------- | -------------------------------------------------- |
-| Trait contracts      | `crates/nebula-signing/tests/`                              | Vector tests against fixed PEM keys                |
-| Sigstore round-trip  | `crates/nebula-signing/tests/sigstore_roundtrip.rs`         | In-memory key, no Rekor                            |
-| Vault key provider   | `crates/nebula-signing/tests/vault_provider.rs`             | `vault` testcontainer                              |
-| Manifest hook        | `crates/nebula-registry/tests/sign_pull.rs`                 | Real Postgres + filesystem store                   |
-| CRD reconciliation   | `crates/nebula-controller/tests/imageverificationpolicy.rs` | `kube` client against `kind` cluster (CI-only job) |
+| Trait contracts      | `crates/specton-signing/tests/`                              | Vector tests against fixed PEM keys                |
+| Sigstore round-trip  | `crates/specton-signing/tests/sigstore_roundtrip.rs`         | In-memory key, no Rekor                            |
+| Vault key provider   | `crates/specton-signing/tests/vault_provider.rs`             | `vault` testcontainer                              |
+| Manifest hook        | `crates/specton-registry/tests/sign_pull.rs`                 | Real Postgres + filesystem store                   |
+| CRD reconciliation   | `crates/specton-controller/tests/imageverificationpolicy.rs` | `kube` client against `kind` cluster (CI-only job) |
 | End-to-end           | `tests/e2e/sign_verify.sh`                                  | Push image → sign → pull from another node         |
 
 ## i. Implementation slice count
 
 4 slices, ~4 weeks:
 
-1. `nebula-signing` crate skeleton, `Signer`/`Verifier` traits, in-memory
+1. `specton-signing` crate skeleton, `Signer`/`Verifier` traits, in-memory
    keyed impl, unit tests.
-2. Sigstore-rs integration, Vault Transit key provider, `nebulacr sign`
+2. Sigstore-rs integration, Vault Transit key provider, `spectoncr sign`
    CLI subcommand.
 3. `signatures` table + reconciler, `POST/GET /signatures/{digest}` and
    referrers API, audit hook (depends on 005).

@@ -1,8 +1,8 @@
-# NebulaCR Showcase — Article + Video Script
+# SpectonCR Showcase — Article + Video Script
 
 A 5-minute demo that takes a viewer from `docker push` to "here's
 what your fleet looks like in Grafana." The end goal is to be the
-visible artifact for the NebulaCR launch article + a short video
+visible artifact for the SpectonCR launch article + a short video
 walkthrough.
 
 ## TL;DR
@@ -11,7 +11,7 @@ walkthrough.
 Build → docker push → CVE scan → docker pull → dashboard
 ```
 
-Every step is covered by `.github/workflows/nebulacr-showcase.yml`
+Every step is covered by `.github/workflows/spectoncr-showcase.yml`
 so anyone can fork the repo, set five secrets, and produce a green
 run with real findings. The run summary tab links to the live
 [Enterprise Overview](#dashboards) and [Operations Detail](#dashboards)
@@ -19,9 +19,9 @@ dashboards for the wider fleet view.
 
 ## Setup (~5 minutes)
 
-You need a NebulaCR instance reachable from GitHub Actions. Either:
+You need a SpectonCR instance reachable from GitHub Actions. Either:
 
-- **Use the public demo**: `demo.nebulacr.org` already has a `demo`
+- **Use the public demo**: `demo.spectoncr.org` already has a `demo`
   tenant + `showcase` project pre-provisioned. Skip the host /
   tenant secrets; the workflow defaults match.
 - **Run your own**: install via the Helm chart, expose the registry
@@ -31,16 +31,16 @@ Then add these repository secrets:
 
 | Secret               | Purpose                                          |
 | -------------------- | ------------------------------------------------ |
-| `NEBULACR_USERNAME`  | Push credential                                   |
-| `NEBULACR_PASSWORD`  | Push credential                                   |
-| `NEBULACR_HOST`      | (optional, defaults to `demo.nebulacr.org`)      |
-| `NEBULACR_TENANT`    | (optional, defaults to `demo`)                   |
-| `NEBULACR_PROJECT`   | (optional, defaults to `showcase`)               |
-| `GRAFANA_BASE`       | (optional, defaults to `https://grafana.demo.nebulacr.org`) |
+| `SPECTONCR_USERNAME`  | Push credential                                   |
+| `SPECTONCR_PASSWORD`  | Push credential                                   |
+| `SPECTONCR_HOST`      | (optional, defaults to `demo.spectoncr.org`)      |
+| `SPECTONCR_TENANT`    | (optional, defaults to `demo`)                   |
+| `SPECTONCR_PROJECT`   | (optional, defaults to `showcase`)               |
+| `GRAFANA_BASE`       | (optional, defaults to `https://grafana.demo.spectoncr.org`) |
 
 ## Running it
 
-GitHub → Actions → **NebulaCR Showcase** → Run workflow. Default
+GitHub → Actions → **SpectonCR Showcase** → Run workflow. Default
 inputs work. The run takes ~2 minutes end to end and produces the
 summary card below.
 
@@ -49,7 +49,7 @@ summary card below.
 ```
 | Stage  | Result                                              |
 | ------ | --------------------------------------------------- |
-| Build  | ✅ demo.nebulacr.org/demo/showcase/showcase-app:42  |
+| Build  | ✅ demo.spectoncr.org/demo/showcase/showcase-app:42  |
 | Push   | ✅ digest sha256:abcd…                              |
 | Scan   | critical=2 high=14 medium=23 low=8                  |
 | Policy | FAIL                                                |
@@ -65,7 +65,7 @@ Plus dashboard links pre-filtered by `?var-tenant=demo`.
    answer for "see your fleet end-to-end." Showing a dashboard with
    real signal lands the point fast.
 
-2. **What NebulaCR is** (~150 words). Single-binary OCI Distribution
+2. **What SpectonCR is** (~150 words). Single-binary OCI Distribution
    v2 + scanner + GC + cost telemetry. List the three or four
    features that matter for the article (online GC with no read-only
    window, multi-detector scanning, per-tenant cost projection,
@@ -162,8 +162,8 @@ script.
 
 ## Dashboards
 
-- [Enterprise Overview](deploy/helm/nebulacr/dashboards/nebulacr-overview.json) — exec view
-- [Operations Detail](deploy/helm/nebulacr/dashboards/nebulacr-detail.json) — SRE view
+- [Enterprise Overview](deploy/helm/spectoncr/dashboards/spectoncr-overview.json) — exec view
+- [Operations Detail](deploy/helm/spectoncr/dashboards/spectoncr-detail.json) — SRE view
 
 `docs/grafana-dashboards.md` covers installation; this doc covers
 the demo flow.

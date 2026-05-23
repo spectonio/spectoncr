@@ -1,6 +1,6 @@
-# NebulaCR Security Audit Checklist
+# SpectonCR Security Audit Checklist
 
-This document provides a comprehensive security audit checklist for NebulaCR deployments. Each item should be verified before going to production and re-checked on a regular cadence (quarterly recommended).
+This document provides a comprehensive security audit checklist for SpectonCR deployments. Each item should be verified before going to production and re-checked on a regular cadence (quarterly recommended).
 
 ---
 
@@ -140,8 +140,8 @@ This document provides a comprehensive security audit checklist for NebulaCR dep
 ### 5.2 Vulnerability Scanning
 
 - [ ] Images are scanned for known vulnerabilities on push (or via webhook)
-- [ ] Base images used in NebulaCR's own Dockerfile are regularly updated
-- [ ] Dependency audit is performed on NebulaCR's Cargo.lock (`cargo audit`)
+- [ ] Base images used in SpectonCR's own Dockerfile are regularly updated
+- [ ] Dependency audit is performed on SpectonCR's Cargo.lock (`cargo audit`)
 - [ ] SBOM (Software Bill of Materials) generation is supported
 
 ### 5.3 Build Provenance

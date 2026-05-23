@@ -1,7 +1,7 @@
 # 005 — Append-Only Hash-Chained Audit Log
 
 > **Summary.** Replace the in-memory ring buffer at
-> `crates/nebula-registry/src/audit.rs:43` with a Postgres-backed,
+> `crates/specton-registry/src/audit.rs:43` with a Postgres-backed,
 > hash-chained, append-only log. Every state-changing op (push, delete,
 > sign, promote, policy change, login, key rotation) emits one row;
 > each row's hash is `sha256(prev_hash || canonical_json(this_row))`.
@@ -10,18 +10,18 @@
 
 ## a. Problem statement
 
-ACR has Azure Activity Log; Nexus has the audit log feature. NebulaCR's
-current audit (`crates/nebula-registry/src/audit.rs`) is a `VecDeque`
+ACR has Azure Activity Log; Nexus has the audit log feature. SpectonCR's
+current audit (`crates/specton-registry/src/audit.rs`) is a `VecDeque`
 with `MAX_EVENTS = 10_000` capped — restarting drops history; an
 attacker with shell access can mutate freely; nothing exports. This is
 table-stakes for SOC 2 / ISO 27001.
 
 ## b. Proposed approach
 
-New crate `nebula-audit` exposing one trait and two impls:
+New crate `specton-audit` exposing one trait and two impls:
 
 ```rust
-// crates/nebula-audit/src/lib.rs
+// crates/specton-audit/src/lib.rs
 #[async_trait]
 pub trait AuditSink: Send + Sync {
     async fn append(&self, event: AuditEvent) -> Result<EventId, AuditError>;
@@ -52,7 +52,7 @@ DB write access cannot forge a valid hash without the key. Verifier
 walks rows in order, asserts each link.
 
 Wiring: replace every `state.audit_log.record(...)` call in
-`crates/nebula-registry/src/main.rs` (e.g. lines 866, 1023, 1129) with
+`crates/specton-registry/src/main.rs` (e.g. lines 866, 1023, 1129) with
 `state.audit.append(...)`. Adapter shim keeps `RegistryAuditEvent` for
 backwards-compat for one minor version, then delete.
 
@@ -66,8 +66,8 @@ range. Operators rotate hmac_key by inserting a "key rotation" event
 with the new key id; subsequent rows hash with the new key. Old chain
 remains verifiable with the old key.
 
-CLI: `nebulacr audit query --since 1h --actor user@x`,
-`nebulacr audit export --to s3://...`, `nebulacr audit verify --range
+CLI: `spectoncr audit query --since 1h --actor user@x`,
+`spectoncr audit export --to s3://...`, `spectoncr audit verify --range
 <from>:<to>`. MCP: `query_audit`, `verify_audit_chain`.
 
 ## c. New/changed CRDs
@@ -86,7 +86,7 @@ cluster-driven, because they touch secrets that don't belong in
 | POST   | `/v2/_audit/export`                 | `tenant:admin`    | Trigger ad-hoc export, returns S3 URL            |
 
 Existing `/api/audit` dashboard route at
-`crates/nebula-registry/src/main.rs:2908` is rewired to the new sink.
+`crates/specton-registry/src/main.rs:2908` is rewired to the new sink.
 
 ## e. Storage / Postgres schema
 
@@ -136,7 +136,7 @@ chain cannot be broken even by a misbehaving client.
 
 - **Postgres down.** Writes that must audit (push, sign, promote)
   return 503. We do not silently drop audit events. For high-traffic
-  pull (sampled 1%) we drop and increment `nebulacr_audit_dropped_total`.
+  pull (sampled 1%) we drop and increment `spectoncr_audit_dropped_total`.
 - **HMAC key rotation in flight.** New events use `hmac_key_id = "v2"`;
   verifier must hold both keys during overlap window. Stored in
   `audit_keys` table (separate, can be dumped to backup easily).
@@ -152,25 +152,25 @@ chain cannot be broken even by a misbehaving client.
 `[audit]` section, `backend = "memory"` (default — preserves current
 behaviour) or `"postgres"` (new). When `"postgres"` and the schema is
 absent, the registry refuses to start with a clear error. The shim at
-`crates/nebula-registry/src/audit.rs` now wraps both impls; existing
+`crates/specton-registry/src/audit.rs` now wraps both impls; existing
 callers see no API change for a release.
 
 ## h. Test plan
 
 | Layer            | Where                                              | Notes                                |
 | ---------------- | -------------------------------------------------- | ------------------------------------ |
-| Chain integrity  | `crates/nebula-audit/tests/chain.rs`               | Postgres testcontainer; tamper test  |
-| HMAC rotation    | `crates/nebula-audit/tests/rotation.rs`            | Two keys, mid-stream rotation        |
-| Export round-trip | `crates/nebula-audit/tests/export.rs`             | S3 testcontainer (LocalStack)        |
-| Registry hooks   | `crates/nebula-registry/tests/audit_e2e.rs`        | Push image, assert exact event row   |
-| Concurrent append | `crates/nebula-audit/tests/concurrent.rs`         | 100 parallel appends, chain valid    |
+| Chain integrity  | `crates/specton-audit/tests/chain.rs`               | Postgres testcontainer; tamper test  |
+| HMAC rotation    | `crates/specton-audit/tests/rotation.rs`            | Two keys, mid-stream rotation        |
+| Export round-trip | `crates/specton-audit/tests/export.rs`             | S3 testcontainer (LocalStack)        |
+| Registry hooks   | `crates/specton-registry/tests/audit_e2e.rs`        | Push image, assert exact event row   |
+| Concurrent append | `crates/specton-audit/tests/concurrent.rs`         | 100 parallel appends, chain valid    |
 
 ## i. Implementation slice count
 
 3 slices, ~3 weeks:
 
-1. `nebula-audit` crate, schema, `PgChainedAudit` impl, append + query.
-2. Wire into all `record(...)` call sites in `nebula-registry`,
-   `nebula-auth`, `nebula-controller`. Add HTTP routes.
+1. `specton-audit` crate, schema, `PgChainedAudit` impl, append + query.
+2. Wire into all `record(...)` call sites in `specton-registry`,
+   `specton-auth`, `specton-controller`. Add HTTP routes.
 3. Export job, Merkle checkpoint, key rotation, CLI verify, dashboard
    page wiring.

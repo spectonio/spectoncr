@@ -15,7 +15,7 @@ container-registry space: it requires the registry to be put into a
 read-only mode (`docker registry garbage-collect`) for hours; large
 deployments schedule it quarterly because the outage is expensive.
 ACR hides GC behind a managed plane but customers cannot tune it,
-trace it, or reason about reclaim latency. NebulaCR's planned 004
+trace it, or reason about reclaim latency. SpectonCR's planned 004
 inherits the same mark-and-sweep idiom and will face the same scaling
 wall once a tenant exceeds ~10 M blobs. We need GC that is **always
 on** and never asks operators to choose between fresh writes and
@@ -23,11 +23,11 @@ reclaimed bytes.
 
 ## b. Proposed approach
 
-New crate `nebula-gc` (graduated from the 004 controller module).
+New crate `specton-gc` (graduated from the 004 controller module).
 Two cooperating pieces:
 
 ```rust
-// crates/nebula-gc/src/refcount.rs
+// crates/specton-gc/src/refcount.rs
 #[async_trait]
 pub trait BlobRefCounter: Send + Sync {
     /// Bumps refcount for every blob descriptor referenced by `manifest`.
@@ -41,7 +41,7 @@ pub trait BlobRefCounter: Send + Sync {
         -> Result<(), GcError>;
 }
 
-// crates/nebula-gc/src/reaper.rs
+// crates/specton-gc/src/reaper.rs
 pub struct ContinuousReaper {
     pool: PgPool,
     store: Arc<dyn ObjectStore>,
@@ -61,9 +61,9 @@ impl ContinuousReaper {
 The refcounter wires into three places only — every manifest mutation
 goes through one of them:
 
-- `put_manifest` at `crates/nebula-registry/src/main.rs:886` — parse the
+- `put_manifest` at `crates/specton-registry/src/main.rs:886` — parse the
   manifest body, call `add_refs(tx, manifest_digest, layer_descriptors)`.
-- `delete_manifest` at `crates/nebula-registry/src/main.rs:1048` —
+- `delete_manifest` at `crates/specton-registry/src/main.rs:1048` —
   `remove_refs(tx, manifest_digest)`.
 - 006 promotion — copying a manifest into a target project also bumps
   refs in the destination tenant's bookkeeping (refcount table is
@@ -83,7 +83,7 @@ worker backs off 30 s and resumes from the cursor.
 The 004 reconciler is repurposed: it now runs weekly, walks every
 manifest row, recomputes the expected refcount per blob, and
 reconciles against `blob_refcounts`. Drift is logged as
-`nebulacr_gc_drift_total{kind="orphan"|"missing"}` and corrected. This
+`spectoncr_gc_drift_total{kind="orphan"|"missing"}` and corrected. This
 catches bugs in the refcount writers and storage corruption alike.
 
 `pending_uploads` from 004 is still required: the reaper additionally
@@ -91,9 +91,9 @@ filters out any digest whose mtime is younger than `grace` *or* whose
 ID matches an unfinished upload session. This guards the
 push-but-don't-yet-finalise window.
 
-CLI: `nebulacr gc status` (queue depth, recent reaps, drift count),
-`nebulacr gc pause` / `nebulacr gc resume` (sets a flag the reaper
-checks each cycle), `nebulacr gc reconcile --tenant acme --dry-run`
+CLI: `spectoncr gc status` (queue depth, recent reaps, drift count),
+`spectoncr gc pause` / `spectoncr gc resume` (sets a flag the reaper
+checks each cycle), `spectoncr gc reconcile --tenant acme --dry-run`
 (invokes the 004 reconciler ad-hoc). MCP: `gc_status`, `gc_pause`,
 `gc_reconcile`.
 
@@ -102,7 +102,7 @@ checks each cycle), `nebulacr gc reconcile --tenant acme --dry-run`
 The `Project.spec.gc` block from 004 gains one field; no new CRD:
 
 ```yaml
-apiVersion: nebulacr.io/v1alpha1
+apiVersion: spectoncr.io/v1alpha1
 kind: Project
 metadata:
   name: prod
@@ -207,7 +207,7 @@ index.
   manifest — `pending_uploads` covers that gap.
 - **Refcount underflow.** Defensive `CHECK (refcount >= 0)` on the
   column; any underflow returns a 500 to the caller and emits
-  `nebulacr_gc_underflow_total`. Reconciler corrects on next pass.
+  `spectoncr_gc_underflow_total`. Reconciler corrects on next pass.
 - **Reaper crash mid-delete.** The storage delete is best-effort; the
   refcount row deletion is the source of truth. Reconciler detects
   storage objects with no refcount row (`kind='orphan'`) and reaps.
@@ -219,14 +219,14 @@ index.
 
 ## g. Migration story
 
-`[gc.online]` section in `nebulacr.toml`, `enabled = false` ships a
+`[gc.online]` section in `spectoncr.toml`, `enabled = false` ships a
 no-op; the schema is created but the reaper task is not spawned and
 the manifest paths skip the refcount writes (cfg-gated).
 
 Enabling on an existing registry requires a one-time backfill:
 
 ```bash
-nebulacr gc reconcile --tenant '*' --backfill
+spectoncr gc reconcile --tenant '*' --backfill
 ```
 
 This runs the reconciler in its `populate-from-empty` mode: every
@@ -240,19 +240,19 @@ starts draining the zero-refcount tail.
 
 | Layer              | Where                                                  | Notes                                       |
 | ------------------ | ------------------------------------------------------ | ------------------------------------------- |
-| Refcount unit      | `crates/nebula-gc/tests/refcount_tx.rs`                | Postgres testcontainer, parallel writers   |
-| Reaper grace       | `crates/nebula-gc/tests/reaper_grace.rs`               | Asserts in-grace zero-refcount blob survives |
-| Reconciler drift   | `crates/nebula-gc/tests/reconcile_drift.rs`            | Plant orphan + missing rows; assert correction |
-| Backfill           | `crates/nebula-gc/tests/backfill.rs`                   | Empty refcount table + manifest fixtures    |
+| Refcount unit      | `crates/specton-gc/tests/refcount_tx.rs`                | Postgres testcontainer, parallel writers   |
+| Reaper grace       | `crates/specton-gc/tests/reaper_grace.rs`               | Asserts in-grace zero-refcount blob survives |
+| Reconciler drift   | `crates/specton-gc/tests/reconcile_drift.rs`            | Plant orphan + missing rows; assert correction |
+| Backfill           | `crates/specton-gc/tests/backfill.rs`                   | Empty refcount table + manifest fixtures    |
 | End-to-end         | `tests/e2e/online_gc_e2e.sh`                           | Push/delete loop + assert reaper drains     |
-| Crash recovery     | `crates/nebula-gc/tests/crash_recovery.rs`             | Kill reaper mid-loop; assert no double-delete |
-| HA (multi-reaper)  | `crates/nebula-gc/tests/ha_skip_locked.rs`             | Two reapers, one queue, no duplicate work   |
+| Crash recovery     | `crates/specton-gc/tests/crash_recovery.rs`             | Kill reaper mid-loop; assert no double-delete |
+| HA (multi-reaper)  | `crates/specton-gc/tests/ha_skip_locked.rs`             | Two reapers, one queue, no duplicate work   |
 
 ## i. Implementation slice count
 
 4 slices, ~4 weeks:
 
-1. `nebula-gc` crate scaffold + schema + `BlobRefCounter` trait +
+1. `specton-gc` crate scaffold + schema + `BlobRefCounter` trait +
    Postgres impl + manifest path wiring (gated by cfg flag, default
    off).
 2. Continuous reaper with `FOR UPDATE SKIP LOCKED`, token bucket,

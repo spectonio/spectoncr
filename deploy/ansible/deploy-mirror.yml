@@ -1,73 +1,73 @@
 ---
-# NebulaCR Mirror - Native deployment via Ansible
-# Installs nebula-registry and nebula-auth as systemd services on a bare-metal server.
+# SpectonCR Mirror - Native deployment via Ansible
+# Installs specton-registry and specton-auth as systemd services on a bare-metal server.
 #
 # Usage:
 #   ansible-playbook -i inventory.yml deploy-mirror.yml
-#   ansible-playbook -i inventory.yml deploy-mirror.yml -e nebulacr_version=latest
+#   ansible-playbook -i inventory.yml deploy-mirror.yml -e spectoncr_version=latest
 #
 # The playbook:
-#   1. Downloads the NebulaCR container image from GHCR
-#   2. Extracts the binaries (nebula-registry, nebula-auth)
+#   1. Downloads the SpectonCR container image from GHCR
+#   2. Extracts the binaries (specton-registry, specton-auth)
 #   3. Generates JWT keys if missing
 #   4. Creates systemd services
 #   5. Starts and enables both services
 
-- name: Deploy NebulaCR Mirror (native)
+- name: Deploy SpectonCR Mirror (native)
   hosts: mirror
   become: true
   vars:
-    nebulacr_image: "ghcr.io/osterley/nebulacr:latest"
-    nebulacr_version: "latest"
-    nebulacr_user: nebulacr
-    nebulacr_group: nebulacr
-    registry_port: "{{ nebulacr_registry_port | default('5050') }}"
-    auth_port: "{{ nebulacr_auth_port | default('5051') }}"
-    metrics_port: "{{ nebulacr_metrics_port | default('9095') }}"
-    data_dir: "{{ nebulacr_data_dir | default('/var/lib/nebulacr/data') }}"
-    config_dir: "{{ nebulacr_config_dir | default('/etc/nebulacr') }}"
-    keys_dir: "{{ nebulacr_keys_dir | default('/etc/nebulacr/keys') }}"
+    spectoncr_image: "ghcr.io/spectonio/spectoncr:latest"
+    spectoncr_version: "latest"
+    spectoncr_user: spectoncr
+    spectoncr_group: spectoncr
+    registry_port: "{{ spectoncr_registry_port | default('5050') }}"
+    auth_port: "{{ spectoncr_auth_port | default('5051') }}"
+    metrics_port: "{{ spectoncr_metrics_port | default('9095') }}"
+    data_dir: "{{ spectoncr_data_dir | default('/var/lib/spectoncr/data') }}"
+    config_dir: "{{ spectoncr_config_dir | default('/etc/spectoncr') }}"
+    keys_dir: "{{ spectoncr_keys_dir | default('/etc/spectoncr/keys') }}"
     bin_dir: /usr/local/bin
-    primary_registry: "acc-nebulacr.diytaxreturn.co.uk"
+    primary_registry: "acc-spectoncr.diytaxreturn.co.uk"
 
     # ── Observability stack (Prometheus + Grafana) ───────────────
     # Toggle the entire observability stack on/off. When true, both
     # services run as docker containers managed by systemd-via-docker
     # (no docker-compose dependency). Default false so existing
     # deployments are no-op upgrades.
-    observability_enabled: "{{ nebulacr_observability_enabled | default(false) }}"
+    observability_enabled: "{{ spectoncr_observability_enabled | default(false) }}"
     prometheus_image: "prom/prometheus:v2.55.1"
-    prometheus_port: "{{ nebulacr_prometheus_port | default('9091') }}"
-    prometheus_dir: /var/lib/nebulacr/prometheus
+    prometheus_port: "{{ spectoncr_prometheus_port | default('9091') }}"
+    prometheus_dir: /var/lib/spectoncr/prometheus
     grafana_image: "grafana/grafana:11.3.1"
-    grafana_port: "{{ nebulacr_grafana_port | default('13002') }}"
-    grafana_dir: /var/lib/nebulacr/grafana
-    grafana_admin_user: "{{ nebulacr_grafana_admin_user | default('admin') }}"
+    grafana_port: "{{ spectoncr_grafana_port | default('13002') }}"
+    grafana_dir: /var/lib/spectoncr/grafana
+    grafana_admin_user: "{{ spectoncr_grafana_admin_user | default('admin') }}"
     # Override in inventory or with -e — admin/admin is for demos.
-    grafana_admin_password: "{{ nebulacr_grafana_admin_password | default('admin') }}"
+    grafana_admin_password: "{{ spectoncr_grafana_admin_password | default('admin') }}"
 
   tasks:
     # ── System user ──────────────────────────────────────────
-    - name: Create nebulacr system user
+    - name: Create spectoncr system user
       user:
-        name: "{{ nebulacr_user }}"
-        group: "{{ nebulacr_group }}"
+        name: "{{ spectoncr_user }}"
+        group: "{{ spectoncr_group }}"
         system: true
         shell: /sbin/nologin
         create_home: false
       register: user_created
       ignore_errors: true
 
-    - name: Create nebulacr group
+    - name: Create spectoncr group
       group:
-        name: "{{ nebulacr_group }}"
+        name: "{{ spectoncr_group }}"
         system: true
       when: user_created is failed
 
     - name: Retry create user after group
       user:
-        name: "{{ nebulacr_user }}"
-        group: "{{ nebulacr_group }}"
+        name: "{{ spectoncr_user }}"
+        group: "{{ spectoncr_group }}"
         system: true
         shell: /sbin/nologin
         create_home: false
@@ -78,8 +78,8 @@
       file:
         path: "{{ item }}"
         state: directory
-        owner: "{{ nebulacr_user }}"
-        group: "{{ nebulacr_group }}"
+        owner: "{{ spectoncr_user }}"
+        group: "{{ spectoncr_group }}"
         mode: "0750"
       loop:
         - "{{ data_dir }}"
@@ -87,28 +87,28 @@
         - "{{ keys_dir }}"
 
     # ── Extract binaries from Docker image ───────────────────
-    - name: Pull NebulaCR image
-      command: docker pull {{ nebulacr_image }}
+    - name: Pull SpectonCR image
+      command: docker pull {{ spectoncr_image }}
       register: pull_result
       changed_when: "'Downloaded newer image' in pull_result.stdout or 'Pull complete' in pull_result.stdout"
 
     - name: Create temp container to extract binaries
-      command: docker create --name nebulacr-extract {{ nebulacr_image }}
+      command: docker create --name spectoncr-extract {{ spectoncr_image }}
       register: create_result
       changed_when: true
 
-    - name: Extract nebula-registry binary
-      command: docker cp nebulacr-extract:/usr/local/bin/nebula-registry {{ bin_dir }}/nebula-registry
+    - name: Extract specton-registry binary
+      command: docker cp spectoncr-extract:/usr/local/bin/specton-registry {{ bin_dir }}/specton-registry
       changed_when: true
-      notify: restart nebulacr-registry
+      notify: restart spectoncr-registry
 
-    - name: Extract nebula-auth binary
-      command: docker cp nebulacr-extract:/usr/local/bin/nebula-auth {{ bin_dir }}/nebula-auth
+    - name: Extract specton-auth binary
+      command: docker cp spectoncr-extract:/usr/local/bin/specton-auth {{ bin_dir }}/specton-auth
       changed_when: true
-      notify: restart nebulacr-auth
+      notify: restart spectoncr-auth
 
     - name: Remove temp container
-      command: docker rm nebulacr-extract
+      command: docker rm spectoncr-extract
       changed_when: true
 
     - name: Set binary permissions
@@ -118,8 +118,8 @@
         owner: root
         group: root
       loop:
-        - "{{ bin_dir }}/nebula-registry"
-        - "{{ bin_dir }}/nebula-auth"
+        - "{{ bin_dir }}/specton-registry"
+        - "{{ bin_dir }}/specton-auth"
 
     # ── JWT keys ─────────────────────────────────────────────
     - name: Check if JWT keys exist
@@ -134,7 +134,7 @@
         # Create signing/verification aliases
         cp {{ keys_dir }}/private.pem {{ keys_dir }}/signing.pem
         cp {{ keys_dir }}/public.pem {{ keys_dir }}/verification.pem
-        chown {{ nebulacr_user }}:{{ nebulacr_group }} {{ keys_dir }}/*.pem
+        chown {{ spectoncr_user }}:{{ spectoncr_group }} {{ keys_dir }}/*.pem
         chmod 640 {{ keys_dir }}/private.pem {{ keys_dir }}/signing.pem
         chmod 644 {{ keys_dir }}/public.pem {{ keys_dir }}/verification.pem
       when: not jwt_key.stat.exists
@@ -143,8 +143,8 @@
     - name: Write registry config
       copy:
         dest: "{{ config_dir }}/registry.yaml"
-        owner: "{{ nebulacr_user }}"
-        group: "{{ nebulacr_group }}"
+        owner: "{{ spectoncr_user }}"
+        group: "{{ spectoncr_group }}"
         mode: "0640"
         content: |
           server:
@@ -177,7 +177,7 @@
                 url: "https://quay.io"
               registry.k8s.io:
                 url: "https://registry.k8s.io"
-              # Pull-through from primary NebulaCR
+              # Pull-through from primary SpectonCR
               primary:
                 url: "https://{{ primary_registry }}"
 
@@ -204,25 +204,25 @@
                 is_primary: true
                 priority: 1
               - name: "srv1423968-mirror"
-                endpoint: "https://acc-nebulacr-mirror.diytaxreturn.co.uk"
+                endpoint: "https://acc-spectoncr-mirror.diytaxreturn.co.uk"
                 internal_endpoint: "http://127.0.0.1:5002"
                 is_primary: false
                 priority: 2
-      notify: restart nebulacr-registry
+      notify: restart spectoncr-registry
 
     - name: Write auth config
       copy:
         dest: "{{ config_dir }}/auth.yaml"
-        owner: "{{ nebulacr_user }}"
-        group: "{{ nebulacr_group }}"
+        owner: "{{ spectoncr_user }}"
+        group: "{{ spectoncr_group }}"
         mode: "0640"
         content: |
           server:
             auth_listen_addr: "0.0.0.0:{{ auth_port }}"
 
           auth:
-            issuer: "nebulacr"
-            audience: "nebulacr-registry"
+            issuer: "spectoncr"
+            audience: "spectoncr-registry"
             signing_algorithm: "RS256"
             signing_key_path: "{{ keys_dir }}/signing.pem"
             verification_key_path: "{{ keys_dir }}/verification.pem"
@@ -233,54 +233,54 @@
 
           rate_limit:
             token_issue_rpm: 60
-      notify: restart nebulacr-auth
+      notify: restart spectoncr-auth
 
     # ── Systemd services ─────────────────────────────────────
-    - name: Install nebula-registry systemd service
+    - name: Install specton-registry systemd service
       copy:
-        dest: /etc/systemd/system/nebulacr-registry.service
+        dest: /etc/systemd/system/spectoncr-registry.service
         mode: "0644"
         content: |
           [Unit]
-          Description=NebulaCR OCI Registry
-          Documentation=https://github.com/bwalia/nebulacr
-          After=network-online.target nebulacr-auth.service
+          Description=SpectonCR OCI Registry
+          Documentation=https://github.com/spectonio/spectoncr
+          After=network-online.target spectoncr-auth.service
           Wants=network-online.target
-          Requires=nebulacr-auth.service
+          Requires=spectoncr-auth.service
 
           [Service]
           Type=simple
-          User={{ nebulacr_user }}
-          Group={{ nebulacr_group }}
-          ExecStart={{ bin_dir }}/nebula-registry --config={{ config_dir }}/registry.yaml
+          User={{ spectoncr_user }}
+          Group={{ spectoncr_group }}
+          ExecStart={{ bin_dir }}/specton-registry --config={{ config_dir }}/registry.yaml
           Restart=on-failure
           RestartSec=5
           LimitNOFILE=65536
 
           Environment=RUST_LOG=info
-          Environment=NEBULACR_AUTH_SERVICE=nebulacr-registry
-          Environment=NEBULACR_AUTH_SERVICE_URL=http://127.0.0.1:{{ auth_port }}
+          Environment=SPECTONCR_AUTH_SERVICE=spectoncr-registry
+          Environment=SPECTONCR_AUTH_SERVICE_URL=http://127.0.0.1:{{ auth_port }}
 
           [Install]
           WantedBy=multi-user.target
-      notify: restart nebulacr-registry
+      notify: restart spectoncr-registry
 
-    - name: Install nebula-auth systemd service
+    - name: Install specton-auth systemd service
       copy:
-        dest: /etc/systemd/system/nebulacr-auth.service
+        dest: /etc/systemd/system/spectoncr-auth.service
         mode: "0644"
         content: |
           [Unit]
-          Description=NebulaCR Auth Service
-          Documentation=https://github.com/bwalia/nebulacr
+          Description=SpectonCR Auth Service
+          Documentation=https://github.com/spectonio/spectoncr
           After=network-online.target
           Wants=network-online.target
 
           [Service]
           Type=simple
-          User={{ nebulacr_user }}
-          Group={{ nebulacr_group }}
-          ExecStart={{ bin_dir }}/nebula-auth --config={{ config_dir }}/auth.yaml
+          User={{ spectoncr_user }}
+          Group={{ spectoncr_group }}
+          ExecStart={{ bin_dir }}/specton-auth --config={{ config_dir }}/auth.yaml
           Restart=on-failure
           RestartSec=5
           LimitNOFILE=65536
@@ -289,7 +289,7 @@
 
           [Install]
           WantedBy=multi-user.target
-      notify: restart nebulacr-auth
+      notify: restart spectoncr-auth
 
     - name: Reload systemd
       systemd:
@@ -301,8 +301,8 @@
         state: started
         enabled: true
       loop:
-        - nebulacr-auth
-        - nebulacr-registry
+        - spectoncr-auth
+        - spectoncr-registry
 
     # ── Health check ─────────────────────────────────────────
     - name: Wait for registry to be ready
@@ -316,7 +316,7 @@
 
     - name: Display health status
       debug:
-        msg: "NebulaCR Mirror is healthy on port {{ registry_port }}: {{ health.json }}"
+        msg: "SpectonCR Mirror is healthy on port {{ registry_port }}: {{ health.json }}"
 
     # ── Observability: Prometheus + Grafana ───────────────────────
     # Runs both as docker containers reusing the host's docker daemon
@@ -346,7 +346,7 @@
         owner: root
         group: root
         mode: "0644"
-        # The mirror's nebulacr binaries listen on the host network
+        # The mirror's spectoncr binaries listen on the host network
         # at registry_port + auth_port, both of which serve /metrics.
         # Prometheus uses host.docker.internal — the docker bridge
         # gateway hostname — to reach them without a custom network.
@@ -355,24 +355,24 @@
             scrape_interval: 15s
             evaluation_interval: 15s
             external_labels:
-              cluster: nebulacr-mirror
+              cluster: spectoncr-mirror
               host: {{ ansible_hostname }}
 
           scrape_configs:
-            - job_name: nebulacr-registry
+            - job_name: spectoncr-registry
               metrics_path: /metrics
               static_configs:
                 - targets:
                     - host.docker.internal:{{ registry_port }}
                   labels:
-                    service: nebulacr-registry
-            - job_name: nebulacr-auth
+                    service: spectoncr-registry
+            - job_name: spectoncr-auth
               metrics_path: /metrics
               static_configs:
                 - targets:
                     - host.docker.internal:{{ auth_port }}
                   labels:
-                    service: nebulacr-auth
+                    service: spectoncr-auth
             - job_name: prometheus
               static_configs:
                 - targets:
@@ -393,7 +393,7 @@
               uid: prometheus
               type: prometheus
               access: proxy
-              url: http://nebulacr-prometheus:9090
+              url: http://spectoncr-prometheus:9090
               isDefault: true
               editable: false
               jsonData:
@@ -404,16 +404,16 @@
     - name: Observability — Grafana dashboard provider
       when: observability_enabled | bool
       copy:
-        dest: "{{ grafana_dir }}/provisioning/dashboards/nebulacr.yml"
+        dest: "{{ grafana_dir }}/provisioning/dashboards/spectoncr.yml"
         owner: root
         group: root
         mode: "0644"
         content: |
           apiVersion: 1
           providers:
-            - name: NebulaCR
+            - name: SpectonCR
               orgId: 1
-              folder: NebulaCR
+              folder: SpectonCR
               type: file
               disableDeletion: false
               allowUiUpdates: true
@@ -422,7 +422,7 @@
                 path: /var/lib/grafana/dashboards
       notify: restart grafana
 
-    # Pull each NebulaCR dashboard JSON from the source repo on the
+    # Pull each SpectonCR dashboard JSON from the source repo on the
     # control node and ship to the mirror. The same files the Helm
     # chart ConfigMaps emit, kept in deploy/observability for the
     # docker-compose stack.
@@ -441,7 +441,7 @@
     - name: Observability — Prometheus container
       when: observability_enabled | bool
       docker_container:
-        name: nebulacr-prometheus
+        name: spectoncr-prometheus
         image: "{{ prometheus_image }}"
         restart_policy: unless-stopped
         published_ports:
@@ -449,21 +449,21 @@
         volumes:
           - "{{ prometheus_dir }}/prometheus.yml:/etc/prometheus/prometheus.yml:ro"
           - "{{ prometheus_dir }}/rules:/etc/prometheus/rules:ro"
-          - "nebulacr-prometheus-data:/prometheus"
+          - "spectoncr-prometheus-data:/prometheus"
         command:
           - --config.file=/etc/prometheus/prometheus.yml
           - --storage.tsdb.path=/prometheus
           - --storage.tsdb.retention.time=15d
           - --web.enable-lifecycle
         # host.docker.internal must resolve so prometheus can scrape
-        # the host-network nebulacr binaries.
+        # the host-network spectoncr binaries.
         etc_hosts:
           host.docker.internal: host-gateway
 
     - name: Observability — Grafana container
       when: observability_enabled | bool
       docker_container:
-        name: nebulacr-grafana
+        name: spectoncr-grafana
         image: "{{ grafana_image }}"
         restart_policy: unless-stopped
         published_ports:
@@ -476,11 +476,11 @@
         volumes:
           - "{{ grafana_dir }}/provisioning:/etc/grafana/provisioning:ro"
           - "{{ grafana_dir }}/dashboards:/var/lib/grafana/dashboards:ro"
-          - "nebulacr-grafana-data:/var/lib/grafana"
+          - "spectoncr-grafana-data:/var/lib/grafana"
         # Connect both containers to the same docker bridge so
-        # Grafana can resolve `nebulacr-prometheus` by name.
+        # Grafana can resolve `spectoncr-prometheus` by name.
         networks:
-          - name: nebulacr-obs
+          - name: spectoncr-obs
 
     - name: Observability — wait for Grafana
       when: observability_enabled | bool
@@ -501,26 +501,26 @@
             Prometheus → http://{{ ansible_default_ipv4.address }}:{{ prometheus_port }}/
 
   handlers:
-    - name: restart nebulacr-auth
+    - name: restart spectoncr-auth
       systemd:
-        name: nebulacr-auth
+        name: spectoncr-auth
         state: restarted
 
-    - name: restart nebulacr-registry
+    - name: restart spectoncr-registry
       systemd:
-        name: nebulacr-registry
+        name: spectoncr-registry
         state: restarted
 
     - name: restart prometheus
       docker_container:
-        name: nebulacr-prometheus
+        name: spectoncr-prometheus
         state: started
         restart: true
       when: observability_enabled | bool
 
     - name: restart grafana
       docker_container:
-        name: nebulacr-grafana
+        name: spectoncr-grafana
         state: started
         restart: true
       when: observability_enabled | bool

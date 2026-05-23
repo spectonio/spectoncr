@@ -1,34 +1,35 @@
 [workspace]
 members = [
-    "crates/nebula-common",
-    "crates/nebula-auth",
-    "crates/nebula-registry",
-    "crates/nebula-controller",
-    "crates/nebula-resilience",
-    "crates/nebula-mirror",
-    "crates/nebula-replication",
-    "crates/nebula-db",
-    "crates/nebula-ai",
-    "crates/nebula-scanner",
-    "crates/nebula-gc",
-    "crates/nebula-lazy",
-    "crates/nebula-peer",
-    "crates/nebula-import",
-    "crates/nebula-ephemeral",
-    "crates/nebula-attest",
-    "crates/nebula-artifact-types",
-    "crates/nebula-cost",
-    "crates/nebula-rebuild",
-    "crates/nebula-pilot",
+    "crates/specton-common",
+    "crates/specton-auth",
+    "crates/specton-registry",
+    "crates/specton-controller",
+    "crates/specton-resilience",
+    "crates/specton-mirror",
+    "crates/specton-replication",
+    "crates/specton-db",
+    "crates/specton-ai",
+    "crates/specton-scanner",
+    "crates/specton-gc",
+    "crates/specton-lazy",
+    "crates/specton-peer",
+    "crates/specton-import",
+    "crates/specton-ephemeral",
+    "crates/specton-attest",
+    "crates/specton-artifact-types",
+    "crates/specton-cost",
+    "crates/specton-rebuild",
+    "crates/specton-pilot",
 ]
 resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-authors = ["NebulaCR Contributors"]
+authors = ["Specton <hello@specton.io>"]
 license = "Apache-2.0"
-repository = "https://github.com/nebulacr/nebulacr"
+homepage = "https://specton.io"
+repository = "https://github.com/spectonio/spectoncr"
 
 [workspace.dependencies]
 # Async runtime
@@ -100,26 +101,26 @@ k8s-openapi = { version = "0.24", features = ["latest"] }
 schemars = "0.8"
 
 # Internal crates
-nebula-common = { path = "crates/nebula-common" }
-nebula-auth = { path = "crates/nebula-auth" }
-nebula-registry = { path = "crates/nebula-registry" }
-nebula-controller = { path = "crates/nebula-controller" }
-nebula-resilience = { path = "crates/nebula-resilience" }
-nebula-mirror = { path = "crates/nebula-mirror" }
-nebula-replication = { path = "crates/nebula-replication" }
-nebula-db = { path = "crates/nebula-db" }
-nebula-ai = { path = "crates/nebula-ai" }
-nebula-scanner = { path = "crates/nebula-scanner" }
-nebula-gc = { path = "crates/nebula-gc" }
-nebula-lazy = { path = "crates/nebula-lazy" }
-nebula-peer = { path = "crates/nebula-peer" }
-nebula-import = { path = "crates/nebula-import" }
-nebula-ephemeral = { path = "crates/nebula-ephemeral" }
-nebula-attest = { path = "crates/nebula-attest" }
-nebula-artifact-types = { path = "crates/nebula-artifact-types" }
-nebula-cost = { path = "crates/nebula-cost" }
-nebula-rebuild = { path = "crates/nebula-rebuild" }
-nebula-pilot = { path = "crates/nebula-pilot" }
+specton-common = { path = "crates/specton-common" }
+specton-auth = { path = "crates/specton-auth" }
+specton-registry = { path = "crates/specton-registry" }
+specton-controller = { path = "crates/specton-controller" }
+specton-resilience = { path = "crates/specton-resilience" }
+specton-mirror = { path = "crates/specton-mirror" }
+specton-replication = { path = "crates/specton-replication" }
+specton-db = { path = "crates/specton-db" }
+specton-ai = { path = "crates/specton-ai" }
+specton-scanner = { path = "crates/specton-scanner" }
+specton-gc = { path = "crates/specton-gc" }
+specton-lazy = { path = "crates/specton-lazy" }
+specton-peer = { path = "crates/specton-peer" }
+specton-import = { path = "crates/specton-import" }
+specton-ephemeral = { path = "crates/specton-ephemeral" }
+specton-attest = { path = "crates/specton-attest" }
+specton-artifact-types = { path = "crates/specton-artifact-types" }
+specton-cost = { path = "crates/specton-cost" }
+specton-rebuild = { path = "crates/specton-rebuild" }
+specton-pilot = { path = "crates/specton-pilot" }
 
 # Scanner deps
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "migrate"] }
