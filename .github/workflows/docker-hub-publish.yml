@@ -67,6 +67,7 @@ jobs:
             SHA="${GITHUB_SHA::7}"
             TAGS="${DOCKERHUB_REPO}:edge"
             TAGS="${TAGS},${DOCKERHUB_REPO}:${SHA}"
+            TAGS="${TAGS},${DOCKERHUB_REPO}:latest"
             TAGS="${TAGS},${GHCR_REPO}:edge"
             TAGS="${TAGS},${GHCR_REPO}:${SHA}"
             TAGS="${TAGS},${GHCR_REPO}:latest"
