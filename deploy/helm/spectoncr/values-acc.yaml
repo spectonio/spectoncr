@@ -4,7 +4,7 @@ auth:
     # GHCR package is private and the k3s cluster has no pull secret
     # for it. Pull from the public Docker Hub mirror instead, which
     # the docker-hub-publish workflow refreshes on every main push.
-    repository: specton/spectoncr
+    repository: bwalia/spectoncr
     tag: "latest"
   replicas: 2
   resources:
@@ -84,7 +84,7 @@ rateLimiting:
   requestsPerSecond: 200
 registry:
   image:
-    repository: specton/spectoncr
+    repository: bwalia/spectoncr
     tag: "latest"
   replicas: 1
   nodeSelector:
