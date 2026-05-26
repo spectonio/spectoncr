@@ -42,7 +42,7 @@ ingress:
   authPath: /auth
   className: wslproxy
   enabled: true
-  host: registry.specton.io
+  host: acc-spectoncr.diytaxreturn.co.uk
   registryPath: /v2
   tls:
     enabled: true
