@@ -501,7 +501,9 @@ fn is_store_not_found(err: &object_store::Error) -> bool {
 /// mirror service consumes. Unknown or missing modes fall back to
 /// `DefaultTenantOnly`, which is the safe default that keeps private
 /// projects out of the upstream path.
-fn mirror_scope_from_config(cfg: Option<&specton_common::config::MirrorScopeConfig>) -> MirrorScope {
+fn mirror_scope_from_config(
+    cfg: Option<&specton_common::config::MirrorScopeConfig>,
+) -> MirrorScope {
     let Some(cfg) = cfg else {
         return MirrorScope::default();
     };

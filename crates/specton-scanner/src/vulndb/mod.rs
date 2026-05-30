@@ -13,12 +13,12 @@ use crate::model::Vulnerability;
 use crate::sbom::Package;
 
 pub mod ingest;
-pub mod specton;
 pub mod osv;
 pub mod severity;
+pub mod specton;
 
-pub use specton::SpectonVulnDb;
 pub use osv::OsvClient;
+pub use specton::SpectonVulnDb;
 
 #[async_trait]
 pub trait VulnDb: Send + Sync {

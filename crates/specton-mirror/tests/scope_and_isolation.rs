@@ -23,12 +23,12 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use bytes::Bytes;
+use object_store::memory::InMemory;
+use object_store::{ObjectStore, path::Path as StorePath};
 use specton_common::storage::blob_path;
 use specton_mirror::service::{MirrorConfig, MirrorScope};
 use specton_mirror::upstream::{UpstreamConfig, UpstreamError};
 use specton_mirror::{MirrorError, MirrorService};
-use object_store::memory::InMemory;
-use object_store::{ObjectStore, path::Path as StorePath};
 
 // ── Scope-level unit tests ──────────────────────────────────────────────────
 

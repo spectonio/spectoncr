@@ -22,7 +22,7 @@ use crate::settings::ImageSettingsStore;
 use crate::store::{EphemeralStore, RedisStore};
 use crate::suppress::Suppressions;
 use crate::vulndb::ingest::{Ingester, OsvIngester, spawn_scheduler};
-use crate::vulndb::{SpectonVulnDb, OsvClient, VulnDb};
+use crate::vulndb::{OsvClient, SpectonVulnDb, VulnDb};
 use crate::worker::Worker;
 
 pub struct ScannerRuntime {

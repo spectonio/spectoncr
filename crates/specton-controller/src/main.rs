@@ -752,8 +752,8 @@ async fn main() -> anyhow::Result<()> {
 
     let client = Client::try_default().await?;
 
-    let auth_service_url =
-        std::env::var("AUTH_SERVICE_URL").unwrap_or_else(|_| "http://specton-auth:8080".to_string());
+    let auth_service_url = std::env::var("AUTH_SERVICE_URL")
+        .unwrap_or_else(|_| "http://specton-auth:8080".to_string());
 
     let ctx = Arc::new(Ctx {
         client: client.clone(),
