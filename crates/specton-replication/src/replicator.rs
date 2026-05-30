@@ -1,6 +1,6 @@
 use metrics::{counter, gauge, histogram};
-use specton_resilience::{CircuitBreaker, CircuitBreakerConfig, RetryPolicy};
 use object_store::{ObjectStore, path::Path as StorePath};
+use specton_resilience::{CircuitBreaker, CircuitBreakerConfig, RetryPolicy};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;

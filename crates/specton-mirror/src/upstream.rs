@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use metrics::{counter, histogram};
-use specton_resilience::{CircuitBreaker, CircuitBreakerConfig, RetryPolicy};
 use serde::{Deserialize, Serialize};
+use specton_resilience::{CircuitBreaker, CircuitBreakerConfig, RetryPolicy};
 use tracing::{debug, info};
 
 fn record_upstream_outcome(

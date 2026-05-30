@@ -4,9 +4,9 @@ use std::sync::Arc;
 use bytes::Bytes;
 use chrono::Utc;
 use metrics::counter;
-use specton_common::storage::{blob_path, manifest_path, sha256_digest};
 use object_store::{ObjectStore, path::Path as StorePath};
 use serde::{Deserialize, Serialize};
+use specton_common::storage::{blob_path, manifest_path, sha256_digest};
 use tracing::{debug, info, warn};
 
 use crate::cache::{CacheEntry, CacheManager};
@@ -256,8 +256,9 @@ impl MirrorService {
 
                     // If reference is a tag, create tag link
                     if !reference.starts_with("sha256:") {
-                        let tag_path =
-                            specton_common::storage::tag_link_path(tenant, project, name, reference);
+                        let tag_path = specton_common::storage::tag_link_path(
+                            tenant, project, name, reference,
+                        );
                         let tag_store_path = StorePath::from(tag_path);
                         if let Err(e) = self
                             .local_store
