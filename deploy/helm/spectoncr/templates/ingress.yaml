@@ -3,9 +3,13 @@
   Ingress for SpectonCR.
 
   Secure mode (default): Only /v2 (registry) and /auth/token (Docker auth)
-  are exposed publicly. /auth/audit, /auth/introspect, /health, and /metrics
-  remain cluster-internal. The /auth/.well-known/jwks.json endpoint is available
-  internally for token verification by peer services.
+  are exposed publicly. /auth/audit, /auth/introspect, and /health remain
+  cluster-internal. /metrics is cluster-internal by default; opt in with
+  ingress.metrics.enabled=true — the chart then renders a dedicated
+  `<release>-registry-metrics` Service and the ingress routes /metrics
+  to it (separate from the `<release>-registry` Service serving /v2).
+  The /auth/.well-known/jwks.json endpoint is available internally for
+  token verification by peer services.
 
   Legacy mode (exposeAllAuthPaths: true): Entire /auth prefix is exposed.
   NOT recommended for production.
@@ -25,22 +29,13 @@ spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}
   {{- end }}
-  {{- if or .Values.ingress.tls.enabled .Values.ingress.metrics.enabled }}
+  {{- if .Values.ingress.tls.enabled }}
   tls:
-    {{- if .Values.ingress.tls.enabled }}
     - hosts:
         - {{ .Values.ingress.host | quote }}
       {{- if .Values.ingress.tls.secretName }}
       secretName: {{ .Values.ingress.tls.secretName }}
       {{- end }}
-    {{- end }}
-    {{- if .Values.ingress.metrics.enabled }}
-    - hosts:
-        - {{ .Values.ingress.metrics.host | quote }}
-      {{- if .Values.ingress.metrics.tls.secretName }}
-      secretName: {{ .Values.ingress.metrics.tls.secretName }}
-      {{- end }}
-    {{- end }}
   {{- end }}
   rules:
     - host: {{ .Values.ingress.host | quote }}
@@ -104,16 +99,13 @@ spec:
                 port:
                   name: http
           {{- end }}
-    {{- if .Values.ingress.metrics.enabled }}
-    - host: {{ .Values.ingress.metrics.host | quote }}
-      http:
-        paths:
-          - path: /
+          {{- if .Values.ingress.metrics.enabled }}
+          - path: /metrics
             pathType: Prefix
             backend:
               service:
-                name: {{ include "spectoncr.fullname" . }}-registry
+                name: {{ include "spectoncr.fullname" . }}-registry-metrics
                 port:
                   name: metrics
-    {{- end }}
+          {{- end }}
 {{- end }}
