@@ -57,6 +57,8 @@ ingress:
     exposeGitHubActions: false
   dashboard:
     enabled: true
+  metrics:
+    enabled: true
 jwt:
   existingSecret: spectoncr-jwt-keys
 networkPolicy:

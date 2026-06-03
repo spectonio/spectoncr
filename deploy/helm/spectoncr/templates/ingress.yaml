@@ -3,9 +3,11 @@
   Ingress for SpectonCR.
 
   Secure mode (default): Only /v2 (registry) and /auth/token (Docker auth)
-  are exposed publicly. /auth/audit, /auth/introspect, /health, and /metrics
-  remain cluster-internal. The /auth/.well-known/jwks.json endpoint is available
-  internally for token verification by peer services.
+  are exposed publicly. /auth/audit, /auth/introspect, and /health remain
+  cluster-internal. /metrics is cluster-internal by default; opt in with
+  ingress.metrics.enabled=true to add a /metrics path that routes to the
+  registry service's `metrics` port. The /auth/.well-known/jwks.json
+  endpoint is available internally for token verification by peer services.
 
   Legacy mode (exposeAllAuthPaths: true): Entire /auth prefix is exposed.
   NOT recommended for production.
@@ -94,5 +96,14 @@ spec:
                 name: {{ include "spectoncr.fullname" . }}-registry
                 port:
                   name: http
+          {{- end }}
+          {{- if .Values.ingress.metrics.enabled }}
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "spectoncr.fullname" . }}-registry
+                port:
+                  name: metrics
           {{- end }}
 {{- end }}
