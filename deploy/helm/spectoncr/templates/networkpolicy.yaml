@@ -31,8 +31,7 @@ spec:
         - port: {{ .Values.auth.port }}
           protocol: TCP
     # Allow metrics scraping from monitoring namespace.
-    # /metrics is served on the HTTP port (5001) by specton-auth too;
-    # see the registry netpol comment below for context.
+    # /metrics is served on the HTTP port (5001) by specton-auth.
     {{- if .Values.networkPolicy.monitoringNamespace }}
     - from:
         - namespaceSelector:
@@ -40,8 +39,6 @@ spec:
               kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
       ports:
         - port: {{ .Values.auth.port }}
-          protocol: TCP
-        - port: {{ .Values.auth.metricsPort }}
           protocol: TCP
     {{- end }}
     # Allow from additional namespaces (e.g. CI runners)
@@ -78,10 +75,9 @@ spec:
         - port: {{ .Values.registry.port }}
           protocol: TCP
     # Allow metrics scraping from monitoring namespace.
-    # `/metrics` is on the HTTP port (5000), not the dedicated
-    # metricsPort which the binary doesn't bind. We open both so
-    # operators using a future split-port build don't have to flip
-    # this back.
+    # `/metrics` is served by the registry's main HTTP listener on
+    # port 5000 — same router as /v2 — so opening the http port is
+    # enough for Prometheus to scrape.
     {{- if .Values.networkPolicy.monitoringNamespace }}
     - from:
         - namespaceSelector:
@@ -89,8 +85,6 @@ spec:
               kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
       ports:
         - port: {{ .Values.registry.port }}
-          protocol: TCP
-        - port: {{ .Values.registry.metricsPort }}
           protocol: TCP
     {{- end }}
     # Allow from additional namespaces (e.g. CI runners)

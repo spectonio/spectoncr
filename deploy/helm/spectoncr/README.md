@@ -199,8 +199,7 @@ helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr -n spectoncr --crea
 | `registry.image.repository` | Registry image | `ghcr.io/spectoncr/registry` |
 | `registry.image.tag` | Image tag (defaults to appVersion) | `""` |
 | `registry.replicas` | Replicas (ignored if HPA enabled) | `2` |
-| `registry.port` | HTTP port | `5000` |
-| `registry.metricsPort` | Metrics port | `9090` |
+| `registry.port` | HTTP port (also serves `/metrics`) | `5000` |
 | `registry.resources.requests.cpu` | CPU request | `250m` |
 | `registry.resources.requests.memory` | Memory request | `256Mi` |
 | `registry.resources.limits.cpu` | CPU limit | `1` |
@@ -221,8 +220,7 @@ helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr -n spectoncr --crea
 | `auth.image.repository` | Auth image | `ghcr.io/spectoncr/auth` |
 | `auth.image.tag` | Image tag (defaults to appVersion) | `""` |
 | `auth.replicas` | Replicas (ignored if HPA enabled) | `2` |
-| `auth.port` | HTTP port | `5001` |
-| `auth.metricsPort` | Metrics port | `9091` |
+| `auth.port` | HTTP port (also serves `/metrics`) | `5001` |
 | `auth.resources.requests.cpu` | CPU request | `100m` |
 | `auth.resources.requests.memory` | Memory request | `128Mi` |
 | `auth.resources.limits.cpu` | CPU limit | `500m` |
@@ -436,8 +434,8 @@ curl http://localhost:5000/v2/
 ### Check metrics
 
 ```bash
-kubectl port-forward -n spectoncr svc/spectoncr-registry 9090:9090
-curl http://localhost:9090/metrics
+kubectl port-forward -n spectoncr svc/spectoncr-registry 5000:5000
+curl http://localhost:5000/metrics
 ```
 
 ### Test pull-through cache
