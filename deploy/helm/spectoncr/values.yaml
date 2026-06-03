@@ -46,7 +46,6 @@ registry:
     pullPolicy: Always
   replicas: 2
   port: 5000
-  metricsPort: 9090
 
   resources:
     requests:
@@ -90,7 +89,6 @@ auth:
     pullPolicy: Always
   replicas: 2
   port: 5001
-  metricsPort: 9091
 
   resources:
     requests:
@@ -345,8 +343,9 @@ ingress:
   # ingress host (same host as /v2). Disabled by default — /metrics is
   # cluster-internal in the secure mode. When enabled, a /metrics path
   # is added to the existing host rule, routed to the existing
-  # `<release>-registry` Service's `metrics` port (no extra Service
-  # needed — the registry Service already exposes 9090 alongside 5000).
+  # `<release>-registry` Service on the `http` port. /metrics is served
+  # by the same Axum router as /v2 on port 5000 — there is no separate
+  # metrics port in the binary today.
   metrics:
     enabled: false
 

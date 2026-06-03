@@ -75,9 +75,6 @@ spec:
             - name: http
               containerPort: {{ .Values.auth.port }}
               protocol: TCP
-            - name: metrics
-              containerPort: {{ .Values.auth.metricsPort }}
-              protocol: TCP
           env:
             - name: SPECTONCR_LOG_LEVEL
               value: {{ .Values.observability.logLevel | quote }}

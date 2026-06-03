@@ -12,9 +12,5 @@ spec:
       port: {{ .Values.auth.port }}
       targetPort: http
       protocol: TCP
-    - name: metrics
-      port: {{ .Values.auth.metricsPort }}
-      targetPort: metrics
-      protocol: TCP
   selector:
     {{- include "spectoncr.auth.selectorLabels" . | nindent 4 }}

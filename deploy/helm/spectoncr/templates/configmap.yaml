@@ -9,7 +9,6 @@ data:
   registry.yaml: |
     server:
       listen_addr: "0.0.0.0:{{ .Values.registry.port }}"
-      metrics_addr: "0.0.0.0:{{ .Values.registry.metricsPort }}"
       dashboard_auth:
         enabled: {{ .Values.dashboardAuth.enabled }}
         username: {{ .Values.dashboardAuth.username | quote }}
@@ -125,7 +124,6 @@ data:
   auth.yaml: |
     server:
       listen_addr: "0.0.0.0:{{ .Values.auth.port }}"
-      metrics_addr: "0.0.0.0:{{ .Values.auth.metricsPort }}"
 
     {{- if .Values.oidc.enabled }}
     oidc:

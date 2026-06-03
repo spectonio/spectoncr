@@ -12,10 +12,6 @@ spec:
       port: {{ .Values.registry.port }}
       targetPort: http
       protocol: TCP
-    - name: metrics
-      port: {{ .Values.registry.metricsPort }}
-      targetPort: metrics
-      protocol: TCP
     {{- if .Values.multiRegion.enabled }}
     - name: replication
       port: {{ .Values.multiRegion.internalPort }}

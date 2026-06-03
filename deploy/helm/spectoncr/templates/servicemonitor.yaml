@@ -18,9 +18,7 @@ spec:
       - {{ .Release.Namespace }}
   endpoints:
     # `/metrics` is served by the same Axum router as the HTTP API on
-    # port 5000. The dedicated `metrics` Service port (9090) isn't
-    # bound by the binary today, so scraping `port: metrics` always
-    # times out — use the http port.
+    # port 5000 — there is no separate metrics port in the binary.
     - port: http
       interval: {{ .Values.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
@@ -52,8 +50,8 @@ spec:
     matchNames:
       - {{ .Release.Namespace }}
   endpoints:
-    # Same story as the registry: specton-auth serves /metrics on its
-    # HTTP port (5001), not on a dedicated metrics port.
+    # specton-auth serves /metrics on its HTTP port (5001) — same
+    # router as /auth/token. No dedicated metrics port.
     - port: http
       interval: {{ .Values.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
