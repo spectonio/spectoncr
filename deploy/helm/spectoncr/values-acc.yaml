@@ -57,6 +57,11 @@ ingress:
     exposeGitHubActions: false
   dashboard:
     enabled: true
+  metrics:
+    enabled: true
+    host: acc-spectoncr-metrics.diytaxreturn.co.uk
+    tls:
+      secretName: spectoncr-metrics-tls
 jwt:
   existingSecret: spectoncr-jwt-keys
 networkPolicy:
