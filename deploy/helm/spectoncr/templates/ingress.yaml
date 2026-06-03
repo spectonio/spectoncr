@@ -25,22 +25,13 @@ spec:
   {{- if .Values.ingress.className }}
   ingressClassName: {{ .Values.ingress.className }}
   {{- end }}
-  {{- if or .Values.ingress.tls.enabled .Values.ingress.metrics.enabled }}
+  {{- if .Values.ingress.tls.enabled }}
   tls:
-    {{- if .Values.ingress.tls.enabled }}
     - hosts:
         - {{ .Values.ingress.host | quote }}
       {{- if .Values.ingress.tls.secretName }}
       secretName: {{ .Values.ingress.tls.secretName }}
       {{- end }}
-    {{- end }}
-    {{- if .Values.ingress.metrics.enabled }}
-    - hosts:
-        - {{ .Values.ingress.metrics.host | quote }}
-      {{- if .Values.ingress.metrics.tls.secretName }}
-      secretName: {{ .Values.ingress.metrics.tls.secretName }}
-      {{- end }}
-    {{- end }}
   {{- end }}
   rules:
     - host: {{ .Values.ingress.host | quote }}
@@ -104,16 +95,4 @@ spec:
                 port:
                   name: http
           {{- end }}
-    {{- if .Values.ingress.metrics.enabled }}
-    - host: {{ .Values.ingress.metrics.host | quote }}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "spectoncr.fullname" . }}-registry
-                port:
-                  name: metrics
-    {{- end }}
 {{- end }}

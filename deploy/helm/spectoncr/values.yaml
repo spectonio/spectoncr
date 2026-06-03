@@ -341,18 +341,6 @@ ingress:
   dashboard:
     enabled: false
 
-  # Optional second host that exposes the registry's /metrics endpoint
-  # publicly. Disabled by default — /metrics is cluster-internal in the
-  # default secure mode. When enabled, the chart adds a second rule (and
-  # TLS entry) on the same Ingress, routing every path on `host` to the
-  # registry service's `metrics` port. Only /metrics returns data; other
-  # paths get 404 from the metrics server.
-  metrics:
-    enabled: false
-    host: ""
-    tls:
-      secretName: ""
-
 ## -- Prometheus ServiceMonitor --
 serviceMonitor:
   enabled: false
