@@ -343,11 +343,10 @@ ingress:
 
   # Optionally expose the registry's /metrics endpoint via the main
   # ingress host (same host as /v2). Disabled by default — /metrics is
-  # cluster-internal in the secure mode. When enabled, the chart renders
-  # a dedicated `<release>-registry-metrics` Service (ClusterIP, single
-  # port: registry.metricsPort, targetPort: metrics) and the ingress
-  # routes /metrics to it. Keeps scrape traffic on its own Service,
-  # separate from the registry's /v2 path on `<release>-registry`.
+  # cluster-internal in the secure mode. When enabled, a /metrics path
+  # is added to the existing host rule, routed to the existing
+  # `<release>-registry` Service's `metrics` port (no extra Service
+  # needed — the registry Service already exposes 9090 alongside 5000).
   metrics:
     enabled: false
 
