@@ -5,9 +5,11 @@
   Secure mode (default): Only /v2 (registry) and /auth/token (Docker auth)
   are exposed publicly. /auth/audit, /auth/introspect, and /health remain
   cluster-internal. /metrics is cluster-internal by default; opt in with
-  ingress.metrics.enabled=true to add a /metrics path that routes to the
-  registry service's `metrics` port. The /auth/.well-known/jwks.json
-  endpoint is available internally for token verification by peer services.
+  ingress.metrics.enabled=true — the chart then renders a dedicated
+  `<release>-registry-metrics` Service and the ingress routes /metrics
+  to it (separate from the `<release>-registry` Service serving /v2).
+  The /auth/.well-known/jwks.json endpoint is available internally for
+  token verification by peer services.
 
   Legacy mode (exposeAllAuthPaths: true): Entire /auth prefix is exposed.
   NOT recommended for production.
@@ -102,7 +104,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "spectoncr.fullname" . }}-registry
+                name: {{ include "spectoncr.fullname" . }}-registry-metrics
                 port:
                   name: metrics
           {{- end }}
