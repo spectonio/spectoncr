@@ -7,14 +7,22 @@ This script expects:
   SLACK_BOT_TOKEN   xoxb-… with files:write scope
   SLACK_CHANNEL_ID  e.g. C0123456789 (channel ID, not name)
 
+Optional bot scopes:
+  channels:join     lets the script auto-join a public channel on
+                    `not_in_channel`. Private channels still need a
+                    manual `/invite @yourapp` from the channel.
+
 Optional:
-  SLACK_WEBHOOK_URL fallback — if SLACK_BOT_TOKEN is missing, post a plain
-                    text notice via the webhook so the channel still hears
-                    about the run. (Webhooks can't carry the PDF itself.)
+  SLACK_WEBHOOK_URL fallback — used when SLACK_BOT_TOKEN is missing OR
+                    when the bot-token upload fails (e.g. bot not in
+                    channel and auto-join refused). Posts a plain text
+                    notice so the channel still hears about the run.
+                    (Webhooks can't carry the PDF itself.)
 
 Exit codes:
-  0  uploaded OR intentionally skipped (missing creds, missing file)
-  1  credentials present but the API refused the upload
+  0  uploaded, intentionally skipped, OR notify-path soft-failed but the
+     scan run itself is fine (PDF is in workflow artifacts)
+  1  unexpected error in the upload path with no webhook fallback wired
 """
 
 from __future__ import annotations
@@ -87,6 +95,24 @@ def _webhook_fallback(url: str, text: str) -> int:
     return 0  # don't fail the job on notify-path errors
 
 
+def _join_channel(token: str, channel: str) -> dict:
+    return _slack_post("conversations.join", token, {"channel": channel})
+
+
+def _complete_upload(
+    token: str, channel: str, file_id: str, title: str, initial_comment: str
+) -> dict:
+    return _slack_post(
+        "files.completeUploadExternal",
+        token,
+        {
+            "files": [{"id": file_id, "title": title}],
+            "channel_id": channel,
+            "initial_comment": initial_comment,
+        },
+    )
+
+
 def _upload(token: str, channel: str, pdf_path: str) -> int:
     filename = os.path.basename(pdf_path)
     size = os.path.getsize(pdf_path)
@@ -120,15 +146,32 @@ def _upload(token: str, channel: str, pdf_path: str) -> int:
         os.environ.get("SLACK_INITIAL_COMMENT")
         or f":shield: {title} — PDF report attached."
     )
-    step3 = _slack_post(
-        "files.completeUploadExternal",
-        token,
-        {
-            "files": [{"id": file_id, "title": title}],
-            "channel_id": channel,
-            "initial_comment": initial_comment,
-        },
-    )
+    step3 = _complete_upload(token, channel, file_id, title, initial_comment)
+
+    # Self-heal for public channels: Slack returns `not_in_channel` when the
+    # bot hasn't been added to the destination. `conversations.join` (scope
+    # `channels:join`) lets us add ourselves to public channels without a
+    # human running `/invite`. Private channels reject `conversations.join`
+    # with `method_not_supported_for_channel_type` — those still need a
+    # manual invite, which we surface clearly below.
+    if not step3.get("ok") and step3.get("error") == "not_in_channel":
+        print(
+            f"bot is not in channel {channel} — attempting conversations.join",
+            file=sys.stderr,
+        )
+        joined = _join_channel(token, channel)
+        if joined.get("ok"):
+            print(f"joined channel {channel}; retrying upload", file=sys.stderr)
+            step3 = _complete_upload(token, channel, file_id, title, initial_comment)
+        else:
+            print(f"conversations.join failed: {joined}", file=sys.stderr)
+            print(
+                "hint: if this is a private channel, run "
+                "`/invite @<your-bot-name>` in that channel; "
+                "if public, ensure the bot has the `channels:join` scope.",
+                file=sys.stderr,
+            )
+
     if not step3.get("ok"):
         print(f"completeUploadExternal failed: {step3}", file=sys.stderr)
         return 1
@@ -152,7 +195,25 @@ def main() -> int:
     webhook = os.environ.get("SLACK_WEBHOOK_URL") or ""
 
     if token and channel:
-        return _upload(token, channel, pdf_path)
+        rc = _upload(token, channel, pdf_path)
+        if rc == 0:
+            return 0
+        # Bot-token path failed (e.g. bot not in channel and auto-join refused).
+        # The PDF is still in the workflow artifact — fall back to the webhook
+        # so the channel hears about the run instead of failing the step.
+        if webhook:
+            print(
+                "bot-token upload failed — falling back to webhook text post",
+                file=sys.stderr,
+            )
+            return _webhook_fallback(
+                webhook,
+                ":shield: SpectonCR nightly CVE scan finished, but the bot "
+                "could not attach the PDF to this channel "
+                "(see workflow logs for the Slack API error). "
+                "Report is in the workflow artifacts.",
+            )
+        return rc
 
     if webhook:
         print(
