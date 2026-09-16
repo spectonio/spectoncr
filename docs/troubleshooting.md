@@ -142,6 +142,42 @@ This guide covers common issues when operating SpectonCR, with diagnostic steps 
 nginx.ingress.kubernetes.io/proxy-body-size: "0"
 ```
 
+### 500 on a large layer — "Generic S3 error ... retry_timeout:180s"
+
+**Symptom**: Small images push fine, but an image with a multi-hundred-MB
+or multi-GB layer fails at the end of the blob upload. The client sees a
+bare `500 Internal Server Error`, and the registry logs:
+
+```text
+storage error: Generic S3 error: Error after 5 retries in 181.3s,
+max_retries:10, retry_timeout:180s, source:error sending request for url
+(https://s3.<region>.amazonaws.com/<bucket>/.../blobs/sha256/<digest>)
+```
+
+**Cause**: The blob was written with a single PUT. object_store allows
+30s per request attempt and 180s for the request including retries, so a
+layer that cannot be uploaded to the bucket within 30s times out, is
+retried, and exhausts the budget. Retrying the push cannot help — the
+deadline is hit the same way every time.
+
+**Fix**: Blobs above `multipart_threshold_mb` are written as a multipart
+upload, so each part gets its own request and its own budget. This is the
+default behaviour. If a registry sits on a slow link to its bucket, lower
+the threshold and part size so parts complete sooner:
+
+```bash
+SPECTONCR_STORAGE_MULTIPART_THRESHOLD_MB=16   # default 64
+SPECTONCR_STORAGE_MULTIPART_PART_SIZE_MB=8    # default 32, floor 5
+SPECTONCR_STORAGE_MULTIPART_CONCURRENCY=4     # default 4
+SPECTONCR_STORAGE_REQUEST_TIMEOUT_SECS=300    # per-attempt timeout
+```
+
+Confirm multipart is engaging with `RUST_LOG=specton_resilience=debug`:
+
+```text
+Writing object as multipart upload  bytes=1470000000 parts=44 part_size=33554432
+```
+
 ---
 
 ## Docker Push and Pull Debugging

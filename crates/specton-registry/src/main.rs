@@ -9,7 +9,7 @@ mod webhook;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::{
     Router,
@@ -29,7 +29,10 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use object_store::aws::AmazonS3Builder;
 use object_store::azure::MicrosoftAzureBuilder;
 use object_store::gcp::GoogleCloudStorageBuilder;
-use object_store::{ObjectStore, local::LocalFileSystem, path::Path as StorePath};
+use object_store::{
+    ClientOptions, ObjectStore, RetryConfig as ObjectStoreRetryConfig, local::LocalFileSystem,
+    path::Path as StorePath,
+};
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, instrument, warn};
@@ -53,7 +56,9 @@ use specton_replication::region::{
     ReplicationMode, ReplicationPolicy,
 };
 use specton_replication::replicator::{ReplicationHandle, Replicator};
-use specton_resilience::{CircuitBreakerConfig, ResilientObjectStore, RetryPolicy};
+use specton_resilience::{
+    ChunkedPutConfig, CircuitBreakerConfig, ResilientObjectStore, RetryPolicy, put_chunked,
+};
 use specton_scanner::{
     ScannerRuntime, config::ScannerConfig, model::ScanJob, queue::Queue as ScanQueue,
 };
@@ -1616,6 +1621,20 @@ async fn get_blob(
     Ok((StatusCode::OK, headers, data).into_response())
 }
 
+/// Multipart tuning for blob writes, derived from `[storage]` config.
+///
+/// Blob payloads are the only writes large enough to outlast a single
+/// request's retry deadline; manifests and tags stay well under the
+/// threshold and so keep taking the plain `put` path.
+fn chunked_put_config(config: &RegistryConfig) -> ChunkedPutConfig {
+    const MB: usize = 1024 * 1024;
+    ChunkedPutConfig {
+        threshold: (config.storage.multipart_threshold_mb as usize).saturating_mul(MB),
+        part_size: (config.storage.multipart_part_size_mb as usize).saturating_mul(MB),
+        concurrency: config.storage.multipart_concurrency,
+    }
+}
+
 /// POST /v2/{tenant}/{project}/{name}/blobs/uploads/
 #[instrument(name = "initiate_upload", skip(state, claims), fields(tenant = %params.tenant, project = %params.project, name = %params.name))]
 async fn initiate_blob_upload(
@@ -1701,11 +1720,14 @@ async fn upload_blob_chunk(
     )
     .increment(body.len() as u64);
 
-    state
-        .store
-        .put(&store_path, Bytes::from(combined).into())
-        .await
-        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+    put_chunked(
+        state.store.as_ref(),
+        &store_path,
+        Bytes::from(combined),
+        chunked_put_config(&state.config),
+    )
+    .await
+    .map_err(|e| RegistryError::Storage(e.to_string()))?;
 
     let location = format!(
         "/v2/{}/{}/{}/blobs/uploads/{}",
@@ -1795,11 +1817,14 @@ async fn complete_blob_upload(
         &expected_digest,
     );
     let final_store_path = StorePath::from(final_blob_path);
-    state
-        .store
-        .put(&final_store_path, Bytes::from(final_data).into())
-        .await
-        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+    put_chunked(
+        state.store.as_ref(),
+        &final_store_path,
+        Bytes::from(final_data),
+        chunked_put_config(&state.config),
+    )
+    .await
+    .map_err(|e| RegistryError::Storage(e.to_string()))?;
 
     // Clean up the upload session
     let _ = state.store.delete(&up_store_path).await;
@@ -2790,11 +2815,14 @@ async fn internal_replicate_blob(
     );
 
     let store_path = StorePath::from(blob_path(&tenant, &project, &repo, &digest));
-    state
-        .store
-        .put(&store_path, body.into())
-        .await
-        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+    put_chunked(
+        state.store.as_ref(),
+        &store_path,
+        body,
+        chunked_put_config(&state.config),
+    )
+    .await
+    .map_err(|e| RegistryError::Storage(e.to_string()))?;
 
     // Record metrics for replicated blob
     counter!("registry_blob_upload_bytes_total",
@@ -3389,6 +3417,7 @@ async fn main() -> anyhow::Result<()> {
     let config = {
         let mut config = config;
         config.rate_limit.apply_env_overrides();
+        config.storage.apply_env_overrides();
         config
     };
 
@@ -3530,7 +3559,24 @@ async fn main() -> anyhow::Result<()> {
             Arc::new(LocalFileSystem::new_with_prefix(storage_root)?)
         }
         "s3" | "minio" => {
-            let mut builder = AmazonS3Builder::new().with_bucket_name(storage_root);
+            let mut builder = AmazonS3Builder::new()
+                .with_bucket_name(storage_root)
+                // object_store's defaults are applied explicitly so they
+                // can be tuned per environment. `retry_timeout` bounds a
+                // whole request including retries; large blobs avoid it
+                // by going out as multipart (see `put_chunked`).
+                .with_retry(ObjectStoreRetryConfig {
+                    max_retries: config.storage.retry_max_retries,
+                    retry_timeout: Duration::from_secs(config.storage.retry_timeout_secs),
+                    ..Default::default()
+                })
+                .with_client_options(
+                    ClientOptions::new()
+                        .with_connect_timeout(Duration::from_secs(
+                            config.storage.connect_timeout_secs,
+                        ))
+                        .with_timeout(Duration::from_secs(config.storage.request_timeout_secs)),
+                );
 
             if let Some(ref endpoint) = config.storage.endpoint {
                 builder = builder.with_endpoint(endpoint);
