@@ -291,6 +291,55 @@ pub struct StorageConfig {
     pub region: Option<String>,
     pub access_key: Option<String>,
     pub secret_key: Option<String>,
+    /// Blobs larger than this (MiB) are written with a multipart upload
+    /// rather than a single PUT. A single PUT is bounded end to end by
+    /// `retry_timeout_secs`, which a multi-GB layer cannot meet.
+    pub multipart_threshold_mb: u64,
+    /// Part size (MiB) for multipart uploads. Raised to 5 MiB if lower —
+    /// S3 rejects smaller non-final parts.
+    pub multipart_part_size_mb: u64,
+    /// Parts uploaded concurrently.
+    pub multipart_concurrency: usize,
+    /// Retries object_store makes per storage request.
+    pub retry_max_retries: usize,
+    /// Deadline (seconds) for one storage request including its retries.
+    /// object_store documents that this must stay under five minutes, as
+    /// retries reuse the original credentials and payload.
+    pub retry_timeout_secs: u64,
+    /// TCP connect timeout (seconds) for storage requests.
+    pub connect_timeout_secs: u64,
+    /// Total timeout (seconds) for a single storage request attempt.
+    pub request_timeout_secs: u64,
+}
+
+impl StorageConfig {
+    /// Apply `SPECTONCR_STORAGE_*` environment overrides. Kubernetes
+    /// deploys set env vars rather than mounting a `--config` file, and
+    /// these are the knobs that need tuning when a registry sits far
+    /// from its bucket.
+    pub fn apply_env_overrides(&mut self) {
+        if let Some(v) = env_u64("SPECTONCR_STORAGE_MULTIPART_THRESHOLD_MB") {
+            self.multipart_threshold_mb = v;
+        }
+        if let Some(v) = env_u64("SPECTONCR_STORAGE_MULTIPART_PART_SIZE_MB") {
+            self.multipart_part_size_mb = v;
+        }
+        if let Some(v) = env_usize("SPECTONCR_STORAGE_MULTIPART_CONCURRENCY") {
+            self.multipart_concurrency = v;
+        }
+        if let Some(v) = env_usize("SPECTONCR_STORAGE_RETRY_MAX_RETRIES") {
+            self.retry_max_retries = v;
+        }
+        if let Some(v) = env_u64("SPECTONCR_STORAGE_RETRY_TIMEOUT_SECS") {
+            self.retry_timeout_secs = v;
+        }
+        if let Some(v) = env_u64("SPECTONCR_STORAGE_CONNECT_TIMEOUT_SECS") {
+            self.connect_timeout_secs = v;
+        }
+        if let Some(v) = env_u64("SPECTONCR_STORAGE_REQUEST_TIMEOUT_SECS") {
+            self.request_timeout_secs = v;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -333,6 +382,14 @@ impl RateLimitConfig {
 }
 
 fn env_u32(name: &str) -> Option<u32> {
+    std::env::var(name).ok()?.trim().parse().ok()
+}
+
+fn env_u64(name: &str) -> Option<u64> {
+    std::env::var(name).ok()?.trim().parse().ok()
+}
+
+fn env_usize(name: &str) -> Option<usize> {
     std::env::var(name).ok()?.trim().parse().ok()
 }
 
@@ -539,6 +596,14 @@ impl Default for StorageConfig {
             region: None,
             access_key: None,
             secret_key: None,
+            multipart_threshold_mb: 64,
+            multipart_part_size_mb: 32,
+            multipart_concurrency: 4,
+            // object_store's own defaults, made explicit and tunable.
+            retry_max_retries: 10,
+            retry_timeout_secs: 180,
+            connect_timeout_secs: 30,
+            request_timeout_secs: 300,
         }
     }
 }
@@ -577,14 +642,7 @@ impl Default for RegistryConfig {
                 audience: "spectoncr-registry".into(),
                 bootstrap_admin: None,
             },
-            storage: StorageConfig {
-                backend: "filesystem".into(),
-                root: "/var/lib/spectoncr/data".into(),
-                endpoint: None,
-                region: None,
-                access_key: None,
-                secret_key: None,
-            },
+            storage: StorageConfig::default(),
             observability: ObservabilityConfig {
                 log_level: "info".into(),
                 log_format: "json".into(),
