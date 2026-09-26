@@ -576,6 +576,27 @@ struct UploadRef {
 /// Default tenant used for 2-segment Docker image paths (namespace/repo).
 const DEFAULT_TENANT: &str = "_";
 
+/// Where the registry reaches the auth service when it proxies to it
+/// (`/auth/token` and the dashboard's user/group/robot-account pages).
+/// Kubernetes charts name the Service `<release>-auth`; set
+/// `SPECTONCR_AUTH_SERVICE_URL` when that isn't `spectoncr-auth`.
+const DEFAULT_AUTH_SERVICE_URL: &str = "http://spectoncr-auth:5001";
+
+/// `SPECTONCR_AUTH_SERVICE_URL` if set and non-empty, else the default.
+/// Deliberately not `server.auth_listen_addr`: that is the address the auth
+/// process binds (default `0.0.0.0:5001`), which from the registry process
+/// is itself, not the auth service.
+fn resolve_auth_service_url(from_env: Option<String>) -> String {
+    from_env
+        .map(|u| u.trim().trim_end_matches('/').to_string())
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| DEFAULT_AUTH_SERVICE_URL.to_string())
+}
+
+fn auth_service_url() -> String {
+    resolve_auth_service_url(std::env::var("SPECTONCR_AUTH_SERVICE_URL").ok())
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct RepoPath2 {
     project: String,
@@ -650,8 +671,7 @@ async fn proxy_auth_token(
     State(_state): State<AppState>,
     req: Request,
 ) -> Result<Response, RegistryError> {
-    let auth_url = std::env::var("SPECTONCR_AUTH_SERVICE_URL")
-        .unwrap_or_else(|_| "http://spectoncr-auth:5001".to_string());
+    let auth_url = auth_service_url();
     let uri = req.uri();
     let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
     let target = format!("{auth_url}/auth/token{query}");
@@ -4124,8 +4144,12 @@ async fn main() -> anyhow::Result<()> {
         start_time,
     };
 
-    // Dashboard state (shared with dashboard handlers)
-    let auth_service_url = format!("http://{}", state.config.server.auth_listen_addr);
+    // Dashboard state (shared with dashboard handlers). Its user/group/
+    // robot-account pages proxy to the auth service, so it must use the
+    // auth service's address. It used to use server.auth_listen_addr
+    // (0.0.0.0:5001), i.e. the registry pod itself, and every such request
+    // failed with 502 whenever auth ran as a separate service.
+    let auth_service_url = auth_service_url();
     let dashboard_state = dashboard::DashboardState {
         audit_log: audit_log.clone(),
         store: state.store.clone(),
@@ -4309,6 +4333,30 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_service_url_defaults_to_the_service_not_the_listen_addr() {
+        assert_eq!(resolve_auth_service_url(None), "http://spectoncr-auth:5001");
+        // The old dashboard behaviour: never the auth *bind* address.
+        assert_ne!(resolve_auth_service_url(None), "http://0.0.0.0:5001");
+    }
+
+    #[test]
+    fn auth_service_url_honours_env_and_normalises() {
+        assert_eq!(
+            resolve_auth_service_url(Some("http://spectoncr-mirror-auth:5001/".into())),
+            "http://spectoncr-mirror-auth:5001"
+        );
+        assert_eq!(
+            resolve_auth_service_url(Some("  http://auth:5001  ".into())),
+            "http://auth:5001"
+        );
+        // Empty or whitespace-only falls back to the default.
+        assert_eq!(
+            resolve_auth_service_url(Some("   ".into())),
+            "http://spectoncr-auth:5001"
+        );
+    }
 
     // T6: is_store_not_found distinguishes a true "not present" miss
     // from a real backend IO failure. Only the former must fall

@@ -110,6 +110,11 @@ spec:
               value: {{ .Values.observability.logLevel | quote }}
             - name: SPECTONCR_AUTH_REALM
               value: "/auth/token"
+            # Where the registry proxies /auth/token and the dashboard's
+            # user/group/robot-account pages: this release's own auth Service
+            # (spectoncr-mirror-auth for the mirror releases).
+            - name: SPECTONCR_AUTH_SERVICE_URL
+              value: "http://{{ include "spectoncr.fullname" . }}-auth:{{ .Values.auth.port }}"
             {{- if .Values.ingress.host }}
             - name: SPECTONCR_EXTERNAL_URL
               value: "https://{{ .Values.ingress.host }}"
