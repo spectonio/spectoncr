@@ -26,3 +26,5 @@ reqwest = { workspace = true }
 serde_yaml = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+# Only to pick the process-wide crypto provider; see main().
+rustls = { version = "0.23", default-features = false, features = ["ring"] }

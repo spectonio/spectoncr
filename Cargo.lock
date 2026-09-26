@@ -3981,6 +3981,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "reqwest",
+ "rustls",
  "schemars 0.8.22",
  "serde",
  "serde_json",
