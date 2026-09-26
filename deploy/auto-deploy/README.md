@@ -6,12 +6,13 @@ cluster.
 
 ## Why not a GitHub Actions deploy?
 
-The k3s API (`k3s1api.diytaxreturn.co.uk:6443`) is firewalled; GitHub-hosted
-runners can't reach it (every push-based deploy fails at *Verify cluster
-connectivity* with `dial tcp … i/o timeout`). A self-hosted runner is
-discouraged on a **public** repo (fork PRs could execute code on a runner
-inside the cluster network). So we invert the flow: the cluster reaches *out*
-to Docker Hub.
+The acc `spectoncr` Helm release is owned by `bwalia/diy-tax-return-uk`
+(`devops/helm-charts/spectoncr`, deployed by its `deploy-spectoncr.yml`). The
+chart in this repo lags behind it, so this repo must not push chart deploys to
+acc; `.github/workflows/deploy-k3s.yml` is manual-only and needs an explicit
+confirmation for that reason. (It used to also be blocked by the k3s API being
+firewalled, but GitHub-hosted runners can reach k3s1 now.) Only the image
+rolls from here: the cluster reaches *out* to Docker Hub.
 
 ```
  CI (build)                         cluster (acc)

@@ -1,10 +1,15 @@
 name: Deploy to k3s
 
+# Manual only. The acc `spectoncr` release on k3s1 is owned by the
+# bwalia/diy-tax-return-uk repo (devops/helm-charts/spectoncr, deployed by its
+# deploy-spectoncr.yml). The chart and values-acc.yaml here lag behind that
+# chart, so running this against acc reverts production: on 2026-09-26 an
+# automatic run (triggered by a chart change merged here) applied chart 0.4.0
+# over the live 0.5.0 install, swapping the registry config, the Ingress class
+# and basic auth, the registry NodePort and the NetworkPolicies. There used to
+# be a push trigger on deploy/helm/spectoncr/**; it was removed for that
+# reason, and a manual run has to be confirmed explicitly.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "deploy/helm/spectoncr/**"
   workflow_dispatch:
     inputs:
       environment:
@@ -14,6 +19,12 @@ on:
         type: choice
         options:
           - acc
+      confirm:
+        description: >-
+          acc is deployed from bwalia/diy-tax-return-uk; this chart will
+          overwrite it. Type "overwrite-acc" to run anyway.
+        required: true
+        type: string
 
 env:
   RELEASE_NAME: spectoncr
@@ -26,6 +37,12 @@ jobs:
     environment: ${{ github.event.inputs.environment || 'acc' }}
 
     steps:
+      - name: Require explicit confirmation
+        if: inputs.confirm != 'overwrite-acc'
+        run: |
+          echo "::error::acc is deployed from bwalia/diy-tax-return-uk. Re-run with confirm=overwrite-acc to overwrite it with this repo's chart."
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@v4
 

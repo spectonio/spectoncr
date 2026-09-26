@@ -1,3 +1,7 @@
+# NOT the source of truth for acc. The live acc release is deployed from
+# bwalia/diy-tax-return-uk (devops/helm-charts/spectoncr/values-acc.yaml),
+# which has diverged from this file (Ingress class, registry config Secret,
+# NodePort, NetworkPolicies, rate limits). Don't deploy acc from here.
 auth:
   image:
     # Override the chart default (ghcr.io/spectonio/spectoncr) — that
