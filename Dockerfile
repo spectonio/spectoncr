@@ -1,6 +1,7 @@
 # ============================================================================
 # SpectonCR Multi-Stage Dockerfile
-# Builds both specton-auth and specton-registry binaries in a single image.
+# Builds the specton-auth, specton-registry, specton-scanner and
+# specton-controller (operator) binaries into a single image.
 # ============================================================================
 
 # ── Builder stage ────────────────────────────────────────────────────────────
@@ -53,7 +54,8 @@ COPY crates/ crates/
 # Build the real binaries. Build metadata (version / SHA / time) is injected
 # in the runtime stage instead of here, so a new commit SHA does NOT invalidate
 # this expensive compile layer.
-RUN cargo build --release --bin specton-auth --bin specton-registry --bin specton-scanner
+RUN cargo build --release --bin specton-auth --bin specton-registry --bin specton-scanner \
+    --bin specton-controller
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
 
@@ -78,9 +80,11 @@ RUN mkdir -p /var/lib/spectoncr/data \
 COPY --from=builder /build/target/release/specton-auth     /usr/local/bin/specton-auth
 COPY --from=builder /build/target/release/specton-registry /usr/local/bin/specton-registry
 COPY --from=builder /build/target/release/specton-scanner  /usr/local/bin/specton-scanner
+COPY --from=builder /build/target/release/specton-controller /usr/local/bin/specton-controller
 
 # Ensure binaries are executable
-RUN chmod +x /usr/local/bin/specton-auth /usr/local/bin/specton-registry /usr/local/bin/specton-scanner
+RUN chmod +x /usr/local/bin/specton-auth /usr/local/bin/specton-registry /usr/local/bin/specton-scanner \
+    /usr/local/bin/specton-controller
 
 # Build metadata surfaced in the dashboard footer, read at runtime. Setting
 # these in the runtime stage (not the builder) keeps the compile cache intact

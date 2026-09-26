@@ -560,6 +560,31 @@ serviceAccount:
   # annotations:
   #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/spectoncr
 
+## -- Operator (specton-controller) --
+## Runs the controller that reconciles the spectoncr.io resources:
+## Tenant / Project / AccessPolicy / TokenPolicy (synced to the auth service)
+## and SpectonRegistry (installs, upgrades and backs up a registry
+## deployment). See docs/operator.md. Off by default: enabling it changes
+## nothing until a SpectonRegistry resource is created.
+operator:
+  enabled: false
+  image:
+    repository: ""  # Defaults to registry.image.repository
+    tag: ""         # Defaults to registry.image.tag / appVersion
+    pullPolicy: IfNotPresent
+  # No leader election yet: keep this at 1.
+  replicas: 1
+  logLevel: info
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  nodeSelector: {}
+  tolerations: []
+
 ## -- Pod disruption budget --
 podDisruptionBudget:
   registry:

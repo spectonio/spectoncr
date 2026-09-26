@@ -1,0 +1,45 @@
+# A SpectonRegistry managed by the operator (specton-controller).
+# Requires the chart installed with `operator.enabled=true` (or the CRD and
+# controller applied some other way). See docs/operator.md.
+apiVersion: spectoncr.io/v1alpha1
+kind: SpectonRegistry
+metadata:
+  name: spectoncr
+  namespace: acc
+spec:
+  image:
+    repository: bwalia/spectoncr
+    tag: latest
+  # Track the digest behind `latest` and roll when it moves (replaces
+  # deploy/auto-deploy/image-updater.yaml).
+  autoUpdate:
+    enabled: true
+    intervalSeconds: 300
+
+  # Must contain registry.yaml and auth.yaml.
+  configMapName: spectoncr-config
+  signingKeySecret: spectoncr-jwt
+
+  registry:
+    replicas: 2
+    nodeSelector:
+      kubernetes.io/hostname: debian001
+    env:
+      - name: SPECTONCR_LOG_LEVEL
+        value: info
+  auth:
+    replicas: 2
+
+  # Filesystem storage backend. Omit for S3/GCS/Azure and pass the
+  # credentials through registry.env / registry.envFrom instead.
+  storage:
+    pvcClaimName: spectoncr-data
+
+  backup:
+    schedule: "0 2 * * *"
+    beforeUpgrade: true
+    retentionDays: 7
+    pvcClaimName: spectoncr-backups
+    postgres:
+      host: spectoncr-postgres
+      secretName: spectoncr-postgres
