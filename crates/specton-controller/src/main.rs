@@ -6,11 +6,19 @@ use futures::StreamExt;
 use kube::api::{Api, Patch, PatchParams, PostParams};
 use kube::runtime::Controller;
 use kube::runtime::controller::Action;
+use kube::runtime::reflector::ObjectRef;
 use kube::runtime::watcher::Config as WatcherConfig;
-use kube::{Client, CustomResource, Resource, ResourceExt};
+use kube::{Client, CustomResource, CustomResourceExt, Resource, ResourceExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
+
+mod operator;
+
+use operator::SpectonRegistry;
+use operator::reconcile::{
+    OperatorCtx, error_policy as operator_error_policy, reconcile as reconcile_registry,
+};
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -739,6 +747,13 @@ fn token_policy_error_policy(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // `specton-controller crd` prints the SpectonRegistry CRD, which is how
+    // deploy/helm/spectoncr/templates/crds/spectonregistry.yaml is generated.
+    if std::env::args().nth(1).as_deref() == Some("crd") {
+        print!("{}", serde_yaml::to_string(&SpectonRegistry::crd())?);
+        return Ok(());
+    }
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -819,6 +834,64 @@ async fn main() -> anyhow::Result<()> {
             }
         });
 
+    // --- SpectonRegistry lifecycle operator ---
+    // Owned objects are watched too, so a Deployment finishing its rollout
+    // (or someone editing it) triggers a reconcile of its SpectonRegistry.
+    let operator_ctx = Arc::new(OperatorCtx {
+        client: client.clone(),
+        http: reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()?,
+    });
+    let owned = || WatcherConfig::default().labels("app.kubernetes.io/managed-by=specton-operator");
+    let registry_ctrl = Controller::new(
+        Api::<SpectonRegistry>::all(client.clone()),
+        WatcherConfig::default(),
+    );
+    // A ConfigMap edit must roll the pods that mount it, so map ConfigMap
+    // events back to every SpectonRegistry that references it.
+    let registries = registry_ctrl.store();
+    let registry_ctrl = registry_ctrl
+        .owns(
+            Api::<k8s_openapi::api::apps::v1::Deployment>::all(client.clone()),
+            owned(),
+        )
+        .owns(
+            Api::<k8s_openapi::api::core::v1::Service>::all(client.clone()),
+            owned(),
+        )
+        .owns(
+            Api::<k8s_openapi::api::batch::v1::Job>::all(client.clone()),
+            owned(),
+        )
+        .watches(
+            Api::<k8s_openapi::api::core::v1::ConfigMap>::all(client.clone()),
+            WatcherConfig::default(),
+            move |cm| {
+                let ns = cm.namespace();
+                let name = cm.name_any();
+                registries
+                    .state()
+                    .into_iter()
+                    .filter(|r| r.namespace() == ns && r.spec.config_map_name == name)
+                    .map(|r| ObjectRef::from_obj(&*r))
+                    .collect::<Vec<_>>()
+            },
+        )
+        .shutdown_on_signal()
+        .run(reconcile_registry, operator_error_policy, operator_ctx)
+        .for_each(|res| async move {
+            match res {
+                Ok(o) => info!(resource = ?o, "spectonregistry reconciled"),
+                // Owned objects being garbage-collected after their
+                // SpectonRegistry was deleted still trigger reconciles.
+                Err(kube::runtime::controller::Error::ObjectNotFound(o)) => {
+                    tracing::debug!(resource = %o, "spectonregistry already deleted")
+                }
+                Err(e) => error!(error = %e, "spectonregistry reconcile loop error"),
+            }
+        });
+
     info!("all controllers started; waiting for shutdown signal");
 
     // Run all controllers concurrently — they all exit on SIGTERM.
@@ -827,6 +900,7 @@ async fn main() -> anyhow::Result<()> {
         () = project_ctrl => info!("project controller exited"),
         () = access_ctrl => info!("access-policy controller exited"),
         () = token_ctrl => info!("token-policy controller exited"),
+        () = registry_ctrl => info!("spectonregistry operator exited"),
     }
 
     info!("specton-controller shut down");
