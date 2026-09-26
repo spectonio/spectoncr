@@ -82,8 +82,12 @@ spec:
                   valueFrom:
                     fieldRef:
                       fieldPath: metadata.namespace
+                # Main registry + auth, then the env's pull-through mirror.
+                # All run 2 replicas with a rolling update and preStop drain
+                # (diy-tax-return-uk chart), so a roll doesn't drop traffic.
+                # Names missing in a namespace are skipped.
                 - name: DEPLOYMENTS
-                  value: "spectoncr-registry spectoncr-auth"
+                  value: "spectoncr-registry spectoncr-auth spectoncr-mirror-registry spectoncr-mirror-auth"
               command: ["/bin/sh", "-c"]
               args:
                 - |
@@ -102,6 +106,9 @@ spec:
 
                   # 2. Roll any deployment whose last-seen digest differs.
                   for d in ${DEPLOYMENTS}; do
+                    if ! kubectl -n "${NS}" get deploy "$d" >/dev/null 2>&1; then
+                      echo "$d not found in ${NS}, skipping"; continue
+                    fi
                     CUR=$(kubectl -n "${NS}" get deploy "$d" \
                       -o jsonpath='{.spec.template.metadata.annotations.spectoncr\.io/image-digest}' 2>/dev/null || true)
                     if [ "${CUR}" = "${HUB}" ]; then

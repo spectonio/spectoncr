@@ -1,6 +1,6 @@
 # Pull-based image auto-deploy
 
-Automatically rolls the spectoncr Deployments in `acc`, `int` and `test` when
+Automatically rolls the spectoncr registry, auth and mirror Deployments in `acc`, `int` and `test` when
 a new `bwalia/spectoncr:latest` is published — **without** any inbound access to the
 cluster.
 
