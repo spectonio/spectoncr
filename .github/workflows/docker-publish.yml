@@ -4,6 +4,16 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    # Changes that can't affect the image (it's built from Cargo.toml,
+    # Cargo.lock and crates/ only). Without this, every docs/manifest merge
+    # published a new, non-reproducible :latest digest and the in-cluster
+    # image updaters rolled registry, auth and mirror in acc/int/test.
+    # Path filters don't apply to the v* tag pushes.
+    paths-ignore:
+      - "docs/**"
+      - "deploy/**"
+      - "examples/**"
+      - "**.md"
   pull_request:
     branches: [main]
 
