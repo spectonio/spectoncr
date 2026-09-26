@@ -765,6 +765,13 @@ async fn main() -> anyhow::Result<()> {
 
     info!("starting specton-controller");
 
+    // The release image builds every workspace binary in one cargo
+    // invocation, so feature unification enables both of rustls' crypto
+    // backends (ring and aws-lc-rs). rustls then can't pick a process-wide
+    // default and the kube client panics while building its TLS config.
+    // Choose ring explicitly; `Err` only means one is already installed.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let client = Client::try_default().await?;
 
     let auth_service_url = std::env::var("AUTH_SERVICE_URL")
