@@ -69,7 +69,11 @@ The `_` tenant is created automatically and cannot be deleted. It has default qu
 
 ## Kubernetes CRDs
 
-SpectonCR provides four Custom Resource Definitions (CRDs) in the `spectoncr.io/v1alpha1` API group. The `specton-controller` watches these resources and syncs their state to the auth service.
+SpectonCR provides four Custom Resource Definitions (CRDs) in the `spectoncr.io/v1alpha1` API group. The `specton-controller` watches these resources, checks their references, and pushes each spec to the auth service.
+
+The installed CRD schemas (`deploy/helm/spectoncr/templates/crds/`) are the reference for every field below. The API server rejects missing required fields and **silently drops fields the schema doesn't declare**, so a misspelled field has no effect. `kubectl explain tenant.spec` lists the valid fields.
+
+> **Sync status.** The auth service does not implement the `/api/v1/tenants/...` endpoints the controller pushes to yet. Until it does, every resource reports `Ready=False` with reason `AuthServiceRejected` (HTTP 404), and phase `Pending`. The controller reports this honestly rather than marking resources as reconciled.
 
 ### Tenant
 
@@ -82,20 +86,22 @@ metadata:
   name: acme
 spec:
   displayName: "Acme Corporation"
-  enabled: true
-  # Override the global storage backend for this tenant
-  storageBackend: "s3"
-  # Per-tenant rate limit (requests per second)
-  rateLimitRps: 200
+  adminEmail: "admin@acme.com"          # required
+  enabled: true                          # false suspends the tenant
+  # Override the global storage backend: filesystem, s3, gcs or azure
+  storageBackendOverride: "s3"
   # Restrict access to specific IP ranges
-  allowedIpRanges:
+  allowedIpCidrs:
     - "10.0.0.0/8"
     - "203.0.113.0/24"
-  # Resource quotas
   quotas:
-    maxProjects: 50
+    storageBytes: 107374182400           # 100 GiB
     maxRepositories: 500
-    maxStorageBytes: 107374182400   # 100 GiB
+    maxTagsPerRepository: 1000
+    pullRateLimit: 1000
+    pushRateLimit: 200
+  labels:
+    team: platform
 ```
 
 Check tenant status:
@@ -105,23 +111,24 @@ kubectl get tenants
 kubectl describe tenant acme
 ```
 
-Example status:
+`status.phase` is `Pending`, `Active`, `Suspended` (when `enabled: false`) or `Deleting`. The conditions say whether the last sync worked:
 
 ```
 Status:
-  Phase:          Ready
-  Project Count:  3
+  Phase:  Active
   Conditions:
-    Type:                  Ready
-    Status:                True
-    Last Transition Time:  2025-01-15T10:00:00Z
-    Reason:                Reconciled
-    Message:               Tenant reconciled successfully
+    Type:     Synced
+    Status:   True
+    Reason:   Synced
+    Message:  PUT /api/v1/tenants/acme succeeded
+    Type:     Ready
+    Status:   True
+    Reason:   Synced
 ```
 
 ### Project
 
-Projects are namespaced resources that reference a parent tenant.
+Projects are namespaced resources that reference a parent tenant. A Project whose tenant doesn't exist stays `Pending` with reason `TenantNotFound`.
 
 ```yaml
 apiVersion: spectoncr.io/v1alpha1
@@ -130,18 +137,23 @@ metadata:
   name: backend
   namespace: spectoncr
 spec:
-  tenantRef: acme
-  displayName: "Backend Services"
-  # "private" (default) or "public"
-  visibility: private
-  # Prevent overwriting of existing tags
-  immutableTags: true
-  # Automatic cleanup policy
+  tenantRef: acme                        # required
+  displayName: "Backend Services"        # required
+  description: "Backend service images"
+  visibility: private                    # private (default), internal or public
+  immutableTags: true                    # prevent overwriting existing tags
+  vulnerabilityScanning:
+    enabled: true
+    blockOnCritical: true
+    blockOnHigh: false
   retentionPolicy:
-    # Keep at most 20 tags per repository
-    maxTagCount: 20
-    # Delete tags older than 90 days
-    expireDays: 90
+    enabled: true
+    maxTagAge: 90d                       # <n>d, <n>w, <n>m or <n>y
+    keepLastN: 20
+    keepSemver: true                     # never expire semver tags
+  quotas:
+    maxRepositories: 100
+    storageBytes: 53687091200            # 50 GiB
 ```
 
 ```bash
@@ -151,7 +163,7 @@ kubectl describe project backend -n spectoncr
 
 ### AccessPolicy
 
-AccessPolicy defines who can do what within a tenant or project.
+AccessPolicy allows or denies actions on resources to subjects within a tenant. When policies overlap, the one with the higher `priority` (-1000 to 1000, default 0) takes precedence.
 
 ```yaml
 apiVersion: spectoncr.io/v1alpha1
@@ -160,31 +172,36 @@ metadata:
   name: acme-backend-devs
   namespace: spectoncr
 spec:
-  tenantRef: acme
-  # Scope to a specific project (omit for tenant-wide access)
-  projectRef: backend
-  subjects:
+  tenantRef: acme                        # required
+  description: "Backend developers can push to backend repos"
+  effect: Allow                          # required: Allow or Deny
+  priority: 0
+  subjects:                              # required, at least one
     - kind: Group
       name: "backend-developers"
     - kind: User
       name: "alice@acme.com"
     - kind: ServiceAccount
       name: "ci-bot"
-  # One of: admin, maintainer, reader
-  role: maintainer
-  # Optional: restrict to specific actions
-  actions:
-    - "pull"
-    - "push"
+    - kind: Group                        # match an OIDC claim instead of a name
+      oidcClaim: "groups"
+      claimValue: "platform-admins"
+  resources:                             # required, at least one
+    - type: repository                   # repository, tag, manifest, blob or project
+      namePattern: "backend/*"           # glob; defaults to "*"
+      projectRef: backend                # must exist in the same namespace
+  actions:                               # required: pull, push, delete, list, admin or *
+    - pull
+    - push
+  conditions:                            # optional extra conditions
+    - type: SourceIP
+      sourceCidrs: ["10.0.0.0/8"]
+    - type: TimeWindow
+      timeWindowStart: "08:00"
+      timeWindowEnd: "20:00"
 ```
 
-Roles and their permissions:
-
-| Role | Pull | Push | Delete | Manage Projects | Manage Access |
-|------|------|------|--------|-----------------|---------------|
-| reader | Yes | No | No | No | No |
-| maintainer | Yes | Yes | Yes | No | No |
-| admin | Yes | Yes | Yes | Yes | Yes |
+`status.valid` is `false` when the tenant or a `projectRef` doesn't exist.
 
 Subject kinds:
 
@@ -193,10 +210,11 @@ Subject kinds:
 | `User` | An individual user, identified by username or email |
 | `Group` | A group of users (e.g., from OIDC group claims) |
 | `ServiceAccount` | A CI/CD service account or bot |
+| `Anonymous` | Unauthenticated clients |
 
 ### TokenPolicy
 
-TokenPolicy controls JWT token behavior per tenant.
+TokenPolicy controls JWT token behavior per tenant. Durations use `<n>s`, `<n>m`, `<n>h` or `<n>d`.
 
 ```yaml
 apiVersion: spectoncr.io/v1alpha1
@@ -205,24 +223,33 @@ metadata:
   name: acme-token-policy
   namespace: spectoncr
 spec:
-  tenantRef: acme
-  # Maximum allowed token lifetime
-  maxTtlSeconds: 600
-  # Default token lifetime when not explicitly requested
-  defaultTtlSeconds: 300
-  # Only issue tokens to clients in these IP ranges
-  allowedIpRanges:
-    - "10.0.0.0/8"
-    - "172.16.0.0/12"
-  # Require MFA for token issuance (requires OIDC provider support)
-  requireMfa: false
+  tenantRef: acme                        # required
+  maxTokenLifetime: 10m                  # default 1h
+  maxRefreshTokenLifetime: 24h           # default 24h
+  allowedScopes:
+    - repository:pull
+    - repository:push
+  maxConcurrentSessions: 0               # 0 = unlimited
+  rotation:
+    enabled: true
+    rotationInterval: 30d
+    gracePeriod: 5m
+  revocation:
+    revokeOnPasswordChange: true
+    revokeOnSuspension: true
+    revokeOnPolicyChange: false
+  ipRestrictions:
+    bindToIp: false
+    allowedCidrs:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+  robotAccounts:
+    enabled: true
+    maxPerProject: 10
+    maxTokenLifetime: 365d
 ```
 
-Validation rules enforced by the controller:
-
-- `defaultTtlSeconds` must be less than or equal to `maxTtlSeconds`
-- `maxTtlSeconds` must be greater than zero
-- The referenced tenant must exist
+The referenced tenant must exist; field formats are enforced by the CRD schema.
 
 ---
 
