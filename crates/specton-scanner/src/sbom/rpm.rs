@@ -70,6 +70,12 @@ struct ParsedHeader {
 
 /// Parse one RPM header blob starting at `bytes[0]` (which must begin with
 /// `HEADER_MAGIC`). Returns `(bytes_consumed, package)` on success.
+// Clippy 1.98 suggests `as_chunks::<16>()` for the entry loop below, but
+// `slice::as_chunks` is only stable from 1.98 and the release image builds
+// on rust:1.94 (see Dockerfile). Taking the suggestion would break the
+// container build, so keep `chunks_exact` until the builder image moves.
+// `unknown_lints` keeps clippy < 1.98 (which lacks this lint) quiet too.
+#[allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
 fn parse_header(bytes: &[u8]) -> Option<(usize, ParsedHeader)> {
     if bytes.len() < 16 || bytes[..8] != HEADER_MAGIC {
         return None;
