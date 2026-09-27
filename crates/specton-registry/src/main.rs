@@ -729,6 +729,33 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, state.prom_handle.render())
 }
 
+/// Read a manifest or blob from another region after a local miss.
+///
+/// The primary is where pushes land, so a miss there is final: asking a
+/// replica would only return its 401 (the proxy sends no credentials) or its
+/// own pull-through from this primary. On a replica, only a 2xx answer counts;
+/// anything else, or no healthy region, is a miss and the caller returns
+/// ManifestUnknown/BlobUnknown instead of serving an error body as content.
+async fn failover_read(failover: Option<&FailoverManager>, path: &str) -> Option<Bytes> {
+    let failover = failover?;
+    if failover.is_local_primary() {
+        return None;
+    }
+    info!(path = %path, "Local miss, trying failover region");
+    match failover.proxy_get(path, None).await {
+        Ok(resp) if (200..300).contains(&resp.status) => Some(resp.body),
+        Ok(resp) => {
+            debug!(path = %path, region = %resp.source_region, status = resp.status,
+                "Failover region did not have it");
+            None
+        }
+        Err(e) => {
+            warn!(path = %path, error = %e, "Failover read failed");
+            None
+        }
+    }
+}
+
 /// HEAD /v2/{tenant}/{project}/{name}/manifests/{reference}
 #[instrument(name = "head_manifest", skip(state, claims), fields(tenant = %params.tenant, project = %params.project, name = %params.name, reference = %params.reference))]
 async fn head_manifest(
@@ -880,22 +907,16 @@ async fn get_manifest(
                         return Err(RegistryError::UpstreamError(e.to_string()));
                     }
                 }
-            } else if let Some(ref failover) = state.failover_manager {
-                // Try reading from another region
-                info!(
-                    tenant = %params.tenant,
-                    reference = %params.reference,
-                    "Local manifest miss, trying failover region"
-                );
-                let path = format!(
+            } else if let Some(body) = failover_read(
+                state.failover_manager.as_deref(),
+                &format!(
                     "/v2/{}/{}/{}/manifests/{}",
                     params.tenant, params.project, params.name, params.reference
-                );
-                let proxy = failover
-                    .proxy_get(&path, None)
-                    .await
-                    .map_err(|e| RegistryError::FailoverError(e.to_string()))?;
-                proxy.body
+                ),
+            )
+            .await
+            {
+                body
             } else {
                 return Err(RegistryError::ManifestUnknown {
                     reference: params.reference.clone(),
@@ -1568,21 +1589,16 @@ async fn get_blob(
                         return Err(RegistryError::UpstreamError(e.to_string()));
                     }
                 }
-            } else if let Some(ref failover) = state.failover_manager {
-                debug!(
-                    tenant = %params.tenant,
-                    digest = %params.digest,
-                    "Local blob miss, trying failover region"
-                );
-                let path = format!(
+            } else if let Some(body) = failover_read(
+                state.failover_manager.as_deref(),
+                &format!(
                     "/v2/{}/{}/{}/blobs/{}",
                     params.tenant, params.project, params.name, params.digest
-                );
-                let proxy = failover
-                    .proxy_get(&path, None)
-                    .await
-                    .map_err(|e| RegistryError::FailoverError(e.to_string()))?;
-                proxy.body
+                ),
+            )
+            .await
+            {
+                body
             } else {
                 return Err(RegistryError::BlobUnknown {
                     digest: params.digest.clone(),
@@ -4432,6 +4448,97 @@ mod tests {
                 assert_eq!(default_tenant, "__default__");
             }
             _ => panic!("unknown mode must fall back to DefaultTenantOnly"),
+        }
+    }
+
+    mod failover_read {
+        use super::super::failover_read;
+        use axum::{Router, http::StatusCode, routing::get};
+        use specton_replication::failover::FailoverManager;
+        use specton_replication::region::RegionConfig;
+
+        /// A peer region that serves one manifest and 401s everything else,
+        /// like a registry that wants credentials the proxy doesn't send.
+        async fn peer() -> String {
+            let app = Router::new()
+                .route("/v2/t/p/n/manifests/present", get(|| async { "manifest" }))
+                .fallback(|| async { (StatusCode::UNAUTHORIZED, "unauthorized") });
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            format!("http://{addr}")
+        }
+
+        fn manager(local: &str, peer: &str) -> FailoverManager {
+            let region = |name: &str, endpoint: &str, primary: bool, priority| RegionConfig {
+                name: name.into(),
+                endpoint: endpoint.into(),
+                internal_endpoint: endpoint.into(),
+                is_primary: primary,
+                priority,
+            };
+            FailoverManager::new(
+                local.into(),
+                vec![
+                    region(
+                        "primary",
+                        if local == "primary" {
+                            "http://unused"
+                        } else {
+                            peer
+                        },
+                        true,
+                        1,
+                    ),
+                    region(
+                        "mirror",
+                        if local == "mirror" {
+                            "http://unused"
+                        } else {
+                            peer
+                        },
+                        false,
+                        2,
+                    ),
+                ],
+                10,
+            )
+        }
+
+        #[tokio::test]
+        async fn replica_serves_peer_hit() {
+            let fm = manager("mirror", &peer().await);
+            let body = failover_read(Some(&fm), "/v2/t/p/n/manifests/present").await;
+            assert_eq!(body.as_deref(), Some(&b"manifest"[..]));
+        }
+
+        #[tokio::test]
+        async fn peer_error_is_a_miss_not_content() {
+            let fm = manager("mirror", &peer().await);
+            assert!(
+                failover_read(Some(&fm), "/v2/t/p/n/manifests/absent")
+                    .await
+                    .is_none()
+            );
+        }
+
+        #[tokio::test]
+        async fn primary_never_reads_from_replicas() {
+            let fm = manager("primary", &peer().await);
+            assert!(
+                failover_read(Some(&fm), "/v2/t/p/n/manifests/present")
+                    .await
+                    .is_none()
+            );
+        }
+
+        #[tokio::test]
+        async fn disabled_is_a_miss() {
+            assert!(
+                failover_read(None, "/v2/t/p/n/manifests/present")
+                    .await
+                    .is_none()
+            );
         }
     }
 }
