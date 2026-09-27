@@ -857,8 +857,9 @@ async fn get_manifest(
     .increment(1);
     counter!("registry_manifest_pull_total").increment(1);
 
-    // Try local storage first, then upstream mirror, then failover
-    let data = match resolve_manifest_path(
+    // Try local storage first, then upstream mirror, then failover.
+    // A tag whose manifest is gone (dangling link) is a local miss too.
+    let local = match resolve_manifest_path(
         &state,
         &params.tenant,
         &params.project,
@@ -867,18 +868,21 @@ async fn get_manifest(
     )
     .await
     {
-        Ok(path) => {
-            let store_path = StorePath::from(path);
-            state
-                .store
-                .get(&store_path)
-                .await
-                .map_err(|e| RegistryError::Storage(e.to_string()))?
-                .bytes()
-                .await
-                .map_err(|e| RegistryError::Storage(e.to_string()))?
-        }
-        Err(_) => {
+        Ok(path) => match state.store.get(&StorePath::from(path)).await {
+            Ok(result) => Some(
+                result
+                    .bytes()
+                    .await
+                    .map_err(|e| RegistryError::Storage(e.to_string()))?,
+            ),
+            Err(e) if is_store_not_found(&e) => None,
+            Err(e) => return Err(RegistryError::Storage(e.to_string())),
+        },
+        Err(_) => None,
+    };
+    let data = match local {
+        Some(data) => data,
+        None => {
             // Local miss — try pull-through mirror (upstream registries)
             if let Some(ref mirror) = state.mirror_service {
                 info!(
@@ -1346,52 +1350,78 @@ async fn delete_manifest(
     )
     .increment(1);
 
-    let path = resolve_manifest_path(
-        &state,
-        &params.tenant,
-        &params.project,
-        &params.name,
-        &params.reference,
-    )
-    .await?;
-    // Pull the manifest digest out of the resolved storage path so the
-    // GC refcount decrement (below) sees the same digest the writer
-    // recorded under `add_refs`. Layout from `manifest_path()` is
-    // `<tenant>/<project>/<repo>/manifests/<sha256:hex>`.
-    let manifest_digest = path
-        .rsplit_once('/')
-        .map(|(_, last)| last.to_string())
-        .unwrap_or_else(|| params.reference.clone());
-    let store_path = StorePath::from(path);
+    // OCI distribution semantics: DELETE by tag removes only that tag and
+    // leaves the manifest (other tags may still point at it); DELETE by
+    // digest removes the manifest and every tag pointing at it, so no tag is
+    // left dangling. Deleting the manifest on a tag delete used to strand the
+    // repo's other tags on it, and a digest delete left all its tags behind:
+    // GET on them then failed with 500 and DELETE by tag with 404.
+    let (manifest_digest, is_tag) = match params.reference.strip_prefix("sha256-") {
+        Some(hex) => (format!("sha256:{hex}"), false),
+        None if params.reference.starts_with("sha256:") => (params.reference.clone(), false),
+        None => {
+            let digest = read_tag_link(
+                &state.store,
+                &params.tenant,
+                &params.project,
+                &params.name,
+                &params.reference,
+            )
+            .await?
+            .ok_or_else(|| RegistryError::ManifestUnknown {
+                reference: params.reference.clone(),
+            })?;
+            (digest, true)
+        }
+    };
 
-    state
-        .store
-        .delete(&store_path)
-        .await
-        .map_err(|_| RegistryError::ManifestUnknown {
-            reference: params.reference.clone(),
-        })?;
-
-    // If it was a tag reference, also delete the tag link
-    if !params.reference.starts_with("sha256:") {
+    if is_tag {
         let tag_p = tag_link_path(
             &params.tenant,
             &params.project,
             &params.name,
             &params.reference,
         );
-        let tag_store_path = StorePath::from(tag_p);
-        let _ = state.store.delete(&tag_store_path).await;
-    }
+        state
+            .store
+            .delete(&StorePath::from(tag_p))
+            .await
+            .map_err(|e| RegistryError::Storage(e.to_string()))?;
+    } else {
+        let manifest_p = manifest_path(
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &manifest_digest,
+        );
+        let manifest_existed = match state.store.delete(&StorePath::from(manifest_p)).await {
+            Ok(()) => true,
+            Err(e) if is_store_not_found(&e) => false,
+            Err(e) => return Err(RegistryError::Storage(e.to_string())),
+        };
+        let removed_tags = delete_tags_for_digest(
+            &state.store,
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &manifest_digest,
+        )
+        .await?;
+        if !manifest_existed && removed_tags.is_empty() {
+            return Err(RegistryError::ManifestUnknown {
+                reference: params.reference.clone(),
+            });
+        }
 
-    // Online-GC refcount decrement (009). Failures don't fail the
-    // delete — drift is corrected by the reconciler in slice 3.
-    if let Err(e) = state
-        .gc_refcounter
-        .remove_refs(&params.tenant, &manifest_digest)
-        .await
-    {
-        warn!(error = %e, digest = %manifest_digest, "gc refcount remove_refs failed");
+        // Online-GC refcount decrement (009). Failures don't fail the
+        // delete — drift is corrected by the reconciler in slice 3.
+        if let Err(e) = state
+            .gc_refcounter
+            .remove_refs(&params.tenant, &manifest_digest)
+            .await
+        {
+            warn!(error = %e, digest = %manifest_digest, "gc refcount remove_refs failed");
+        }
     }
 
     // Emit replication event if configured
@@ -1400,8 +1430,12 @@ async fn delete_manifest(
             params.tenant.clone(),
             params.project.clone(),
             params.name.clone(),
-            params.reference.clone(),
-            params.reference.clone(),
+            if is_tag {
+                params.reference.clone()
+            } else {
+                manifest_digest.clone()
+            },
+            manifest_digest.clone(),
             repl.local_region().to_string(),
         );
         repl.enqueue(event).await;
@@ -2694,6 +2728,67 @@ async fn upload_attestation(
 
 // ── Helper Functions ─────────────────────────────────────────────────────────
 
+/// Read a tag link. `Ok(None)` when the tag doesn't exist.
+async fn read_tag_link(
+    store: &Arc<dyn ObjectStore>,
+    tenant: &str,
+    project: &str,
+    repo: &str,
+    tag: &str,
+) -> Result<Option<String>, RegistryError> {
+    let path = StorePath::from(tag_link_path(tenant, project, repo, tag));
+    match store.get(&path).await {
+        Ok(result) => {
+            let bytes = result
+                .bytes()
+                .await
+                .map_err(|e| RegistryError::Storage(e.to_string()))?;
+            Ok(Some(String::from_utf8_lossy(&bytes).trim().to_string()))
+        }
+        Err(e) if is_store_not_found(&e) => Ok(None),
+        Err(e) => Err(RegistryError::Storage(e.to_string())),
+    }
+}
+
+/// Delete every tag in the repo that points at `digest`, so deleting a
+/// manifest by digest leaves no dangling tags. Returns the removed tags.
+async fn delete_tags_for_digest(
+    store: &Arc<dyn ObjectStore>,
+    tenant: &str,
+    project: &str,
+    repo: &str,
+    digest: &str,
+) -> Result<Vec<String>, RegistryError> {
+    let prefix = tags_prefix(tenant, project, repo);
+    let links: Vec<_> = store
+        .list(Some(&StorePath::from(prefix.clone())))
+        .try_collect()
+        .await
+        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+
+    let mut removed = Vec::new();
+    for meta in links {
+        let Some(tag) = meta.location.as_ref().strip_prefix(&prefix) else {
+            continue;
+        };
+        if tag.is_empty() {
+            continue;
+        }
+        if read_tag_link(store, tenant, project, repo, tag)
+            .await?
+            .as_deref()
+            == Some(digest)
+        {
+            match store.delete(&meta.location).await {
+                Ok(()) => removed.push(tag.to_string()),
+                Err(e) if is_store_not_found(&e) => {}
+                Err(e) => return Err(RegistryError::Storage(e.to_string())),
+            }
+        }
+    }
+    Ok(removed)
+}
+
 /// Resolve a manifest reference: if it is a tag, read the tag link to get the digest,
 /// then return the manifest path by digest. If it is a digest, return the manifest path directly.
 async fn resolve_manifest_path(
@@ -2886,15 +2981,22 @@ async fn internal_replicate_delete(
         "Receiving replicated delete"
     );
 
-    let path = manifest_path(&event.tenant, &event.project, &event.repo, &event.digest);
-    let store_path = StorePath::from(path);
-    let _ = state.store.delete(&store_path).await;
-
-    // Delete tag link if applicable
-    if !event.reference.starts_with("sha256:") {
+    // Same semantics as delete_manifest: a tag delete removes only the tag,
+    // a digest delete removes the manifest and every tag pointing at it.
+    if event.reference.starts_with("sha256:") {
+        let path = manifest_path(&event.tenant, &event.project, &event.repo, &event.digest);
+        let _ = state.store.delete(&StorePath::from(path)).await;
+        delete_tags_for_digest(
+            &state.store,
+            &event.tenant,
+            &event.project,
+            &event.repo,
+            &event.digest,
+        )
+        .await?;
+    } else {
         let tag_p = tag_link_path(&event.tenant, &event.project, &event.repo, &event.reference);
-        let tag_store_path = StorePath::from(tag_p);
-        let _ = state.store.delete(&tag_store_path).await;
+        let _ = state.store.delete(&StorePath::from(tag_p)).await;
     }
 
     Ok(StatusCode::OK.into_response())
@@ -4538,6 +4640,75 @@ mod tests {
                 failover_read(None, "/v2/t/p/n/manifests/present")
                     .await
                     .is_none()
+            );
+        }
+    }
+
+    mod tag_links {
+        use super::super::{delete_tags_for_digest, read_tag_link};
+        use object_store::{ObjectStore, memory::InMemory, path::Path as StorePath};
+        use specton_common::storage::tag_link_path;
+        use std::sync::Arc;
+
+        async fn store_with(tags: &[(&str, &str)]) -> Arc<dyn ObjectStore> {
+            let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+            for (tag, digest) in tags {
+                let path = StorePath::from(tag_link_path("_", "p", "r", tag));
+                store.put(&path, digest.to_string().into()).await.unwrap();
+            }
+            store
+        }
+
+        #[tokio::test]
+        async fn deletes_only_tags_pointing_at_digest() {
+            let store =
+                store_with(&[("a", "sha256:1"), ("b", "sha256:1"), ("c", "sha256:2")]).await;
+            let mut removed = delete_tags_for_digest(&store, "_", "p", "r", "sha256:1")
+                .await
+                .unwrap();
+            removed.sort();
+            assert_eq!(removed, ["a", "b"]);
+            assert_eq!(
+                read_tag_link(&store, "_", "p", "r", "a").await.unwrap(),
+                None
+            );
+            assert_eq!(
+                read_tag_link(&store, "_", "p", "r", "b").await.unwrap(),
+                None
+            );
+            assert_eq!(
+                read_tag_link(&store, "_", "p", "r", "c")
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("sha256:2")
+            );
+        }
+
+        #[tokio::test]
+        async fn no_tags_is_empty_not_error() {
+            let store = store_with(&[]).await;
+            assert!(
+                delete_tags_for_digest(&store, "_", "p", "r", "sha256:1")
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+
+        #[tokio::test]
+        async fn read_trims_and_reports_missing() {
+            let store = store_with(&[("t", "sha256:1\n")]).await;
+            assert_eq!(
+                read_tag_link(&store, "_", "p", "r", "t")
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("sha256:1")
+            );
+            assert_eq!(
+                read_tag_link(&store, "_", "p", "r", "nope").await.unwrap(),
+                None
             );
         }
     }
