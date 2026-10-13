@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="SpectonCR full feature list — highly available OCI/Docker container registry in Rust: multi-region replication, multipart large-layer uploads, OIDC/SCIM identity, CVE scanning, and Kubernetes-native operations." />
+  <meta name="theme-color" content="#0a0a1a" />
+  <title>SpectonCR — Full Feature List</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0a1a; --surface: #12122a; --surface-2: #1a1a35; --card: #222245;
+      --border: rgba(255,255,255,0.08); --border-hover: rgba(56,189,248,0.3);
+      --text: #e0e0ff; --text-secondary: #8888aa; --text-muted: #666688;
+      --cyan: #38bdf8; --cyan-light: #7dd3fc; --green: #4ade80; --amber: #fbbf24;
+      --red: #f87171; --purple: #a78bfa; --blue: #3b82f6;
+      --radius: 12px; --radius-sm: 8px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; font-size: 17px; }
+    body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); -webkit-font-smoothing: antialiased; line-height: 1.6; }
+    a { color: var(--cyan); text-decoration: none; transition: color 0.2s; } a:hover { color: var(--cyan-light); }
+    code { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; background: rgba(56,189,248,0.08); padding: 2px 6px; border-radius: 4px; }
+
+    .nav { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; justify-content: space-between; padding: 14px 32px; background: rgba(10,10,26,0.9); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+    .nav-logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.2rem; color: var(--text); }
+    .nav-logo-icon { color: var(--cyan); font-size: 1.5rem; }
+    .nav-links { display: flex; gap: 24px; align-items: center; }
+    .nav-links a { color: var(--text-secondary); font-size: 0.8rem; font-weight: 500; } .nav-links a:hover { color: var(--text); }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 40px 32px; }
+    .page-header { margin-bottom: 40px; }
+    .page-header h1 { font-size: 2rem; font-weight: 800; margin-bottom: 12px; background: linear-gradient(135deg, var(--cyan), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .page-header p { color: var(--text-secondary); font-size: 0.95rem; max-width: 760px; }
+    .page-meta { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 18px; font-size: 0.75rem; color: var(--text-muted); }
+    .page-meta span { display: flex; align-items: center; gap: 7px; }
+    .meta-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+    .toc { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 48px; }
+    .toc h3 { font-size: 0.85rem; font-weight: 700; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+    .toc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .toc a { display: block; padding: 6px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 500; color: var(--text-secondary); transition: all 0.15s; }
+    .toc a:hover { background: rgba(56,189,248,0.08); color: var(--cyan); }
+
+    .feat-section { margin-bottom: 56px; scroll-margin-top: 80px; }
+    .feat-section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .feat-section-header h2 { font-size: 1.3rem; font-weight: 800; }
+    .feat-section-intro { color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 24px; max-width: 800px; }
+
+    .badge { padding: 4px 12px; border-radius: 12px; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+    .badge-new { background: rgba(74,222,128,0.12); color: var(--green); }
+    .badge-core { background: rgba(56,189,248,0.12); color: var(--cyan); }
+    .badge-ent { background: rgba(167,139,250,0.12); color: var(--purple); }
+    .badge-dev { background: rgba(251,191,36,0.12); color: var(--amber); }
+
+    .feat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; }
+    .feat-card { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; transition: border-color 0.2s, transform 0.2s; }
+    .feat-card:hover { border-color: var(--border-hover); transform: translateY(-2px); }
+    .feat-card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+    .feat-card-icon { color: var(--cyan); }
+    .feat-card-desc { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 12px; }
+    .feat-list { list-style: none; }
+    .feat-list li { font-size: 0.78rem; color: var(--text-secondary); padding: 4px 0 4px 18px; position: relative; }
+    .feat-list li::before { content: '\2192'; position: absolute; left: 0; color: var(--cyan); opacity: 0.7; }
+
+    .callout { background: linear-gradient(135deg, rgba(56,189,248,0.07), rgba(167,139,250,0.05)); border: 1px solid rgba(56,189,248,0.22); border-radius: var(--radius); padding: 24px; margin-bottom: 24px; }
+    .callout h3 { font-size: 1rem; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .callout p { font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 12px; }
+    .callout p:last-child { margin-bottom: 0; }
+
+    .spec-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 16px; display: block; overflow-x: auto; }
+    .spec-table th { text-align: left; padding: 9px 12px; background: var(--card); border: 1px solid var(--border); color: var(--text-muted); font-weight: 600; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.4px; }
+    .spec-table td { padding: 9px 12px; border: 1px solid var(--border); color: var(--text-secondary); }
+    .spec-table code { font-size: 0.73rem; }
+
+    .code-block { padding: 14px 18px; background: #0a0a14; border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: 'JetBrains Mono', monospace; font-size: 0.73rem; line-height: 1.7; color: var(--green); overflow-x: auto; white-space: pre; margin-top: 16px; }
+    .code-comment { color: var(--text-muted); }
+
+    .cta-row { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; border-radius: 8px; font-weight: 600; font-size: 0.8rem; letter-spacing: 0.5px; transition: all 0.2s; }
+    .btn-primary { background: var(--cyan); color: #0a0a1a; }
+    .btn-primary:hover { filter: brightness(1.15); transform: translateY(-1px); color: #0a0a1a; }
+    .btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { border-color: var(--border-hover); transform: translateY(-1px); color: var(--text); }
+
+    .footer { padding: 32px; text-align: center; border-top: 1px solid var(--border); color: var(--text-secondary); font-size: 0.75rem; }
+    .footer-links { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
+
+    @media (max-width: 768px) {
+      .toc-grid { grid-template-columns: 1fr; }
+      .nav-links { display: none; }
+      .container { padding: 28px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <a href="index.html" class="nav-logo"><span class="nav-logo-icon">&#x25C8;</span> SpectonCR</a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="#whats-new">What&rsquo;s New</a>
+    <a href="#registry">Registry</a>
+    <a href="#ha">High Availability</a>
+    <a href="#scanning">Scanning</a>
+    <a href="api.html">API Docs</a>
+    <a href="https://github.com/spectonio/spectoncr">GitHub</a>
+  </div>
+</nav>
+
+<div class="container">
+
+<div class="page-header">
+  <h1>Full Feature List</h1>
+  <p>
+    SpectonCR is a highly available OCI/Docker container registry written in Rust. Every service is
+    stateless and horizontally scalable, storage is pluggable across filesystem, S3, GCS and Azure Blob,
+    and images are replicated across regions with circuit-breaker-protected failover. This page is the
+    complete inventory &mdash; what ships today, what it is configured with, and what is still landing.
+  </p>
+  <div class="page-meta">
+    <span><span class="meta-dot" style="background:var(--green)"></span> Last updated 16 September 2026</span>
+    <span><span class="meta-dot" style="background:var(--cyan)"></span> OCI Distribution Spec v2</span>
+    <span><span class="meta-dot" style="background:var(--purple)"></span> Apache-2.0 licensed</span>
+  </div>
+</div>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <div class="toc-grid">
+    <a href="#whats-new">What&rsquo;s New &mdash; Sept 2026</a>
+    <a href="#registry">Registry Core &amp; OCI API</a>
+    <a href="#large-layers">Large Layers &amp; Blob Uploads</a>
+    <a href="#storage">Storage Backends &amp; Tuning</a>
+    <a href="#ha">High Availability &amp; Resilience</a>
+    <a href="#replication">Multi-Region Replication</a>
+    <a href="#cache">Pull-Through Cache</a>
+    <a href="#auth">Authentication &amp; Identity</a>
+    <a href="#tenancy">Multi-Tenancy &amp; Governance</a>
+    <a href="#scanning">Vulnerability Scanning</a>
+    <a href="#ai">AI-Assisted Remediation</a>
+    <a href="#dashboard">Dashboard &amp; Operations</a>
+    <a href="#observability">Observability</a>
+    <a href="#kubernetes">Kubernetes &amp; Deployment</a>
+    <a href="#cicd">CI/CD Integration</a>
+    <a href="#platform">Platform &amp; Packaging</a>
+    <a href="#incubating">Incubating</a>
+  </div>
+</div>
+
+<!-- ===== WHAT'S NEW ===== -->
+<div class="feat-section" id="whats-new">
+  <div class="feat-section-header">
+    <h2>What&rsquo;s New &mdash; September 2026</h2>
+    <span class="badge badge-new">Shipped today</span>
+  </div>
+  <p class="feat-section-intro">
+    The most recent work landed on <code>main</code>. Each item links to the pull request it shipped in.
+  </p>
+
+  <div class="callout">
+    <h3>
+      <span class="feat-card-icon">&#x1F4E6;</span>
+      Multi-GB layers now push reliably &mdash; multipart blob uploads
+      <span class="badge badge-new">New</span>
+    </h3>
+    <p>
+      Pushing an image with a very large layer (a PyTorch-class image, for example) could fail at the end
+      of the blob upload with a bare <code>500</code>, while small images pushed fine. The blob was written
+      with a single <code>PUT</code>, and <code>object_store</code> bounds one request end to end with its
+      180-second retry timeout &mdash; a layer that cannot reach the bucket inside that window times out,
+      is retried, and exhausts the budget identically on every attempt, so retrying the push never helped.
+    </p>
+    <p>
+      Blobs above <code>storage.multipart_threshold_mb</code> are now written as a multipart upload. Every
+      part gets its own request and its own retry budget, so object size is no longer bounded by a single
+      request deadline. Payloads at or below the threshold take exactly the same single-<code>PUT</code>
+      path as before, so manifests, tags and upload placeholders are untouched.
+    </p>
+    <div class="cta-row">
+      <a href="https://github.com/spectonio/spectoncr/pull/35" class="btn btn-secondary">Pull request #35</a>
+      <a href="#large-layers" class="btn btn-secondary">Configuration &amp; limits</a>
+    </div>
+  </div>
+
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x2699;</span> Tunable storage retries &amp; timeouts <span class="badge badge-new">New</span></div>
+      <div class="feat-card-desc">
+        The S3 client&rsquo;s retry and timeout behaviour was previously implicit defaults. It is now set
+        explicitly from configuration and overridable with <code>SPECTONCR_STORAGE_*</code> environment
+        variables, because Kubernetes deploys set env rather than mounting a <code>--config</code> file.
+      </div>
+      <ul class="feat-list">
+        <li>Max retries, retry deadline, connect and request timeouts</li>
+        <li>Multipart threshold, part size and part concurrency</li>
+        <li>Existing config files without the new keys deserialize unchanged</li>
+        <li>Shipped in <a href="https://github.com/spectonio/spectoncr/pull/35">#35</a></li>
+      </ul>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F6E1;</span> Safe multipart failure handling <span class="badge badge-new">New</span></div>
+      <div class="feat-card-desc">
+        Operator-supplied tuning is clamped to what the backing store actually accepts, and a failed upload
+        is aborted rather than left behind.
+      </div>
+      <ul class="feat-list">
+        <li>Part size raised to the 5&nbsp;MiB floor S3 requires for non-final parts</li>
+        <li>Part size grown automatically when an object would exceed the 10,000-part cap</li>
+        <li>A bad config value degrades instead of failing every push</li>
+        <li>Failed uploads are aborted &mdash; no orphaned parts accruing storage charges</li>
+      </ul>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F6A6;</span> Per-tenant rate-limit env overrides</div>
+      <div class="feat-card-desc">
+        Blob <code>HEAD</code> storms during a push could hit the default per-tenant limit and return
+        <code>429</code>, with no way to tune it without a config file. The limits now take env overrides in
+        both the registry and auth services.
+      </div>
+      <ul class="feat-list">
+        <li><code>SPECTONCR_RATE_LIMIT_DEFAULT_RPS</code> &mdash; per tenant, default 100</li>
+        <li><code>SPECTONCR_RATE_LIMIT_IP_RPS</code> &mdash; per IP, default 50</li>
+        <li><code>SPECTONCR_RATE_LIMIT_TOKEN_ISSUE_RPM</code> &mdash; token issuance, default 60</li>
+        <li>Shipped in <a href="https://github.com/spectonio/spectoncr/pull/32">#32</a></li>
+      </ul>
+    </div>
+
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F50C;</span> Circuit breaker ignores <code>NotFound</code></div>
+      <div class="feat-card-desc">
+        <code>docker push</code> and <code>pull</code> issue existence checks for objects that do not exist
+        yet. Those were counted as storage failures and could trip the storage breaker open, after which
+        real requests surfaced as <code>500</code> instead of <code>404</code>.
+      </div>
+      <ul class="feat-list">
+        <li>Read ops classify <code>NotFound</code> as a healthy response, not a fault</li>
+        <li><code>CircuitBreaker::call_classified</code> lets callers define failure</li>
+        <li>Absent manifests and blobs return a clean 404 again</li>
+        <li>Shipped in <a href="https://github.com/spectonio/spectoncr/pull/21">#21</a></li>
+      </ul>
+    </div>
+  </div>
+
+  <table class="spec-table">
+    <tr><th>Change</th><th>PR</th><th>Impact</th></tr>
+    <tr><td>Large blobs written with multipart uploads</td><td><a href="https://github.com/spectonio/spectoncr/pull/35">#35</a></td><td>Multi-GB layers push instead of failing with a 500</td></tr>
+    <tr><td>Explicit, env-overridable storage retry/timeout tuning</td><td><a href="https://github.com/spectonio/spectoncr/pull/35">#35</a></td><td>Registries far from their bucket can be tuned without a config file</td></tr>
+    <tr><td>Per-tenant rate-limit env overrides</td><td><a href="https://github.com/spectonio/spectoncr/pull/32">#32</a></td><td>No more spurious 429s on blob HEAD storms</td></tr>
+    <tr><td>Storage circuit breaker no longer trips on NotFound</td><td><a href="https://github.com/spectonio/spectoncr/pull/21">#21</a></td><td>Push works through cold repositories; 404s stay 404s</td></tr>
+    <tr><td>Registry footer version no longer double-prefixed</td><td><a href="https://github.com/spectonio/spectoncr/pull/31">#31</a></td><td>Dashboard shows <code>v0.3.1</code>, not <code>vv0.3.1</code></td></tr>
+    <tr><td>arm64 images built on native runners</td><td><a href="https://github.com/spectonio/spectoncr/pull/30">#30</a></td><td>Faster multi-arch releases without QEMU emulation</td></tr>
+  </table>
+</div>
+
+<!-- ===== REGISTRY CORE ===== -->
+<div class="feat-section" id="registry">
+  <div class="feat-section-header">
+    <h2>Registry Core &amp; OCI Distribution API</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <p class="feat-section-intro">
+    A full implementation of the OCI Distribution Specification, compatible with Docker, Podman, Buildah,
+    containerd, and any OCI-compliant client. One Rust binary, no runtime dependencies.
+  </p>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4E6;</span> Image operations</div>
+      <ul class="feat-list">
+        <li>Manifest push, pull and delete (v2 schema, manifest lists)</li>
+        <li>Chunked (<code>PATCH</code>) and monolithic blob uploads</li>
+        <li>Content-addressable blob storage keyed by digest</li>
+        <li>Tag listing, pagination and the <code>/v2/_catalog</code> API</li>
+        <li>Cross-repository blob mounting</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F517;</span> Path models</div>
+      <ul class="feat-list">
+        <li>Standard 2-segment Docker paths (<code>org/image</code>)</li>
+        <li>Multi-tenant 3-segment paths (<code>tenant/project/image</code>)</li>
+        <li>Default tenant applied automatically for 2-segment pushes</li>
+        <li>Works unchanged with <code>docker</code>, <code>podman</code> and containerd</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x26A1;</span> Runtime</div>
+      <ul class="feat-list">
+        <li>Rust + Axum + Tokio, fully async I/O</li>
+        <li>Single static binary, small memory footprint</li>
+        <li>Thousands of concurrent pulls per replica</li>
+        <li>Registry on <code>:5000</code>, auth on <code>:5001</code></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== LARGE LAYERS ===== -->
+<div class="feat-section" id="large-layers">
+  <div class="feat-section-header">
+    <h2>Large Layers &amp; Blob Uploads</h2>
+    <span class="badge badge-new">Updated Sept 2026</span>
+  </div>
+  <p class="feat-section-intro">
+    Machine-learning and data-science images routinely carry layers of a gigabyte or more. SpectonCR writes
+    those blobs as multipart uploads so a single request deadline never caps object size.
+  </p>
+
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F501;</span> Multipart write path</div>
+      <div class="feat-card-desc">
+        Applied at every blob write site in the registry &mdash; monolithic <code>PUT</code>, the
+        <code>PATCH</code>-appended buffer, and upload completion.
+      </div>
+      <ul class="feat-list">
+        <li>Each part carries its own request and retry budget</li>
+        <li>Parts uploaded concurrently to keep a WAN link busy</li>
+        <li>Payloads at or below the threshold keep the original single-PUT path</li>
+        <li>Backend-agnostic: works on S3, MinIO, GCS, Azure and filesystem</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F6E0;</span> Guard rails</div>
+      <ul class="feat-list">
+        <li>5&nbsp;MiB minimum part size enforced for non-final parts</li>
+        <li>Part size grown when an object would need more than 10,000 parts</li>
+        <li>Aborted upload on failure, so no orphaned parts are billed</li>
+        <li>Unit tests plus S3 integration tests against MinIO</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x2705;</span> Verified end to end</div>
+      <ul class="feat-list">
+        <li>180&nbsp;MiB layer pushed through the real OCI endpoints into MinIO</li>
+        <li>Pulled back byte-identical on both MinIO and filesystem backends</li>
+        <li>No dangling multipart uploads left in the bucket</li>
+        <li>Small blobs and manifests confirmed on the unchanged path</li>
+      </ul>
+    </div>
+  </div>
+
+  <table class="spec-table">
+    <tr><th>Config key</th><th>Environment override</th><th>Default</th><th>Purpose</th></tr>
+    <tr><td><code>storage.multipart_threshold_mb</code></td><td><code>SPECTONCR_STORAGE_MULTIPART_THRESHOLD_MB</code></td><td>64</td><td>Blobs above this size use a multipart upload</td></tr>
+    <tr><td><code>storage.multipart_part_size_mb</code></td><td><code>SPECTONCR_STORAGE_MULTIPART_PART_SIZE_MB</code></td><td>32</td><td>Size of each part (raised to 5&nbsp;MiB if lower)</td></tr>
+    <tr><td><code>storage.multipart_concurrency</code></td><td><code>SPECTONCR_STORAGE_MULTIPART_CONCURRENCY</code></td><td>4</td><td>Parts uploaded at once</td></tr>
+    <tr><td><code>storage.retry_max_retries</code></td><td><code>SPECTONCR_STORAGE_RETRY_MAX_RETRIES</code></td><td>10</td><td>Retries per storage request</td></tr>
+    <tr><td><code>storage.retry_timeout_secs</code></td><td><code>SPECTONCR_STORAGE_RETRY_TIMEOUT_SECS</code></td><td>180</td><td>Deadline for one request including retries</td></tr>
+    <tr><td><code>storage.connect_timeout_secs</code></td><td><code>SPECTONCR_STORAGE_CONNECT_TIMEOUT_SECS</code></td><td>30</td><td>TCP connect timeout</td></tr>
+    <tr><td><code>storage.request_timeout_secs</code></td><td><code>SPECTONCR_STORAGE_REQUEST_TIMEOUT_SECS</code></td><td>300</td><td>Total timeout for one request attempt</td></tr>
+  </table>
+
+<div class="code-block"><span class="code-comment"># Registry on a slow link to its bucket: smaller parts finish sooner</span>
+kubectl -n spectoncr set env deploy/spectoncr-registry \
+  SPECTONCR_STORAGE_MULTIPART_THRESHOLD_MB=32 \
+  SPECTONCR_STORAGE_MULTIPART_PART_SIZE_MB=8 \
+  SPECTONCR_STORAGE_MULTIPART_CONCURRENCY=8</div>
+
+  <p style="margin-top:14px;font-size:0.78rem;color:var(--text-secondary);">
+    Diagnostics for large-push failures are in
+    <a href="https://github.com/spectonio/spectoncr/blob/main/docs/troubleshooting.md">docs/troubleshooting.md</a>,
+    alongside the 429 and 413 sections.
+  </p>
+</div>
+
+<!-- ===== STORAGE ===== -->
+<div class="feat-section" id="storage">
+  <div class="feat-section-header">
+    <h2>Storage Backends &amp; Tuning</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <p class="feat-section-intro">
+    Storage is an abstraction over the <code>object_store</code> crate, so the same registry binary runs on
+    a laptop volume or a multi-region bucket without a code change.
+  </p>
+  <table class="spec-table">
+    <tr><th>Backend</th><th>Value</th><th>Key settings</th></tr>
+    <tr><td>Local filesystem</td><td><code>filesystem</code></td><td><code>root</code>, PVC size</td></tr>
+    <tr><td>Amazon S3 / MinIO / S3-compatible</td><td><code>s3</code></td><td><code>bucket</code>, <code>region</code>, <code>endpoint</code>, <code>encrypt</code></td></tr>
+    <tr><td>Google Cloud Storage</td><td><code>gcs</code></td><td><code>bucket</code>, <code>keyfile</code></td></tr>
+    <tr><td>Azure Blob Storage</td><td><code>azure</code></td><td><code>container</code>, <code>accountName</code></td></tr>
+  </table>
+  <div class="feat-grid" style="margin-top:20px;">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4BE;</span> Storage behaviour</div>
+      <ul class="feat-list">
+        <li>Content-addressable layout shared by every backend</li>
+        <li>Per-deployment backend selection, no rebuild required</li>
+        <li>Multipart writes for large objects (see above)</li>
+        <li>Circuit-breaker and retry wrapping on every storage call</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F5D1;</span> Lifecycle</div>
+      <ul class="feat-list">
+        <li>Manifest and tag deletion through the OCI API</li>
+        <li>Retention policies configurable per project</li>
+        <li>Online garbage collection refcounting (see Incubating)</li>
+        <li>Audit trail for every push, pull and delete</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== HA ===== -->
+<div class="feat-section" id="ha">
+  <div class="feat-section-header">
+    <h2>High Availability &amp; Resilience</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <p class="feat-section-intro">
+    Both services are stateless, so availability is a matter of running more replicas. What sits underneath
+    is the part that matters: retries, breakers and failover that distinguish a real fault from ordinary traffic.
+  </p>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x267B;</span> Stateless scale-out</div>
+      <ul class="feat-list">
+        <li>Registry and auth scale horizontally behind one service</li>
+        <li>HorizontalPodAutoscaler for both deployments</li>
+        <li>PodDisruptionBudgets and pod anti-affinity</li>
+        <li>No sticky sessions &mdash; any replica serves any request</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F50C;</span> Circuit breakers</div>
+      <ul class="feat-list">
+        <li>Per-dependency breakers with configurable thresholds</li>
+        <li>Classified failures &mdash; <code>NotFound</code> counts as healthy</li>
+        <li>Half-open probing before a breaker closes again</li>
+        <li>Breaker state exported as metrics</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F504;</span> Retries &amp; timeouts</div>
+      <ul class="feat-list">
+        <li>Exponential backoff with jitter</li>
+        <li>Explicit connect, request and retry deadlines</li>
+        <li>Per-part retry budgets on large uploads</li>
+        <li>Bounded so a slow dependency cannot queue indefinitely</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F6A6;</span> Rate limiting</div>
+      <ul class="feat-list">
+        <li>Per-tenant and per-IP request limits</li>
+        <li>Separate limit for token issuance</li>
+        <li>Env-overridable at runtime without a config file</li>
+        <li>Per-tenant quotas from the <code>Tenant</code> CRD</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1FA7A;</span> Health &amp; readiness</div>
+      <ul class="feat-list">
+        <li><code>/health</code> endpoint for probes and load balancers</li>
+        <li>Region health loop with latency and failure counts</li>
+        <li>Automatic read failover to healthy regions</li>
+        <li>Health surfaced in the dashboard</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4BF;</span> Data durability</div>
+      <ul class="feat-list">
+        <li>Object storage durability for blobs and manifests</li>
+        <li>Async replication to secondary regions</li>
+        <li>Multipart uploads aborted cleanly on failure</li>
+        <li>Digest verification on write and on read</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== REPLICATION ===== -->
+<div class="feat-section" id="replication">
+  <div class="feat-section-header">
+    <h2>Multi-Region Replication</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <p class="feat-section-intro">
+    Manifests and blobs replicate across regions on an event-driven pipeline, with failover handled by the
+    same resilience layer the storage path uses.
+  </p>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F30D;</span> Replication engine</div>
+      <ul class="feat-list">
+        <li>Async and semi-sync replication modes</li>
+        <li>Event-driven &mdash; a push enqueues replication work</li>
+        <li>Primary and secondary region roles</li>
+        <li>Backoff and retry on partitioned links</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F6DF;</span> Failover</div>
+      <ul class="feat-list">
+        <li>Health check loop per region</li>
+        <li>Reads served from the nearest healthy region</li>
+        <li>Circuit breaker isolates a failing region</li>
+        <li>Failover state visible in the dashboard and metrics</li>
+      </ul>
+    </div>
+  </div>
+<div class="code-block"><span class="code-comment"># Three-replica registry with multi-region enabled</span>
+helm install spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
+  --set registry.replicas=3 \
+  --set auth.replicas=2 \
+  --set multiRegion.enabled=true \
+  --set multiRegion.localRegion=us-east-1 \
+  --set multiRegion.isPrimary=true</div>
+</div>
+
+<!-- ===== CACHE ===== -->
+<div class="feat-section" id="cache">
+  <div class="feat-section-header">
+    <h2>Pull-Through Cache</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <p class="feat-section-intro">
+    Mirror upstream registries transparently to cut egress costs and survive upstream rate limits.
+  </p>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F50D;</span> Upstreams</div>
+      <ul class="feat-list">
+        <li>Docker Hub, GHCR, GCR, Quay.io, registry.k8s.io</li>
+        <li>Authenticated upstreams to avoid Docker Hub pull limits</li>
+        <li>Any additional OCI-compliant upstream by config</li>
+        <li>Zero client-side changes &mdash; plain <code>docker pull</code></li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4BD;</span> Cache behaviour</div>
+      <ul class="feat-list">
+        <li>Automatic manifest and blob caching on first pull</li>
+        <li>TTL-based cache invalidation</li>
+        <li>containerd mirror configuration supported</li>
+        <li>Cached images are scanned like any other image</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== AUTH ===== -->
+<div class="feat-section" id="auth">
+  <div class="feat-section-header">
+    <h2>Authentication &amp; Identity</h2>
+    <span class="badge badge-ent">Enterprise</span>
+  </div>
+  <p class="feat-section-intro">
+    Zero static credentials in production. Identity comes from your existing provider, and every token is
+    short-lived and scoped.
+  </p>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F3E2;</span> SSO / OIDC</div>
+      <ul class="feat-list">
+        <li>Authorization Code flow with PKCE</li>
+        <li>Azure AD / Entra ID, Okta, Google, any OIDC provider</li>
+        <li>Auto-provision users on first login</li>
+        <li>Group-to-role mapping, per tenant and per project</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F916;</span> Machine identity</div>
+      <ul class="feat-list">
+        <li>CI/CD OIDC federation: GitHub Actions, GitLab CI, Kubernetes SAs</li>
+        <li>Robot accounts with configurable expiry</li>
+        <li>API keys (<code>nck_</code>) with per-permission scoping</li>
+        <li>No static secrets in pipelines</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F511;</span> Tokens</div>
+      <ul class="feat-list">
+        <li>Docker-compatible token exchange at <code>/auth/token</code></li>
+        <li>RS256 / EdDSA signed JWTs, JWKS published for verification</li>
+        <li>Short-lived by default (5&ndash;15 minutes)</li>
+        <li>Refresh tokens with instant revocation</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4CB;</span> SCIM 2.0 provisioning</div>
+      <ul class="feat-list">
+        <li>RFC 7644 Users and Groups endpoints</li>
+        <li>Pre-provision access before first login</li>
+        <li>Instant deprovisioning on offboarding</li>
+        <li>Group membership changes sync without a new login</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F510;</span> Key management</div>
+      <ul class="feat-list">
+        <li>HashiCorp Vault integration (Transit + KV)</li>
+        <li>Mounted PEM keypair or Vault-managed signing keys</li>
+        <li>Key rotation without downtime</li>
+        <li>Bootstrap admin for first-run setup only</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F6E1;</span> Authorization</div>
+      <ul class="feat-list">
+        <li>RBAC roles: Admin, Maintainer, Reader</li>
+        <li><code>AccessPolicy</code> CRD with subjects, resources, actions, conditions</li>
+        <li>Scope-checked per repository operation</li>
+        <li>IP restrictions per tenant</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== TENANCY ===== -->
+<div class="feat-section" id="tenancy">
+  <div class="feat-section-header">
+    <h2>Multi-Tenancy &amp; Governance</h2>
+    <span class="badge badge-ent">Enterprise</span>
+  </div>
+  <p class="feat-section-intro">
+    One registry serves many teams, each with its own quotas, policies and isolation, declared as Kubernetes
+    resources so they live in Git alongside everything else.
+  </p>
+  <table class="spec-table">
+    <tr><th>CRD</th><th>Scope</th><th>Purpose</th></tr>
+    <tr><td><code>Tenant</code></td><td>Cluster</td><td>Top-level org with quotas, IP restrictions, OIDC mapping</td></tr>
+    <tr><td><code>Project</code></td><td>Namespace</td><td>Groups repositories; visibility, retention, scanning policy</td></tr>
+    <tr><td><code>AccessPolicy</code></td><td>Namespace</td><td>Fine-grained RBAC: subjects, resources, actions, conditions</td></tr>
+    <tr><td><code>TokenPolicy</code></td><td>Namespace</td><td>Token lifetime, rotation, revocation, robot accounts</td></tr>
+  </table>
+  <div class="feat-grid" style="margin-top:20px;">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4CF;</span> Quotas</div>
+      <ul class="feat-list">
+        <li>Max storage bytes and max repositories per tenant</li>
+        <li>Pull and push rate per minute</li>
+        <li>Enforced at the API edge</li>
+        <li>Usage telemetry recorded per tenant</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4DD;</span> Audit</div>
+      <ul class="feat-list">
+        <li>Full audit trail for push, pull and delete</li>
+        <li>Suppression changes recorded with the actor</li>
+        <li>Filterable audit view in the dashboard</li>
+        <li>Webhook notifications for registry events</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SCANNING ===== -->
+<div class="feat-section" id="scanning">
+  <div class="feat-section-header">
+    <h2>Vulnerability Scanning &amp; SBOM</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <p class="feat-section-intro">
+    Scanning is built into the registry, not bolted on. Every push is scanned in-process by
+    <code>specton-scanner</code> &mdash; no Trivy daemon, no Grype shell-out, no external scanner pod.
+  </p>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F50E;</span> SBOM extraction</div>
+      <ul class="feat-list">
+        <li>OS packages: <code>dpkg</code>, <code>apk</code>, <code>rpm</code></li>
+        <li>Language deps: npm, PyPI, Cargo, Go modules</li>
+        <li>ELF metadata fallback for un-packaged binaries</li>
+        <li>CycloneDX SBOM output, exportable to S3</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4DA;</span> Vulnerability data</div>
+      <ul class="feat-list">
+        <li>OSV as the bootstrap source</li>
+        <li>SpectonVulnDb: local Postgres mirror of OSV, GHSA and NVD</li>
+        <li>Ecosystem-aware matchers: apk, deb, rpm, semver, PEP 440, Go</li>
+        <li>Scheduled ingest via <code>/admin/vulndb/ingest</code></li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x2696;</span> Noise control &amp; policy</div>
+      <ul class="feat-list">
+        <li>CycloneDX VEX 1.4 ingestion (not_affected / fixed / under_investigation)</li>
+        <li>Suppressions with audit trail</li>
+        <li>Pass/fail policy gate with per-severity thresholds</li>
+        <li>Standalone policy evaluation endpoint</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4E1;</span> Delivery</div>
+      <ul class="feat-list">
+        <li>Results in Redis with a 1-hour TTL, keyed by digest</li>
+        <li>WebSocket progress stream for live UIs</li>
+        <li>Cross-image CVE search</li>
+        <li>Slack notifications and nightly PDF reports</li>
+      </ul>
+    </div>
+  </div>
+  <table class="spec-table">
+    <tr><th>Endpoint</th><th>Purpose</th></tr>
+    <tr><td><code>GET /v2/scan/live/{digest}</code></td><td>Poll-until-complete scan result</td></tr>
+    <tr><td><code>POST /v2/scan</code></td><td>Trigger a scan for a (repo, tag)</td></tr>
+    <tr><td><code>GET /v2/scan/{id}/report</code></td><td>Rendered scan report</td></tr>
+    <tr><td><code>GET /v2/scan/{id}/sbom</code></td><td>CycloneDX SBOM</td></tr>
+    <tr><td><code>GET /v2/cve/search</code></td><td>Cross-image CVE search</td></tr>
+    <tr><td><code>POST /v2/cve/suppress</code></td><td>Manage suppressions (audited)</td></tr>
+    <tr><td><code>POST /v2/vex</code></td><td>Ingest CycloneDX VEX statements</td></tr>
+    <tr><td><code>POST /v2/policy/evaluate</code></td><td>Standalone policy evaluation</td></tr>
+    <tr><td><code>POST /v2/export/s3/{id}</code></td><td>Export a scan to an S3 prefix</td></tr>
+  </table>
+  <p style="margin-top:14px;font-size:0.78rem;color:var(--text-secondary);">
+    Nightly automation runs as an in-cluster <code>CronJob</code> (03:17 UTC) that enumerates
+    <code>/v2/_catalog</code> and scans every (repo, tag), rolls the results into a PDF, and uploads it to Slack.
+  </p>
+</div>
+
+<!-- ===== AI ===== -->
+<div class="feat-section" id="ai">
+  <div class="feat-section-header">
+    <h2>AI-Assisted Remediation</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <p class="feat-section-intro">
+    CVE commentary is generated by a local LLM through Ollama, so image contents and findings never leave
+    your infrastructure.
+  </p>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F916;</span> Analysis</div>
+      <ul class="feat-list">
+        <li>Per-CVE root cause and impact summary</li>
+        <li>On-demand, not on every push &mdash; no idle GPU cost</li>
+        <li>Runs against a local Ollama endpoint</li>
+        <li>No third-party API calls</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F527;</span> Fix suggestions</div>
+      <ul class="feat-list">
+        <li>Dockerfile rewrite suggestions (<code>/v2/scan/{id}/dockerfile-fix</code>)</li>
+        <li>One-click GitHub PR review comment posting</li>
+        <li>Findings linked back to the SBOM component</li>
+        <li>Report export for audit evidence</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== DASHBOARD ===== -->
+<div class="feat-section" id="dashboard">
+  <div class="feat-section-header">
+    <h2>Dashboard &amp; Operations</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <p class="feat-section-intro">
+    A dark-themed operations dashboard is embedded in the registry binary and served at
+    <code>/dashboard</code> &mdash; nothing extra to deploy.
+  </p>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4CA;</span> System metrics</div>
+      <ul class="feat-list">
+        <li>CPU, RAM and disk with colour-coded thresholds</li>
+        <li>HA region health, latency and failure counts</li>
+        <li>Push/pull activity over time</li>
+        <li>Live refresh</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4E6;</span> Image browser</div>
+      <ul class="feat-list">
+        <li>Repository search with wildcards</li>
+        <li>Tag lists, tag counts and digests</li>
+        <li>Per-image scan findings panel</li>
+        <li>Deep links into scan reports</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F465;</span> Identity &amp; audit</div>
+      <ul class="feat-list">
+        <li>Users, groups and service accounts</li>
+        <li>SSO logins and group-role mappings</li>
+        <li>Robot account status and expiry</li>
+        <li>Filterable audit log</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== OBSERVABILITY ===== -->
+<div class="feat-section" id="observability">
+  <div class="feat-section-header">
+    <h2>Observability</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <p class="feat-section-intro">
+    Prometheus metrics, structured logs and OpenTelemetry traces, with Grafana dashboards in the repo.
+  </p>
+  <table class="spec-table">
+    <tr><th>Metric</th><th>Meaning</th></tr>
+    <tr><td><code>spectoncr_http_requests_total</code></td><td>Request count by method, path and status</td></tr>
+    <tr><td><code>spectoncr_http_request_duration_seconds</code></td><td>Request latency histogram</td></tr>
+    <tr><td><code>spectoncr_storage_operations_total</code></td><td>Storage operations by backend</td></tr>
+    <tr><td><code>spectoncr_auth_tokens_issued_total</code></td><td>Token issuance count</td></tr>
+  </table>
+  <div class="feat-grid" style="margin-top:20px;">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4C8;</span> Metrics &amp; tracing</div>
+      <ul class="feat-list">
+        <li>Registry metrics on <code>:9090</code>, auth on <code>:9091</code></li>
+        <li>ServiceMonitor for Prometheus Operator</li>
+        <li>OpenTelemetry OTLP trace export</li>
+        <li>Grafana dashboards under <code>deploy/observability</code></li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4C3;</span> Logging</div>
+      <ul class="feat-list">
+        <li>Structured JSON logs</li>
+        <li>Request IDs correlated across services</li>
+        <li>Storage errors logged with the failing object path</li>
+        <li>Troubleshooting guide keyed to real log lines</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== KUBERNETES ===== -->
+<div class="feat-section" id="kubernetes">
+  <div class="feat-section-header">
+    <h2>Kubernetes &amp; Deployment</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <p class="feat-section-intro">
+    Helm is the primary path, but the same binary runs under Docker Compose, Ansible on bare metal, or
+    directly on a host.
+  </p>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x2638;</span> Helm chart</div>
+      <ul class="feat-list">
+        <li>OCI chart at <code>oci://ghcr.io/bwalia/charts/spectoncr</code></li>
+        <li>CRDs for Tenant, Project, AccessPolicy, TokenPolicy</li>
+        <li>HPA, PDB, anti-affinity, ServiceMonitor</li>
+        <li>Ingress with TLS termination</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F433;</span> Other targets</div>
+      <ul class="feat-list">
+        <li>Docker Compose stack for local development</li>
+        <li>Ansible playbooks for native deployment</li>
+        <li>Single binary with a YAML/TOML config file</li>
+        <li>Env-var overrides for the settings k8s needs to tune</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F6E1;</span> Cluster hardening</div>
+      <ul class="feat-list">
+        <li>NetworkPolicy templates</li>
+        <li>Non-root containers, read-only root filesystem</li>
+        <li>Distroless/scratch image variant</li>
+        <li>Secrets sourced from Vault or the cluster secret store</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== CI/CD ===== -->
+<div class="feat-section" id="cicd">
+  <div class="feat-section-header">
+    <h2>CI/CD Integration</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <p class="feat-section-intro">
+    Ready-to-copy examples for every major platform, all under <code>examples/</code> in the repository.
+  </p>
+  <table class="spec-table">
+    <tr><th>Platform</th><th>Auth method</th><th>Example</th></tr>
+    <tr><td>GitHub Actions</td><td>OIDC (zero secrets)</td><td><code>examples/github-actions/push-image.yml</code></td></tr>
+    <tr><td>GitLab CI</td><td>OIDC</td><td><code>examples/gitlab-ci/push-image.yml</code></td></tr>
+    <tr><td>Jenkins</td><td>Token-based</td><td><code>examples/jenkins/Jenkinsfile</code></td></tr>
+    <tr><td>Tekton</td><td>ServiceAccount</td><td><code>examples/tekton/push-task.yml</code></td></tr>
+    <tr><td>ArgoCD</td><td>Image updater</td><td><code>examples/argocd/image-updater.yml</code></td></tr>
+  </table>
+</div>
+
+<!-- ===== PLATFORM ===== -->
+<div class="feat-section" id="platform">
+  <div class="feat-section-header">
+    <h2>Platform &amp; Packaging</h2>
+    <span class="badge badge-core">Stable</span>
+  </div>
+  <div class="feat-grid">
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F4E5;</span> Distribution</div>
+      <ul class="feat-list">
+        <li>Docker Hub: <code>specton/spectoncr</code></li>
+        <li>GHCR: <code>ghcr.io/spectonio/spectoncr</code></li>
+        <li>Tags: <code>latest</code>, <code>vX.Y.Z</code>, <code>X.Y</code>, <code>edge</code></li>
+        <li>linux/amd64 and linux/arm64, arm64 built on native runners</li>
+      </ul>
+    </div>
+    <div class="feat-card">
+      <div class="feat-card-title"><span class="feat-card-icon">&#x1F980;</span> Build</div>
+      <ul class="feat-list">
+        <li>Cargo workspace of focused crates</li>
+        <li>Standard image plus a scratch/distroless variant</li>
+        <li>CI gate: fmt, clippy <code>-D warnings</code>, full test suite</li>
+        <li>Apache-2.0 licensed, open source</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== INCUBATING ===== -->
+<div class="feat-section" id="incubating">
+  <div class="feat-section-header">
+    <h2>Incubating</h2>
+    <span class="badge badge-dev">In development</span>
+  </div>
+  <p class="feat-section-intro">
+    These crates exist in the workspace with their traits, models and database schema landed, and are being
+    completed in slices. They are listed for transparency &mdash; do not plan a production rollout around
+    them yet.
+  </p>
+  <table class="spec-table">
+    <tr><th>Capability</th><th>Crate</th><th>Landed so far</th></tr>
+    <tr><td>Online garbage collection</td><td><code>specton-gc</code></td><td>Live blob refcount writer, atomic with manifest mutations</td></tr>
+    <tr><td>Lazy pull / partial layers</td><td><code>specton-lazy</code></td><td>TOC indexer trait and media types (eStargz, zstd-chunked, SOCI)</td></tr>
+    <tr><td>P2P pull acceleration</td><td><code>specton-peer</code></td><td>Peer mesh trait, in-process mesh, membership store</td></tr>
+    <tr><td>Usage &amp; cost telemetry</td><td><code>specton-cost</code></td><td>Usage event model and Postgres recorder</td></tr>
+    <tr><td>Build attestation (SLSA/DSSE)</td><td><code>specton-attest</code></td><td>DSSE envelope parser, SLSA level extractor, attestation store</td></tr>
+    <tr><td>Ephemeral repos &amp; TTL tags</td><td><code>specton-ephemeral</code></td><td>TTL header parser, per-project default cap, schema</td></tr>
+    <tr><td>Auto-rebuild on base CVE patch</td><td><code>specton-rebuild</code></td><td>Image lineage extractor (label- and history-based)</td></tr>
+    <tr><td>Registry migration import</td><td><code>specton-import</code></td><td>Source trait plus an OCI Distribution adapter; Nexus/Harbor/ACR next</td></tr>
+    <tr><td>Typed artifacts</td><td><code>specton-artifact-types</code></td><td>Validator registry and Helm chart validator</td></tr>
+    <tr><td>Registry AI agent</td><td><code>specton-pilot</code></td><td>Tool registry with four read-only tools</td></tr>
+  </table>
+</div>
+
+<div class="callout" style="text-align:center;">
+  <h3 style="justify-content:center;">Run it yourself</h3>
+  <p>Deploy in a few minutes with Helm, Docker Compose, or a single binary.</p>
+  <div class="cta-row" style="justify-content:center;">
+    <a href="index.html#install" class="btn btn-primary">Installation</a>
+    <a href="api.html" class="btn btn-secondary">API Reference</a>
+    <a href="https://github.com/spectonio/spectoncr" class="btn btn-secondary">GitHub</a>
+  </div>
+</div>
+
+</div>
+
+<footer class="footer">
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="api.html">API Docs</a>
+    <a href="https://specton.io">specton.io</a>
+    <a href="https://github.com/spectonio/spectoncr">GitHub</a>
+    <a href="https://github.com/spectonio/spectoncr/issues">Issues</a>
+  </div>
+  <div>&copy; 2026 <a href="https://specton.io">specton.io</a> &mdash; SpectonCR Cloud-Native OCI Container Registry</div>
+  <div style="margin-top:6px;">Built with Rust, Axum, and Tokio &middot; Open Source under Apache-2.0</div>
+</footer>
+
+</body>
+</html>
