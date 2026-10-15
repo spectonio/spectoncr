@@ -28,7 +28,7 @@ pub struct RegistryConfig {
     pub signing: SigningConfig,
 }
 
-/// `[signing]` — B1 adds the config shape; registry hooks land in B3/B4.
+/// `[signing]` — B1/B2 config; registry hooks land in B3/B4.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SigningConfig {
@@ -36,8 +36,11 @@ pub struct SigningConfig {
     pub enabled: bool,
     /// When true (and enabled), unsigned pulls are refused under policy.
     pub require_for_pull: bool,
-    /// Default key ref for `spectoncr sign` / auto-sign (B2+).
+    /// Default key ref for `specton-sign` / auto-sign
+    /// (`file://…`, `vault://kv/…`, `vault://transit/…`).
     pub default_key_ref: Option<String>,
+    /// Optional directory for relative `file://` key refs.
+    pub key_root: Option<String>,
 }
 
 impl Default for SigningConfig {
@@ -46,6 +49,7 @@ impl Default for SigningConfig {
             enabled: false,
             require_for_pull: false,
             default_key_ref: None,
+            key_root: None,
         }
     }
 }

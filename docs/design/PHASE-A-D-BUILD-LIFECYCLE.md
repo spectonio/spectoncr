@@ -84,7 +84,7 @@ signatures; rebuilds must be able to re-attach or verify cosign artifacts.
 - **Deliver:** crate, `Signer`/`Verifier`, in-memory PEM keyed impl, vector tests
 - **Verify:** sign digest → verify OK; wrong key fails
 
-### PR B2 — `feat(signing): sigstore-rs + Vault key provider + CLI sign`
+### PR B2 — `feat(signing): sigstore-rs + Vault key provider + CLI sign` ✅ landed locally
 - **Docs:** 001 §§b,g,i slice 2
 - **Deliver:** `SigstoreSigner`, Vault Transit / file PEM `KeyProvider`,
   `spectoncr sign` (or registry admin route if CLI deferred)

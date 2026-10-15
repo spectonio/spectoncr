@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "Image signing and verification traits for SpectonCR (design 001)"
 
+[[bin]]
+name = "specton-sign"
+path = "src/bin/specton-sign.rs"
+
 [dependencies]
 async-trait.workspace = true
 serde.workspace = true
@@ -19,6 +23,11 @@ sha2.workspace = true
 hex.workspace = true
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+tokio = { workspace = true, features = ["fs", "macros", "rt-multi-thread"] }
+reqwest = { workspace = true }
+# Crypto-only: avoid pulling Fulcio/OAuth/OCI client for keyed signing.
+sigstore = { version = "0.14", default-features = false }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util", "macros"] }
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread", "fs"] }
+tempfile.workspace = true
