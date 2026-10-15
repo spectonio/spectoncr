@@ -65,7 +65,7 @@ to change state.
 - **Verify:** push image → row in `registry_audit_log`; verify endpoint OK
 - **Anti-patterns:** Silent drop of push/delete audit events
 
-### PR A3 — `feat(audit): S3 export + Merkle checkpoint + CLI`
+### PR A3 — `feat(audit): S3 export + Merkle checkpoint + CLI` ✅ landed locally
 - **Docs:** 005 §§b,d,e,i slice 3
 - **Deliver:** export job, `POST /v2/_audit/export`, key rotation event,
   `spectoncr audit query|verify|export` (or module stubs if CLI binary absent)

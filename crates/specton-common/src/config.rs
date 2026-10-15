@@ -54,6 +54,9 @@ pub struct AuditConfig {
     /// When true (default for postgres), write-class ops return 503 if
     /// the durable sink is unavailable.
     pub fail_closed_writes: bool,
+    /// Periodic JSONL export + Merkle checkpoint (slice A3).
+    #[serde(default)]
+    pub export: AuditExportConfig,
 }
 
 impl Default for AuditConfig {
@@ -64,6 +67,33 @@ impl Default for AuditConfig {
             hmac_key: None,
             hmac_key_id: "v1".into(),
             fail_closed_writes: true,
+            export: AuditExportConfig::default(),
+        }
+    }
+}
+
+/// `[audit.export]` — off by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuditExportConfig {
+    /// Spawn the hourly (or `interval_secs`) export loop.
+    pub enabled: bool,
+    /// Seconds between export attempts.
+    pub interval_secs: u64,
+    /// Filesystem directory for exports when not using object storage.
+    /// Relative paths are under the process cwd.
+    pub filesystem_path: Option<String>,
+    /// Compress JSONL with zstd (`.jsonl.zst`).
+    pub compress: bool,
+}
+
+impl Default for AuditExportConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 3600,
+            filesystem_path: Some("./audit-export".into()),
+            compress: true,
         }
     }
 }

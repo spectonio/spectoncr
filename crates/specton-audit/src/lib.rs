@@ -1,26 +1,35 @@
 //! SpectonCR append-only hash-chained registry audit log.
 //!
-//! Slice 1 (PR A1) ships:
-//! - [`AuditSink`] trait — `append` / `query` / `get` / `verify_chain`
-//! - [`InMemoryAudit`] — default backend (`[audit] backend = "memory"`)
-//! - [`PgChainedAudit`] — Postgres backend (`migrations/0017_registry_audit.sql`)
-//! - HMAC-SHA256 chain: `row_hash = HMAC(key, prev_hash || canonical_json)`
+//! - **A1:** [`AuditSink`], [`InMemoryAudit`], [`PgChainedAudit`], schema `0017`
+//! - **A2:** registry dual-write + `/v2/_audit` routes
+//! - **A3:** JSONL export, Merkle checkpoints, `specton-audit` CLI
 //!
-//! Slice 2 wires call sites + HTTP routes. Slice 3 adds S3 export and
-//! Merkle checkpoints. See `docs/design/005-audit-log.md` and
+//! See `docs/design/005-audit-log.md` and
 //! `docs/design/PHASE-A-D-BUILD-LIFECYCLE.md`.
 //!
 //! **Naming:** tables are `registry_audit_*` so we do not collide with the
 //! scanner's simpler `audit_log` from `0001_init.sql`.
 
+pub mod checkpoint;
 pub mod event;
+pub mod export;
 pub mod hash;
 pub mod memory;
+pub mod merkle;
 pub mod postgres;
 pub mod sink;
 
+pub use checkpoint::{
+    Checkpoint, CheckpointStore, MemoryCheckpointStore, PgCheckpointStore, export_pending, tip_id,
+};
 pub use event::{Actor, AuditEvent, AuditRow, Category, Outcome, Subject};
+pub use export::{
+    ExportDestination, ExportError, ExportLine, ExportResult, FilesystemDestination,
+    MemoryDestination, ObjectStoreDestination, content_digest, encode_jsonl, export_range,
+    root_for_rows, verify_export_bytes,
+};
 pub use hash::{GENESIS_PREV, HashError, compute_row_hash};
 pub use memory::InMemoryAudit;
+pub use merkle::merkle_root;
 pub use postgres::{Keyring, PgChainedAudit};
 pub use sink::{AuditError, AuditQuery, AuditSink, ChainVerdict, EventId};

@@ -113,9 +113,18 @@ struct AppState {
     artifact_registry: Option<Arc<specton_artifact_types::ArtifactRegistry>>,
     /// Registry audit log for tracking who pushed/pulled what.
     audit_log: Arc<audit::RegistryAuditLog>,
+    /// Optional JSONL export + Merkle checkpoint handles (005 A3).
+    audit_export: Option<Arc<AuditExportRuntime>>,
     /// Process start time for uptime tracking.
     #[allow(dead_code)]
     start_time: Instant,
+}
+
+/// Shared handles for ad-hoc and periodic audit export.
+struct AuditExportRuntime {
+    checkpoints: Arc<dyn specton_audit::CheckpointStore>,
+    dest: Arc<dyn specton_audit::ExportDestination>,
+    compress: bool,
 }
 
 // ── JWT Auth Extractor ───────────────────────────────────────────────────────
@@ -2282,6 +2291,66 @@ async fn audit_verify(
     Ok((status, axum::Json(verdict)).into_response())
 }
 
+#[derive(Debug, serde::Deserialize, Default)]
+struct AuditExportBody {
+    /// When set with `to`, export that id range instead of pending-since-checkpoint.
+    from: Option<i64>,
+    to: Option<i64>,
+    /// Override configured compression.
+    compress: Option<bool>,
+}
+
+/// POST /v2/_audit/export — dump pending (or ranged) rows + Merkle checkpoint.
+#[instrument(name = "audit_export", skip(state, claims))]
+async fn audit_export_handler(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    body: Option<axum::Json<AuditExportBody>>,
+) -> Result<Response, RegistryError> {
+    audit_admin_authorize(&claims)?;
+    let rt = state
+        .audit_export
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("audit export not configured".into()))?;
+    let body = body.map(|axum::Json(b)| b).unwrap_or_default();
+    let compress = body.compress.unwrap_or(rt.compress);
+    let sink = state.audit_log.sink();
+
+    let result = match (body.from, body.to) {
+        (Some(from), Some(to)) => {
+            let (result, root, _) = specton_audit::export_range(
+                sink.as_ref(),
+                rt.dest.as_ref(),
+                from,
+                to,
+                compress,
+            )
+            .await
+            .map_err(|e| RegistryError::Internal(e.to_string()))?;
+            rt.checkpoints
+                .insert(result.range_from, result.range_to, &root, &result.exported_to)
+                .await
+                .map_err(|e| RegistryError::Internal(e.to_string()))?;
+            result
+        }
+        _ => specton_audit::export_pending(
+            sink.as_ref(),
+            rt.checkpoints.as_ref(),
+            rt.dest.as_ref(),
+            compress,
+        )
+        .await
+        .map_err(|e| match e {
+            specton_audit::ExportError::Empty => {
+                RegistryError::Internal("nothing to export".into())
+            }
+            other => RegistryError::Internal(other.to_string()),
+        })?,
+    };
+
+    Ok((StatusCode::OK, axum::Json(result)).into_response())
+}
+
 /// GET /v2/_gc/status — current reaper state.
 #[instrument(name = "gc_status", skip(state, claims))]
 async fn gc_status(
@@ -4342,6 +4411,7 @@ async fn main() -> anyhow::Result<()> {
         .ok()
         .or_else(|| audit_cfg.hmac_key.clone())
         .unwrap_or_else(|| "dev-only-audit-hmac-key-change-me!".into());
+    let mut audit_pg_pool: Option<sqlx::PgPool> = None;
     let audit_sink: Arc<dyn specton_audit::AuditSink> = match audit_cfg.backend {
         specton_common::config::AuditBackend::Memory => {
             info!(key_id = %audit_cfg.hmac_key_id, "audit backend: memory");
@@ -4371,6 +4441,7 @@ async fn main() -> anyhow::Result<()> {
                     p
                 }
             };
+            audit_pg_pool = Some(pool.clone());
             let keyring = specton_audit::Keyring::single(
                 audit_cfg.hmac_key_id.clone(),
                 audit_hmac_key.into_bytes(),
@@ -4389,10 +4460,65 @@ async fn main() -> anyhow::Result<()> {
         specton_common::config::AuditBackend::Postgres
     ) && audit_cfg.fail_closed_writes;
     let audit_log = Arc::new(audit::RegistryAuditLog::with_sink(
-        audit_sink,
+        audit_sink.clone(),
         audit_cfg.sample_pulls,
         audit_fail_closed,
     ));
+
+    // Export destination + checkpoint store (A3). Always build handles so
+    // POST /v2/_audit/export works; the background loop is gated by
+    // audit.export.enabled.
+    let audit_export: Option<Arc<AuditExportRuntime>> = {
+        let compress = audit_cfg.export.compress;
+        let dest: Arc<dyn specton_audit::ExportDestination> =
+            if let Some(ref path) = audit_cfg.export.filesystem_path {
+                Arc::new(specton_audit::FilesystemDestination::new(path))
+            } else {
+                Arc::new(specton_audit::MemoryDestination::default())
+            };
+        let checkpoints: Arc<dyn specton_audit::CheckpointStore> = match audit_pg_pool {
+            Some(pool) => Arc::new(specton_audit::PgCheckpointStore::new(pool)),
+            None => Arc::new(specton_audit::MemoryCheckpointStore::default()),
+        };
+        let runtime = Arc::new(AuditExportRuntime {
+            checkpoints,
+            dest,
+            compress,
+        });
+        if audit_cfg.export.enabled {
+            let interval = std::time::Duration::from_secs(audit_cfg.export.interval_secs.max(60));
+            let sink = audit_sink.clone();
+            let rt = runtime.clone();
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(interval);
+                loop {
+                    ticker.tick().await;
+                    match specton_audit::export_pending(
+                        sink.as_ref(),
+                        rt.checkpoints.as_ref(),
+                        rt.dest.as_ref(),
+                        rt.compress,
+                    )
+                    .await
+                    {
+                        Ok(r) => info!(
+                            rows = r.row_count,
+                            merkle = %r.merkle_root,
+                            path = %r.exported_to,
+                            "audit export checkpoint written"
+                        ),
+                        Err(specton_audit::ExportError::Empty) => {}
+                        Err(e) => warn!(error = %e, "audit export failed"),
+                    }
+                }
+            });
+            info!(
+                interval_secs = audit_cfg.export.interval_secs,
+                "audit export loop spawned"
+            );
+        }
+        Some(runtime)
+    };
 
     let state = AppState {
         store,
@@ -4413,6 +4539,7 @@ async fn main() -> anyhow::Result<()> {
         usage_recorder,
         artifact_registry,
         audit_log: audit_log.clone(),
+        audit_export,
         start_time,
     };
 
@@ -4539,9 +4666,10 @@ async fn main() -> anyhow::Result<()> {
         // Usage read API (017 polish)
         .route("/v2/_usage/tenant/{tenant}", get(usage_tenant))
         .route("/v2/_usage/top-pulled", get(usage_top_pulled))
-        // Chained audit (005 slice 2)
+        // Chained audit (005 slice 2–3)
         .route("/v2/_audit", get(audit_query))
         .route("/v2/_audit/verify", post(audit_verify))
+        .route("/v2/_audit/export", post(audit_export_handler))
         .route("/v2/_audit/{id}", get(audit_get));
 
     // Internal replication routes — served on both the main port (for cross-cluster

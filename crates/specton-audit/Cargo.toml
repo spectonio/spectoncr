@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "Append-only hash-chained registry audit log for SpectonCR"
 
+[[bin]]
+name = "specton-audit"
+path = "src/bin/specton-audit.rs"
+
 [dependencies]
 specton-db.workspace = true
 tokio.workspace = true
@@ -20,6 +24,9 @@ tracing.workspace = true
 sha2.workspace = true
 hmac.workspace = true
 hex.workspace = true
+bytes.workspace = true
+object_store.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
