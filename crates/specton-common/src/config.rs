@@ -23,6 +23,31 @@ pub struct RegistryConfig {
     /// Append-only registry audit log (design 005).
     #[serde(default)]
     pub audit: AuditConfig,
+    /// Image signing / verification (design 001). Kill-switch OFF by default.
+    #[serde(default)]
+    pub signing: SigningConfig,
+}
+
+/// `[signing]` — B1 adds the config shape; registry hooks land in B3/B4.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SigningConfig {
+    /// Master kill-switch. When false, signing APIs are not mounted.
+    pub enabled: bool,
+    /// When true (and enabled), unsigned pulls are refused under policy.
+    pub require_for_pull: bool,
+    /// Default key ref for `spectoncr sign` / auto-sign (B2+).
+    pub default_key_ref: Option<String>,
+}
+
+impl Default for SigningConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            require_for_pull: false,
+            default_key_ref: None,
+        }
+    }
 }
 
 // ── Audit configuration (005) ────────────────────────────────────
@@ -737,6 +762,7 @@ impl Default for RegistryConfig {
             webhooks: None,
             enterprise: EnterpriseAuthConfig::default(),
             audit: AuditConfig::default(),
+            signing: SigningConfig::default(),
         }
     }
 }

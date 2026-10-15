@@ -79,7 +79,7 @@ to change state.
 **How this serves the primary goal:** Promotion and admission require
 signatures; rebuilds must be able to re-attach or verify cosign artifacts.
 
-### PR B1 — `feat(signing): specton-signing traits + keyed in-memory signer`
+### PR B1 — `feat(signing): specton-signing traits + keyed in-memory signer` ✅ landed locally
 - **Docs:** `001-image-signing.md` §§b,h,i slice 1
 - **Deliver:** crate, `Signer`/`Verifier`, in-memory PEM keyed impl, vector tests
 - **Verify:** sign digest → verify OK; wrong key fails
