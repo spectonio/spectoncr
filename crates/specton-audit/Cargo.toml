@@ -1,0 +1,25 @@
+[package]
+name = "specton-audit"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Append-only hash-chained registry audit log for SpectonCR"
+
+[dependencies]
+specton-db.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

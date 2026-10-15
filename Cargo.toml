@@ -20,6 +20,7 @@ members = [
     "crates/specton-cost",
     "crates/specton-rebuild",
     "crates/specton-pilot",
+    "crates/specton-audit",
 ]
 resolver = "3"
 
@@ -121,6 +122,7 @@ specton-artifact-types = { path = "crates/specton-artifact-types" }
 specton-cost = { path = "crates/specton-cost" }
 specton-rebuild = { path = "crates/specton-rebuild" }
 specton-pilot = { path = "crates/specton-pilot" }
+specton-audit = { path = "crates/specton-audit" }
 
 # Scanner deps
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "migrate"] }

@@ -953,7 +953,7 @@ async fn get_manifest(
     let duration = op_start.elapsed();
     histogram!("registry_request_duration_seconds", "operation" => "manifest.pull")
         .record(duration.as_secs_f64());
-    state
+    let _ = state
         .audit_log
         .record(audit::RegistryAuditEvent {
             timestamp: chrono::Utc::now(),
@@ -1310,7 +1310,8 @@ async fn put_manifest(
             status_code: 201,
             duration_ms: duration.as_millis() as u64,
         })
-        .await;
+        .await
+        .map_err(|e| RegistryError::AuditUnavailable(e.0))?;
 
     record_usage(
         &state,
@@ -1476,7 +1477,8 @@ async fn delete_manifest(
             status_code: 202,
             duration_ms: duration.as_millis() as u64,
         })
-        .await;
+        .await
+        .map_err(|e| RegistryError::AuditUnavailable(e.0))?;
 
     record_usage(
         &state,
@@ -1659,7 +1661,7 @@ async fn get_blob(
     histogram!("registry_request_duration_seconds", "operation" => "blob.pull")
         .record(duration.as_secs_f64());
     counter!("registry_pull_bytes_total").increment(data.len() as u64);
-    state
+    let _ = state
         .audit_log
         .record(audit::RegistryAuditEvent {
             timestamp: chrono::Utc::now(),
@@ -1964,7 +1966,8 @@ async fn complete_blob_upload(
             status_code: 201,
             duration_ms: duration.as_millis() as u64,
         })
-        .await;
+        .await
+        .map_err(|e| RegistryError::AuditUnavailable(e.0))?;
 
     record_usage(
         &state,
@@ -2186,6 +2189,97 @@ fn gc_admin_authorize(claims: &TokenClaims) -> Result<(), RegistryError> {
         });
     }
     Ok(())
+}
+
+fn audit_admin_authorize(claims: &TokenClaims) -> Result<(), RegistryError> {
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "audit endpoints require Admin role".into(),
+        });
+    }
+    Ok(())
+}
+
+/// GET /v2/_audit — query chained audit rows.
+#[instrument(name = "audit_query", skip(state, claims))]
+async fn audit_query(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, RegistryError> {
+    audit_admin_authorize(&claims)?;
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
+    let category = params
+        .get("category")
+        .and_then(|c| specton_audit::Category::parse(c));
+    let q = specton_audit::AuditQuery {
+        since: None,
+        until: None,
+        actor: params.get("actor").cloned(),
+        category,
+        tenant: params.get("tenant").cloned(),
+        limit,
+    };
+    let rows = state
+        .audit_log
+        .sink()
+        .query(q)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "events": rows }))).into_response())
+}
+
+/// GET /v2/_audit/{id} — single chained row.
+#[instrument(name = "audit_get", skip(state, claims))]
+async fn audit_get(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(id): Path<i64>,
+) -> Result<Response, RegistryError> {
+    audit_admin_authorize(&claims)?;
+    let row = state
+        .audit_log
+        .sink()
+        .get(id)
+        .await
+        .map_err(|e| match e {
+            specton_audit::AuditError::NotFound(id) => RegistryError::Internal(format!(
+                "audit event {id} not found"
+            )),
+            other => RegistryError::Internal(other.to_string()),
+        })?;
+    Ok((StatusCode::OK, axum::Json(row)).into_response())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AuditVerifyBody {
+    from: i64,
+    to: i64,
+}
+
+/// POST /v2/_audit/verify — verify hash chain over `[from, to]`.
+#[instrument(name = "audit_verify", skip(state, claims))]
+async fn audit_verify(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    axum::Json(body): axum::Json<AuditVerifyBody>,
+) -> Result<Response, RegistryError> {
+    audit_admin_authorize(&claims)?;
+    let verdict = state
+        .audit_log
+        .sink()
+        .verify_chain(body.from, body.to)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    let status = if verdict.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::CONFLICT
+    };
+    Ok((status, axum::Json(verdict)).into_response())
 }
 
 /// GET /v2/_gc/status — current reaper state.
@@ -2920,7 +3014,8 @@ async fn internal_replicate_manifest(
             duration_ms: 0,
             timestamp: chrono::Utc::now(),
         })
-        .await;
+        .await
+        .map_err(|e| RegistryError::AuditUnavailable(e.0))?;
 
     Ok(StatusCode::OK.into_response())
 }
@@ -3961,7 +4056,6 @@ async fn main() -> anyhow::Result<()> {
         .map(|mr| mr.internal_port)
         .unwrap_or(5002);
 
-    let audit_log = Arc::new(audit::RegistryAuditLog::new());
     let start_time = Instant::now();
 
     // ── Scanner runtime (optional; enabled by SPECTONCR_SCANNER__ENABLED) ──
@@ -4240,6 +4334,66 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(specton_cost::NoopUsageRecorder)
     };
 
+    // ── Registry audit sink (005) ───────────────────────────────────
+    // Default backend = memory (pre-005 behaviour). Postgres reuses the
+    // shared pool (scanner/GC) and seals a hash chain with HMAC.
+    let audit_cfg = &config.audit;
+    let audit_hmac_key = std::env::var("SPECTONCR_AUDIT__HMAC_KEY")
+        .ok()
+        .or_else(|| audit_cfg.hmac_key.clone())
+        .unwrap_or_else(|| "dev-only-audit-hmac-key-change-me!".into());
+    let audit_sink: Arc<dyn specton_audit::AuditSink> = match audit_cfg.backend {
+        specton_common::config::AuditBackend::Memory => {
+            info!(key_id = %audit_cfg.hmac_key_id, "audit backend: memory");
+            Arc::new(specton_audit::InMemoryAudit::new(
+                audit_hmac_key.into_bytes(),
+                audit_cfg.hmac_key_id.clone(),
+            ))
+        }
+        specton_common::config::AuditBackend::Postgres => {
+            let pool = match gc_pool.clone() {
+                Some(p) => p,
+                None => {
+                    // Dedicated connect when GC/scanner left no pool.
+                    let url = std::env::var("SPECTONCR_AUDIT__POSTGRES_URL")
+                        .or_else(|_| std::env::var("SPECTONCR_GC__POSTGRES_URL"))
+                        .or_else(|_| std::env::var("DATABASE_URL"))
+                        .expect(
+                            "audit.backend=postgres requires a Postgres pool \
+                             (enable scanner/GC, or set SPECTONCR_AUDIT__POSTGRES_URL)",
+                        );
+                    let p = specton_db::connect(&url, 4)
+                        .await
+                        .expect("audit postgres connect failed");
+                    specton_db::migrate(&p)
+                        .await
+                        .expect("audit postgres migrate failed");
+                    p
+                }
+            };
+            let keyring = specton_audit::Keyring::single(
+                audit_cfg.hmac_key_id.clone(),
+                audit_hmac_key.into_bytes(),
+            );
+            let pg = specton_audit::PgChainedAudit::new(pool, keyring);
+            if let Err(e) = pg.ensure_key_row().await {
+                tracing::error!(error = %e, "failed to register audit hmac key row");
+                panic!("audit postgres key registration failed: {e}");
+            }
+            info!(key_id = %audit_cfg.hmac_key_id, "audit backend: postgres (chained)");
+            Arc::new(pg)
+        }
+    };
+    let audit_fail_closed = matches!(
+        audit_cfg.backend,
+        specton_common::config::AuditBackend::Postgres
+    ) && audit_cfg.fail_closed_writes;
+    let audit_log = Arc::new(audit::RegistryAuditLog::with_sink(
+        audit_sink,
+        audit_cfg.sample_pulls,
+        audit_fail_closed,
+    ));
+
     let state = AppState {
         store,
         config: Arc::new(config),
@@ -4384,7 +4538,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/v2/_ttl/resume", post(ttl_resume))
         // Usage read API (017 polish)
         .route("/v2/_usage/tenant/{tenant}", get(usage_tenant))
-        .route("/v2/_usage/top-pulled", get(usage_top_pulled));
+        .route("/v2/_usage/top-pulled", get(usage_top_pulled))
+        // Chained audit (005 slice 2)
+        .route("/v2/_audit", get(audit_query))
+        .route("/v2/_audit/verify", post(audit_verify))
+        .route("/v2/_audit/{id}", get(audit_get));
 
     // Internal replication routes — served on both the main port (for cross-cluster
     // access via proxy) and the dedicated internal port (for intra-cluster use).

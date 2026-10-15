@@ -20,6 +20,52 @@ pub struct RegistryConfig {
     /// Enterprise authentication and identity configuration.
     #[serde(default)]
     pub enterprise: EnterpriseAuthConfig,
+    /// Append-only registry audit log (design 005).
+    #[serde(default)]
+    pub audit: AuditConfig,
+}
+
+// ── Audit configuration (005) ────────────────────────────────────
+
+/// Backend for the chained registry audit log.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditBackend {
+    /// In-process ring + in-memory chain (default — preserves pre-005 behaviour).
+    #[default]
+    Memory,
+    /// Postgres `registry_audit_log` with HMAC hash chain.
+    Postgres,
+}
+
+/// `[audit]` section — kill-switch defaults keep current behaviour.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuditConfig {
+    /// `memory` (default) or `postgres`.
+    pub backend: AuditBackend,
+    /// Fraction of pull events to persist (0.0 = off, writes always persist).
+    pub sample_pulls: f64,
+    /// HMAC key material for chain sealing. Required when `backend = postgres`.
+    /// Prefer injecting via env `SPECTONCR_AUDIT__HMAC_KEY`.
+    pub hmac_key: Option<String>,
+    /// Key id stored alongside each row (supports rotation).
+    pub hmac_key_id: String,
+    /// When true (default for postgres), write-class ops return 503 if
+    /// the durable sink is unavailable.
+    pub fail_closed_writes: bool,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            backend: AuditBackend::Memory,
+            sample_pulls: 0.0,
+            hmac_key: None,
+            hmac_key_id: "v1".into(),
+            fail_closed_writes: true,
+        }
+    }
 }
 
 // ── Resilience configuration ─────────────────────────────────────
@@ -660,6 +706,7 @@ impl Default for RegistryConfig {
             multi_region: None,
             webhooks: None,
             enterprise: EnterpriseAuthConfig::default(),
+            audit: AuditConfig::default(),
         }
     }
 }

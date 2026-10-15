@@ -16,8 +16,10 @@ specton-rebuild = { workspace = true }
 specton-lazy = { workspace = true }
 specton-artifact-types = { workspace = true }
 specton-attest = { workspace = true }
+specton-audit = { workspace = true }
 async-trait = { workspace = true }
 specton-db = { workspace = true }
+rand = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
