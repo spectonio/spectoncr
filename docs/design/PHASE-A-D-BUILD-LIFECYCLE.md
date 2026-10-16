@@ -161,20 +161,20 @@ inspect → rebuild → promote with RBAC, dry-run, and audit.
 - Migration `0014_pilot.sql`
 - **Gap:** lib.rs claims 4 read-only tools; only `PingTool` exists
 
-### PR P1b — `feat(pilot): read-only tools (list/inspect/audit/findings)`
+### PR P1b — `feat(pilot): read-only tools (list/inspect/audit/findings)` ✅ landed locally
 - Wire real tools against catalog/scan/audit sinks
 - **Depends on:** A2 for real `query_audit`
 
-### PR P2 — `feat(pilot): mutating tools + dry-run + approval`
+### PR P2 — `feat(pilot): mutating tools + dry-run + approval` ✅ landed locally
 - `trigger_scan`, `suppress_finding`, `trigger_rebuild`, `promote_tag`,
   `run_gc_reconcile`, destructive deletes with confirm phrase
 - **Depends on:** R2, C1, A2
 
-### PR P3 — `feat(pilot): MCP server specton-mcp + CLI REPL`
+### PR P3 — `feat(pilot): MCP server specton-mcp + CLI REPL` ✅ landed locally
 - Each Tool → MCP tool; `spectoncr pilot --once "…"`
 - Cursor/Claude Code can drive rebuild+promote
 
-### PR P4 — `feat(pilot): spend caps + audit integration + dashboard chat hook`
+### PR P4 — `feat(pilot): spend caps + audit integration + dashboard chat hook` ✅ landed locally (budget + audited invoke; dashboard sidebar deferred to 007)
 - Token budget, every tool invoke → `registry_audit_log`, UI sidebar stub for 007
 
 ---

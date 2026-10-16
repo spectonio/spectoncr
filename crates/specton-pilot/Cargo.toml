@@ -6,6 +6,14 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "specton-pilot"
+path = "src/bin/specton-pilot.rs"
+
+[[bin]]
+name = "specton-mcp"
+path = "src/bin/specton-mcp.rs"
+
 [dependencies]
 specton-db.workspace = true
 specton-common.workspace = true
