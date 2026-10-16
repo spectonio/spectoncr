@@ -180,12 +180,14 @@ metadata:
   namespace: spectoncr
 spec:
   tenantRef: acme
-  maxTtlSeconds: 600
-  defaultTtlSeconds: 300
-  allowedIpRanges:
-    - "10.0.0.0/8"
-  requireMfa: false
+  maxTokenLifetime: 10m          # <n>s, <n>m, <n>h or <n>d
+  maxRefreshTokenLifetime: 24h
+  ipRestrictions:
+    allowedCidrs:
+      - "10.0.0.0/8"
 ```
+
+See [multi-tenancy.md](multi-tenancy.md#tokenpolicy) for every TokenPolicy field.
 
 ### Signing Algorithms
 

@@ -162,10 +162,10 @@ spec:
   displayName: My Organization
   adminEmail: admin@my-org.com
   quotas:
-    maxStorageBytes: 107374182400  # 100 GiB
+    storageBytes: 107374182400  # 100 GiB
     maxRepositories: 500
-    pullRatePerMinute: 1000
-    pushRatePerMinute: 500
+    pullRateLimit: 1000
+    pushRateLimit: 500
 ```
 
 See [docs/multi-tenancy.md](docs/multi-tenancy.md) for full details.
