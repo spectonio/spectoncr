@@ -89,3 +89,42 @@ export interface CveSearchResp {
   offset: number;
   results: CveHit[];
 }
+
+export interface PilotChatMessage {
+  role: string;
+  content: string;
+  tool_name?: string;
+  tool_use_id?: string;
+}
+
+export interface PilotChatResp {
+  reply: string;
+  messages: PilotChatMessage[];
+  tool_rounds: number;
+  session_id?: string;
+  backend: string;
+}
+
+/** POST /v2/_pilot/chat — requires [pilot] enabled on the registry. */
+export async function postPilotChat(body: {
+  message: string;
+  history?: PilotChatMessage[];
+  dry_run?: boolean;
+  tenant?: string;
+}): Promise<PilotChatResp> {
+  const r = await fetch('/v2/_pilot/chat', {
+    method: 'POST',
+    headers: headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      message: body.message,
+      history: body.history ?? [],
+      dry_run: body.dry_run ?? true,
+      tenant: body.tenant,
+    }),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(`pilot chat: ${r.status} ${text}`);
+  }
+  return r.json();
+}

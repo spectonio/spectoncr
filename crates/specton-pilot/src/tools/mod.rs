@@ -1,9 +1,12 @@
 //! Built-in tool implementations.
-//!
-//! Slice 1 ships read-only tools that don't depend on other in-flight
-//! crates yet. Each tool is a small struct that takes a Postgres pool
-//! at construction time and reads from existing tables.
 
+pub mod mutating;
 pub mod ping;
+pub mod readonly;
 
+pub use mutating::{
+    EvaluateAdmissionTool, PauseGcTool, PromoteTagTool, ResumeGcTool, RunGcReconcileTool,
+    SuppressFindingTool, TriggerRebuildTool, TriggerScanTool, UnsuppressFindingTool,
+};
 pub use ping::PingTool;
+pub use readonly::{InspectImageTool, ListFindingsTool, ListRepositoriesTool, QueryAuditTool};

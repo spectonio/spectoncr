@@ -3,8 +3,11 @@
 //! Implements the Docker Registry HTTP API V2 / OCI Distribution Specification
 //! with multi-tenant isolation, JWT authentication, and filesystem-backed storage.
 
+mod admission;
 mod audit;
 mod dashboard;
+mod pilot_http;
+mod promote;
 mod webhook;
 
 use std::collections::HashMap;
@@ -17,7 +20,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header, request::Parts},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, head, patch, post},
+    routing::{get, head, patch, post, put},
 };
 use base64::Engine as _;
 use bytes::Bytes;
@@ -62,6 +65,71 @@ use specton_resilience::{
 use specton_scanner::{
     ScannerRuntime, config::ScannerConfig, model::ScanJob, queue::Queue as ScanQueue,
 };
+
+/// Build an object store from a [`specton_common::config::StorageConfig`].
+fn build_object_store(
+    cfg: &specton_common::config::StorageConfig,
+) -> anyhow::Result<Arc<dyn ObjectStore>> {
+    let backend = cfg.backend.as_str();
+    let root = &cfg.root;
+    let raw: Arc<dyn ObjectStore> = match backend {
+        "filesystem" => {
+            std::fs::create_dir_all(root)?;
+            Arc::new(LocalFileSystem::new_with_prefix(root)?)
+        }
+        "s3" | "minio" => {
+            let mut builder = AmazonS3Builder::new()
+                .with_bucket_name(root)
+                .with_retry(ObjectStoreRetryConfig {
+                    max_retries: cfg.retry_max_retries,
+                    retry_timeout: Duration::from_secs(cfg.retry_timeout_secs),
+                    ..Default::default()
+                })
+                .with_client_options(
+                    ClientOptions::new()
+                        .with_connect_timeout(Duration::from_secs(cfg.connect_timeout_secs))
+                        .with_timeout(Duration::from_secs(cfg.request_timeout_secs)),
+                );
+            if let Some(ref endpoint) = cfg.endpoint {
+                builder = builder.with_endpoint(endpoint);
+                builder = builder.with_virtual_hosted_style_request(false);
+            }
+            if let Some(ref region) = cfg.region {
+                builder = builder.with_region(region);
+            }
+            if let Some(ref access_key) = cfg.access_key {
+                builder = builder.with_access_key_id(access_key);
+            }
+            if let Some(ref secret_key) = cfg.secret_key {
+                builder = builder.with_secret_access_key(secret_key);
+            }
+            if backend == "minio" {
+                builder = builder.with_virtual_hosted_style_request(false);
+                builder = builder.with_allow_http(true);
+            }
+            Arc::new(builder.build()?)
+        }
+        "gcs" => Arc::new(
+            GoogleCloudStorageBuilder::new()
+                .with_bucket_name(root)
+                .build()?,
+        ),
+        "azure" => {
+            let mut builder = MicrosoftAzureBuilder::new().with_container_name(root);
+            if let Some(ref access_key) = cfg.access_key {
+                builder = builder.with_account(access_key);
+            }
+            if let Some(ref secret_key) = cfg.secret_key {
+                builder = builder.with_access_key(secret_key);
+            }
+            Arc::new(builder.build()?)
+        }
+        other => anyhow::bail!(
+            "Unsupported storage backend: '{other}'. Supported: filesystem, s3, minio, gcs, azure"
+        ),
+    };
+    Ok(raw)
+}
 
 // ── Application State ────────────────────────────────────────────────────────
 
@@ -113,9 +181,26 @@ struct AppState {
     artifact_registry: Option<Arc<specton_artifact_types::ArtifactRegistry>>,
     /// Registry audit log for tracking who pushed/pulled what.
     audit_log: Arc<audit::RegistryAuditLog>,
+    /// Optional JSONL export + Merkle checkpoint handles (005 A3).
+    audit_export: Option<Arc<AuditExportRuntime>>,
+    /// Scanner Redis result store for admission (002). None when scanner off.
+    scan_store: Option<Arc<dyn specton_scanner::EphemeralStore>>,
+    /// Admission decision cache (002).
+    admission_cache: Arc<admission::DecisionCache>,
+    /// Optional second object store for cross-backend promote (006).
+    promote_dest_store: Option<Arc<dyn ObjectStore>>,
+    /// Per-tenant LLM spend tracker for `/v2/_pilot/chat` (019).
+    pilot_budget: Option<Arc<specton_pilot::BudgetTracker>>,
     /// Process start time for uptime tracking.
     #[allow(dead_code)]
     start_time: Instant,
+}
+
+/// Shared handles for ad-hoc and periodic audit export.
+struct AuditExportRuntime {
+    checkpoints: Arc<dyn specton_audit::CheckpointStore>,
+    dest: Arc<dyn specton_audit::ExportDestination>,
+    compress: bool,
 }
 
 // ── JWT Auth Extractor ───────────────────────────────────────────────────────
@@ -932,6 +1017,32 @@ async fn get_manifest(
     let digest = sha256_digest(&data);
     let media_type = detect_manifest_media_type(&data);
 
+    // Verify-on-pull (001 B4). Skip cosign `.sig` artifacts themselves.
+    if state.config.signing.enabled && !specton_signing::is_cosign_sig_tag(&params.reference) {
+        enforce_pull_signature_policy(
+            &state,
+            &claims.sub,
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &digest,
+        )
+        .await?;
+    }
+
+    // Admission gate (002). Skip cosign `.sig` tags.
+    if state.config.admission.enabled && !specton_signing::is_cosign_sig_tag(&params.reference) {
+        enforce_admission(
+            &state,
+            &claims,
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &digest,
+        )
+        .await?;
+    }
+
     let mut headers = HeaderMap::new();
     headers.insert(
         "Docker-Content-Digest",
@@ -953,7 +1064,7 @@ async fn get_manifest(
     let duration = op_start.elapsed();
     histogram!("registry_request_duration_seconds", "operation" => "manifest.pull")
         .record(duration.as_secs_f64());
-    state
+    let _ = state
         .audit_log
         .record(audit::RegistryAuditEvent {
             timestamp: chrono::Utc::now(),
@@ -1310,7 +1421,8 @@ async fn put_manifest(
             status_code: 201,
             duration_ms: duration.as_millis() as u64,
         })
-        .await;
+        .await
+        .map_err(|e| RegistryError::AuditUnavailable(e.0))?;
 
     record_usage(
         &state,
@@ -1323,6 +1435,52 @@ async fn put_manifest(
         201,
         Some(claims.sub.clone()),
     );
+
+    // Cosign `.sig` tag push (001 B3): register signature metadata +
+    // referrer + Sign audit without failing the OCI put.
+    if state.config.signing.enabled
+        && let Some(subject) = specton_signing::subject_digest_from_sig_tag(&params.reference)
+    {
+        let (signer_identity, signature_type, media_type) = if let Ok(art) =
+            serde_json::from_slice::<specton_signing::SignatureArtifact>(&body)
+        {
+            (
+                Some(art.signer_identity),
+                art.signature_type,
+                art.media_type,
+            )
+        } else if let Ok(env) = serde_json::from_slice::<specton_signing::CosignEnvelope>(&body) {
+            (
+                Some(env.key_ref),
+                "cosign-key".to_string(),
+                specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.to_string(),
+            )
+        } else {
+            (
+                None,
+                "cosign-key".to_string(),
+                detect_manifest_media_type(&body),
+            )
+        };
+        if let Err(e) = register_signature_metadata(
+            &state,
+            &claims.sub,
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &subject,
+            &digest,
+            body.len() as i64,
+            signer_identity,
+            &signature_type,
+            &media_type,
+            &params.reference,
+        )
+        .await
+        {
+            warn!(error = %e, tag = %params.reference, "signature metadata register failed");
+        }
+    }
 
     Ok((StatusCode::CREATED, headers).into_response())
 }
@@ -1476,7 +1634,8 @@ async fn delete_manifest(
             status_code: 202,
             duration_ms: duration.as_millis() as u64,
         })
-        .await;
+        .await
+        .map_err(|e| RegistryError::AuditUnavailable(e.0))?;
 
     record_usage(
         &state,
@@ -1659,7 +1818,7 @@ async fn get_blob(
     histogram!("registry_request_duration_seconds", "operation" => "blob.pull")
         .record(duration.as_secs_f64());
     counter!("registry_pull_bytes_total").increment(data.len() as u64);
-    state
+    let _ = state
         .audit_log
         .record(audit::RegistryAuditEvent {
             timestamp: chrono::Utc::now(),
@@ -1964,7 +2123,8 @@ async fn complete_blob_upload(
             status_code: 201,
             duration_ms: duration.as_millis() as u64,
         })
-        .await;
+        .await
+        .map_err(|e| RegistryError::AuditUnavailable(e.0))?;
 
     record_usage(
         &state,
@@ -2186,6 +2346,156 @@ fn gc_admin_authorize(claims: &TokenClaims) -> Result<(), RegistryError> {
         });
     }
     Ok(())
+}
+
+fn audit_admin_authorize(claims: &TokenClaims) -> Result<(), RegistryError> {
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "audit endpoints require Admin role".into(),
+        });
+    }
+    Ok(())
+}
+
+/// GET /v2/_audit — query chained audit rows.
+#[instrument(name = "audit_query", skip(state, claims))]
+async fn audit_query(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, RegistryError> {
+    audit_admin_authorize(&claims)?;
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(100);
+    let category = params
+        .get("category")
+        .and_then(|c| specton_audit::Category::parse(c));
+    let q = specton_audit::AuditQuery {
+        since: None,
+        until: None,
+        actor: params.get("actor").cloned(),
+        category,
+        tenant: params.get("tenant").cloned(),
+        limit,
+    };
+    let rows = state
+        .audit_log
+        .sink()
+        .query(q)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "events": rows })),
+    )
+        .into_response())
+}
+
+/// GET /v2/_audit/{id} — single chained row.
+#[instrument(name = "audit_get", skip(state, claims))]
+async fn audit_get(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(id): Path<i64>,
+) -> Result<Response, RegistryError> {
+    audit_admin_authorize(&claims)?;
+    let row = state.audit_log.sink().get(id).await.map_err(|e| match e {
+        specton_audit::AuditError::NotFound(id) => {
+            RegistryError::Internal(format!("audit event {id} not found"))
+        }
+        other => RegistryError::Internal(other.to_string()),
+    })?;
+    Ok((StatusCode::OK, axum::Json(row)).into_response())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AuditVerifyBody {
+    from: i64,
+    to: i64,
+}
+
+/// POST /v2/_audit/verify — verify hash chain over `[from, to]`.
+#[instrument(name = "audit_verify", skip(state, claims))]
+async fn audit_verify(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    axum::Json(body): axum::Json<AuditVerifyBody>,
+) -> Result<Response, RegistryError> {
+    audit_admin_authorize(&claims)?;
+    let verdict = state
+        .audit_log
+        .sink()
+        .verify_chain(body.from, body.to)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    let status = if verdict.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::CONFLICT
+    };
+    Ok((status, axum::Json(verdict)).into_response())
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+struct AuditExportBody {
+    /// When set with `to`, export that id range instead of pending-since-checkpoint.
+    from: Option<i64>,
+    to: Option<i64>,
+    /// Override configured compression.
+    compress: Option<bool>,
+}
+
+/// POST /v2/_audit/export — dump pending (or ranged) rows + Merkle checkpoint.
+#[instrument(name = "audit_export", skip(state, claims))]
+async fn audit_export_handler(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    body: Option<axum::Json<AuditExportBody>>,
+) -> Result<Response, RegistryError> {
+    audit_admin_authorize(&claims)?;
+    let rt = state
+        .audit_export
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("audit export not configured".into()))?;
+    let body = body.map(|axum::Json(b)| b).unwrap_or_default();
+    let compress = body.compress.unwrap_or(rt.compress);
+    let sink = state.audit_log.sink();
+
+    let result = match (body.from, body.to) {
+        (Some(from), Some(to)) => {
+            let (result, root, _) =
+                specton_audit::export_range(sink.as_ref(), rt.dest.as_ref(), from, to, compress)
+                    .await
+                    .map_err(|e| RegistryError::Internal(e.to_string()))?;
+            rt.checkpoints
+                .insert(
+                    result.range_from,
+                    result.range_to,
+                    &root,
+                    &result.exported_to,
+                )
+                .await
+                .map_err(|e| RegistryError::Internal(e.to_string()))?;
+            result
+        }
+        _ => specton_audit::export_pending(
+            sink.as_ref(),
+            rt.checkpoints.as_ref(),
+            rt.dest.as_ref(),
+            compress,
+        )
+        .await
+        .map_err(|e| match e {
+            specton_audit::ExportError::Empty => {
+                RegistryError::Internal("nothing to export".into())
+            }
+            other => RegistryError::Internal(other.to_string()),
+        })?,
+    };
+
+    Ok((StatusCode::OK, axum::Json(result)).into_response())
 }
 
 /// GET /v2/_gc/status — current reaper state.
@@ -2726,6 +3036,1551 @@ async fn upload_attestation(
     Ok((StatusCode::CREATED, axum::Json(resp)).into_response())
 }
 
+// ── Verify-on-pull (001 B4) ──────────────────────────────────────────────────
+
+/// Enforce [`ImageVerificationPolicy`] (or `[signing].require_for_pull`) on
+/// manifest GET. Warn/log modes audit and allow; block returns Forbidden.
+async fn enforce_pull_signature_policy(
+    state: &AppState,
+    claims_sub: &str,
+    tenant: &str,
+    project: &str,
+    repo: &str,
+    subject_digest: &str,
+) -> Result<(), RegistryError> {
+    let pool = match state.gc_pool.clone() {
+        Some(p) => p,
+        None => {
+            // No Postgres ⇒ cannot evaluate policies; fail open unless
+            // require_for_pull is set (then fail closed — no way to prove).
+            if state.config.signing.require_for_pull {
+                return Err(RegistryError::Forbidden {
+                    reason: "signature required but policy store unavailable".into(),
+                });
+            }
+            return Ok(());
+        }
+    };
+
+    use specton_signing::PolicyStore as _;
+    let stored = specton_signing::PgPolicyStore::new(pool.clone())
+        .resolve(tenant, project, repo)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    let policy = match stored {
+        Some(p) => p.as_verification_policy(),
+        None if state.config.signing.require_for_pull => specton_signing::VerificationPolicy {
+            id: Uuid::nil(),
+            name: "require_for_pull".into(),
+            required: true,
+            trusted_signers: vec![],
+            on_violation: specton_signing::OnViolation::Block,
+        },
+        None => return Ok(()),
+    };
+
+    if !policy.required {
+        return Ok(());
+    }
+
+    use specton_signing::SignatureStore as _;
+    let records = specton_signing::PgSignatureStore::new(pool)
+        .list_for_subject(tenant, project, repo, subject_digest)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    let trusted_refs: Vec<&str> = policy
+        .trusted_signers
+        .iter()
+        .filter_map(|s| s.key_ref())
+        .collect();
+
+    let (trusted, reason) = if trusted_refs.is_empty() {
+        // Presence check: any registered signature satisfies the policy.
+        if records.is_empty() {
+            (false, "no signatures registered for digest".to_string())
+        } else {
+            (true, String::new())
+        }
+    } else {
+        let mut artifacts = Vec::new();
+        for rec in &records {
+            let path = blob_path(tenant, project, repo, &rec.signature_digest);
+            if let Ok(r) = state.store.get(&StorePath::from(path)).await
+                && let Ok(bytes) = r.bytes().await
+            {
+                if let Ok(art) =
+                    serde_json::from_slice::<specton_signing::SignatureArtifact>(&bytes)
+                {
+                    artifacts.push(art);
+                } else if let Ok(env) =
+                    serde_json::from_slice::<specton_signing::CosignEnvelope>(&bytes)
+                {
+                    artifacts.push(specton_signing::SignatureArtifact {
+                        media_type: specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.into(),
+                        body: bytes.to_vec(),
+                        signer_identity: env.key_ref,
+                        signature_type: "cosign-key".into(),
+                    });
+                }
+            }
+        }
+        let file_provider = match &state.config.signing.key_root {
+            Some(root) => Arc::new(specton_signing::FilePemKeyProvider::with_root(root)),
+            None => Arc::new(specton_signing::FilePemKeyProvider::new()),
+        };
+        let keys = Arc::new(
+            specton_signing::CompositeKeyProvider::builder()
+                .file(file_provider)
+                .build(),
+        );
+        let verifier = specton_signing::SigstoreVerifier::new(keys);
+        use specton_signing::Verifier as _;
+        match verifier.verify(subject_digest, &artifacts, &policy).await {
+            Ok(outcome) => (outcome.trusted, outcome.reason.unwrap_or_default()),
+            Err(e) => (false, e.to_string()),
+        }
+    };
+
+    if trusted {
+        return Ok(());
+    }
+
+    let _ = state
+        .audit_log
+        .sink()
+        .append(
+            specton_audit::AuditEvent::success(
+                specton_audit::Category::Policy,
+                "signature.verify.miss",
+                specton_audit::Actor {
+                    sub: claims_sub.to_string(),
+                    role: None,
+                    source_ip: None,
+                    ua: None,
+                },
+            )
+            .with_subject(specton_audit::Subject {
+                tenant: Some(tenant.to_string()),
+                project: Some(project.to_string()),
+                repo: Some(repo.to_string()),
+                reference: None,
+                digest: Some(subject_digest.to_string()),
+            })
+            .with_attr("policy", serde_json::json!(policy.name))
+            .with_attr("reason", serde_json::json!(reason))
+            .with_attr(
+                "on_violation",
+                serde_json::json!(format!("{:?}", policy.on_violation).to_lowercase()),
+            ),
+        )
+        .await;
+
+    match policy.on_violation {
+        specton_signing::OnViolation::Block => Err(RegistryError::Forbidden {
+            reason: format!("signature policy {:?}: {reason}", policy.name),
+        }),
+        specton_signing::OnViolation::Warn | specton_signing::OnViolation::Log => {
+            warn!(
+                policy = %policy.name,
+                digest = %subject_digest,
+                %reason,
+                "signature policy miss (warn/log)"
+            );
+            Ok(())
+        }
+    }
+}
+
+// ── Image signatures (001 B3) ────────────────────────────────────────────────
+//
+// POST /v2/{tenant}/{project}/{name}/signatures/{digest}
+//   Body: SignatureArtifact JSON (from specton-sign) or CosignEnvelope.
+//   Stores bytes, writes cosign tag `sha256-<hex>.sig`, metadata row,
+//   OCI referrer, and a Sign audit event.
+//
+// GET  /v2/{tenant}/{project}/{name}/signatures/{digest}
+//   Lists signature descriptors for the subject digest.
+//
+// POST /v2/_verify
+//   { digest, tenant, project, repository, key_refs?: [...] }
+//
+// PUT/GET/DELETE /v2/_signing/policies/{tenant}/{name} — ImageVerificationPolicy
+//   sync surface for the controller (admin).
+
+#[derive(Debug, serde::Deserialize)]
+struct VerifyBody {
+    digest: String,
+    tenant: String,
+    project: String,
+    repository: String,
+    /// Trusted key refs for verification policy. Empty ⇒ list-only mode.
+    #[serde(default)]
+    key_refs: Vec<String>,
+}
+
+/// Postgres metadata + OCI referrer + Sign audit (bytes already in object store).
+#[allow(clippy::too_many_arguments)]
+async fn register_signature_metadata(
+    state: &AppState,
+    claims_sub: &str,
+    tenant: &str,
+    project: &str,
+    repo: &str,
+    subject_digest: &str,
+    signature_digest: &str,
+    size_bytes: i64,
+    signer_identity: Option<String>,
+    signature_type: &str,
+    media_type: &str,
+    reference: &str,
+) -> Result<Uuid, RegistryError> {
+    let pool = state.gc_pool.clone().ok_or_else(|| {
+        RegistryError::Internal(
+            "signature store requires Postgres (enable scanner/GC or audit pool)".into(),
+        )
+    })?;
+
+    let id = Uuid::new_v4();
+    let rec = specton_signing::SignatureRecord {
+        id,
+        subject_digest: subject_digest.to_string(),
+        tenant: tenant.to_string(),
+        project: project.to_string(),
+        repository: repo.to_string(),
+        signature_digest: signature_digest.to_string(),
+        signer_identity: signer_identity.clone(),
+        signature_type: signature_type.to_string(),
+        media_type: Some(media_type.to_string()),
+        size_bytes,
+        rekor_log_index: None,
+        signed_at: chrono::Utc::now(),
+    };
+    use specton_signing::SignatureStore as _;
+    specton_signing::PgSignatureStore::new(pool.clone())
+        .put(&rec)
+        .await
+        .map_err(|e| RegistryError::Internal(format!("signature store: {e}")))?;
+
+    use specton_lazy::ReferrerStore as _;
+    let r = specton_lazy::Referrer {
+        subject_digest: subject_digest.to_string(),
+        artifact_digest: signature_digest.to_string(),
+        artifact_type: media_type.to_string(),
+        media_type: media_type.to_string(),
+        size: size_bytes,
+    };
+    if let Err(e) = specton_lazy::PgReferrerStore::new(pool).register(&r).await {
+        warn!(error = %e, "signature referrer register failed");
+    }
+
+    let _ = state
+        .audit_log
+        .record(audit::RegistryAuditEvent {
+            timestamp: chrono::Utc::now(),
+            event_type: "signature.push".into(),
+            subject: claims_sub.to_string(),
+            tenant: tenant.to_string(),
+            project: project.to_string(),
+            repository: repo.to_string(),
+            reference: reference.to_string(),
+            digest: signature_digest.to_string(),
+            size_bytes: size_bytes as u64,
+            status_code: 201,
+            duration_ms: 0,
+        })
+        .await;
+
+    let _ = state
+        .audit_log
+        .sink()
+        .append(
+            specton_audit::AuditEvent::success(
+                specton_audit::Category::Sign,
+                "signature.push",
+                specton_audit::Actor {
+                    sub: claims_sub.to_string(),
+                    role: None,
+                    source_ip: None,
+                    ua: None,
+                },
+            )
+            .with_subject(specton_audit::Subject {
+                tenant: Some(tenant.to_string()),
+                project: Some(project.to_string()),
+                repo: Some(repo.to_string()),
+                reference: Some(reference.to_string()),
+                digest: Some(signature_digest.to_string()),
+            })
+            .with_attr("signer_identity", serde_json::json!(signer_identity)),
+        )
+        .await;
+
+    Ok(id)
+}
+
+/// Persist signature blob + tag + Postgres row + referrer + audit.
+#[allow(clippy::too_many_arguments)]
+async fn persist_signature(
+    state: &AppState,
+    claims_sub: &str,
+    tenant: &str,
+    project: &str,
+    repo: &str,
+    subject_digest: &str,
+    body: Bytes,
+    signer_identity: Option<String>,
+    signature_type: &str,
+    media_type: &str,
+) -> Result<(String, Uuid), RegistryError> {
+    if !state.config.signing.enabled {
+        return Err(RegistryError::Forbidden {
+            reason: "signing disabled ([signing].enabled=false)".into(),
+        });
+    }
+
+    let signature_digest = sha256_digest(&body);
+
+    // Blob storage (content-addressable).
+    let blob_p = blob_path(tenant, project, repo, &signature_digest);
+    state
+        .store
+        .put(&StorePath::from(blob_p), body.clone().into())
+        .await
+        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+
+    // Manifest path so OCI clients can pull the signature artifact.
+    let man_p = manifest_path(tenant, project, repo, &signature_digest);
+    state
+        .store
+        .put(&StorePath::from(man_p), body.clone().into())
+        .await
+        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+
+    let tag =
+        specton_signing::SignatureArtifact::cosign_sig_tag(subject_digest).ok_or_else(|| {
+            RegistryError::ManifestInvalid {
+                reason: "subject digest must be sha256:...".into(),
+            }
+        })?;
+    let tag_p = tag_link_path(tenant, project, repo, &tag);
+    state
+        .store
+        .put(
+            &StorePath::from(tag_p),
+            Bytes::from(signature_digest.clone()).into(),
+        )
+        .await
+        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+
+    let id = register_signature_metadata(
+        state,
+        claims_sub,
+        tenant,
+        project,
+        repo,
+        subject_digest,
+        &signature_digest,
+        body.len() as i64,
+        signer_identity,
+        signature_type,
+        media_type,
+        &tag,
+    )
+    .await?;
+
+    Ok((signature_digest, id))
+}
+
+#[instrument(name = "upload_signature", skip(state, claims, body), fields(tenant = %params.tenant, project = %params.project, name = %params.name, digest = %params.digest))]
+async fn upload_signature(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(params): Path<BlobRef>,
+    body: Bytes,
+) -> Result<Response, RegistryError> {
+    authorize(
+        &claims,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        Action::Push,
+    )?;
+
+    let subject_digest = params.digest.clone();
+    if !subject_digest.starts_with("sha256:") {
+        return Err(RegistryError::ManifestInvalid {
+            reason: "subject digest must be sha256:...".into(),
+        });
+    }
+
+    // Prefer SignatureArtifact JSON; fall back to CosignEnvelope; else raw bytes.
+    let (signer_identity, signature_type, media_type) =
+        if let Ok(art) = serde_json::from_slice::<specton_signing::SignatureArtifact>(&body) {
+            (
+                Some(art.signer_identity.clone()),
+                art.signature_type.clone(),
+                art.media_type.clone(),
+            )
+        } else if let Ok(env) = serde_json::from_slice::<specton_signing::CosignEnvelope>(&body) {
+            (
+                Some(env.key_ref.clone()),
+                "cosign-key".to_string(),
+                specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.to_string(),
+            )
+        } else {
+            (
+                None,
+                "cosign-key".to_string(),
+                specton_signing::MEDIA_TYPE_COSIGN_SIMPLE.to_string(),
+            )
+        };
+
+    let (signature_digest, id) = persist_signature(
+        &state,
+        &claims.sub,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        &subject_digest,
+        body,
+        signer_identity,
+        &signature_type,
+        &media_type,
+    )
+    .await?;
+
+    let location = format!(
+        "/v2/{}/{}/{}/blobs/{}",
+        params.tenant, params.project, params.name, signature_digest
+    );
+    let mut headers = HeaderMap::new();
+    if let Ok(hv) = HeaderValue::from_str(&location) {
+        headers.insert(header::LOCATION, hv);
+    }
+    let resp = serde_json::json!({
+        "id": id,
+        "subject_digest": subject_digest,
+        "signature_digest": signature_digest,
+        "tag": specton_signing::SignatureArtifact::cosign_sig_tag(&subject_digest),
+    });
+    Ok((StatusCode::CREATED, headers, axum::Json(resp)).into_response())
+}
+
+#[instrument(name = "list_signatures", skip(state, claims), fields(tenant = %params.tenant, project = %params.project, name = %params.name, digest = %params.digest))]
+async fn list_signatures(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(params): Path<BlobRef>,
+) -> Result<Response, RegistryError> {
+    authorize(
+        &claims,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        Action::Pull,
+    )?;
+    if !state.config.signing.enabled {
+        return Err(RegistryError::Forbidden {
+            reason: "signing disabled ([signing].enabled=false)".into(),
+        });
+    }
+
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("signature store not configured".into()))?;
+
+    use specton_signing::SignatureStore as _;
+    let rows = specton_signing::PgSignatureStore::new(pool)
+        .list_for_subject(
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &params.digest,
+        )
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "signatures": rows })),
+    )
+        .into_response())
+}
+
+#[instrument(name = "verify_image", skip(state, claims))]
+async fn verify_image(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    axum::Json(body): axum::Json<VerifyBody>,
+) -> Result<Response, RegistryError> {
+    authorize(
+        &claims,
+        &body.tenant,
+        &body.project,
+        &body.repository,
+        Action::Pull,
+    )?;
+
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("signature store not configured".into()))?;
+
+    use specton_signing::SignatureStore as _;
+    let records = specton_signing::PgSignatureStore::new(pool)
+        .list_for_subject(&body.tenant, &body.project, &body.repository, &body.digest)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    if body.key_refs.is_empty() {
+        // List-only: report whether any signatures exist.
+        return Ok((
+            StatusCode::OK,
+            axum::Json(serde_json::json!({
+                "trusted": !records.is_empty(),
+                "signers": records.iter().filter_map(|r| r.signer_identity.clone()).collect::<Vec<_>>(),
+                "signature_count": records.len(),
+                "mode": "list-only",
+            })),
+        )
+            .into_response());
+    }
+
+    // Load artifact bodies from object storage and verify cryptographically.
+    let mut artifacts = Vec::new();
+    for rec in &records {
+        let path = blob_path(
+            &body.tenant,
+            &body.project,
+            &body.repository,
+            &rec.signature_digest,
+        );
+        match state.store.get(&StorePath::from(path)).await {
+            Ok(r) => {
+                let bytes = r
+                    .bytes()
+                    .await
+                    .map_err(|e| RegistryError::Storage(e.to_string()))?;
+                if let Ok(art) =
+                    serde_json::from_slice::<specton_signing::SignatureArtifact>(&bytes)
+                {
+                    artifacts.push(art);
+                } else if let Ok(env) =
+                    serde_json::from_slice::<specton_signing::CosignEnvelope>(&bytes)
+                {
+                    artifacts.push(specton_signing::SignatureArtifact {
+                        media_type: specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.into(),
+                        body: bytes.to_vec(),
+                        signer_identity: env.key_ref,
+                        signature_type: "cosign-key".into(),
+                    });
+                }
+            }
+            Err(e) => warn!(error = %e, digest = %rec.signature_digest, "sig blob missing"),
+        }
+    }
+
+    if !state.config.signing.enabled {
+        return Err(RegistryError::Forbidden {
+            reason: "signing disabled ([signing].enabled=false)".into(),
+        });
+    }
+
+    let file_provider = match &state.config.signing.key_root {
+        Some(root) => Arc::new(specton_signing::FilePemKeyProvider::with_root(root)),
+        None => Arc::new(specton_signing::FilePemKeyProvider::new()),
+    };
+    let keys = Arc::new(
+        specton_signing::CompositeKeyProvider::builder()
+            .file(file_provider)
+            .build(),
+    );
+    let verifier = specton_signing::SigstoreVerifier::new(keys);
+    let key_refs: Vec<&str> = body.key_refs.iter().map(|s| s.as_str()).collect();
+    let policy = specton_signing::VerificationPolicy::require_keys("api", &key_refs);
+    use specton_signing::Verifier as _;
+    match verifier.verify(&body.digest, &artifacts, &policy).await {
+        Ok(outcome) => Ok((StatusCode::OK, axum::Json(outcome)).into_response()),
+        Err(e) => Ok((
+            StatusCode::OK,
+            axum::Json(serde_json::json!({
+                "trusted": false,
+                "signers": [],
+                "reason": e.to_string(),
+            })),
+        )
+            .into_response()),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PolicyUpsertBody {
+    #[serde(default)]
+    id: Option<Uuid>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    spec: specton_signing::PolicySpec,
+    #[serde(default)]
+    on_violation: Option<specton_signing::OnViolation>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PolicyPath {
+    tenant: String,
+    name: String,
+}
+
+fn signing_admin_authorize(claims: &TokenClaims) -> Result<(), RegistryError> {
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "signing policy endpoints require Admin role".into(),
+        });
+    }
+    Ok(())
+}
+
+/// PUT /v2/_signing/policies/{tenant}/{name}
+#[instrument(name = "upsert_verification_policy", skip(state, claims))]
+async fn upsert_verification_policy(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(path): Path<PolicyPath>,
+    axum::Json(body): axum::Json<PolicyUpsertBody>,
+) -> Result<Response, RegistryError> {
+    signing_admin_authorize(&claims)?;
+    if !state.config.signing.enabled {
+        return Err(RegistryError::Forbidden {
+            reason: "signing disabled ([signing].enabled=false)".into(),
+        });
+    }
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("policy store not configured".into()))?;
+
+    let on_violation = body.on_violation.unwrap_or(body.spec.on_violation);
+    let policy = specton_signing::StoredVerificationPolicy {
+        id: body.id.unwrap_or_else(Uuid::new_v4),
+        name: path.name.clone(),
+        tenant: path.tenant.clone(),
+        spec: body.spec,
+        enabled: body.enabled.unwrap_or(true),
+        on_violation,
+        updated_at: chrono::Utc::now(),
+    };
+    use specton_signing::PolicyStore as _;
+    specton_signing::PgPolicyStore::new(pool)
+        .upsert(&policy)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    Ok((StatusCode::OK, axum::Json(policy)).into_response())
+}
+
+/// GET /v2/_signing/policies/{tenant}/{name}
+#[instrument(name = "get_verification_policy", skip(state, claims))]
+async fn get_verification_policy(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(path): Path<PolicyPath>,
+) -> Result<Response, RegistryError> {
+    signing_admin_authorize(&claims)?;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("policy store not configured".into()))?;
+    use specton_signing::PolicyStore as _;
+    let found = specton_signing::PgPolicyStore::new(pool)
+        .get(&path.tenant, &path.name)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    match found {
+        Some(p) => Ok((StatusCode::OK, axum::Json(p)).into_response()),
+        None => Err(RegistryError::NameUnknown { name: path.name }),
+    }
+}
+
+/// DELETE /v2/_signing/policies/{tenant}/{name}
+#[instrument(name = "delete_verification_policy", skip(state, claims))]
+async fn delete_verification_policy(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(path): Path<PolicyPath>,
+) -> Result<Response, RegistryError> {
+    signing_admin_authorize(&claims)?;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("policy store not configured".into()))?;
+    use specton_signing::PolicyStore as _;
+    let deleted = specton_signing::PgPolicyStore::new(pool)
+        .delete(&path.tenant, &path.name)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    if deleted {
+        Ok(StatusCode::NO_CONTENT.into_response())
+    } else {
+        Err(RegistryError::NameUnknown { name: path.name })
+    }
+}
+
+// ── Auto-rebuild (018 R2) ────────────────────────────────────────────────────
+
+fn rebuild_enabled(state: &AppState) -> Result<(), RegistryError> {
+    if !state.config.rebuild.enabled {
+        return Err(RegistryError::Forbidden {
+            reason: "rebuild disabled ([rebuild].enabled=false)".into(),
+        });
+    }
+    Ok(())
+}
+
+fn rebuild_admin_authorize(claims: &TokenClaims) -> Result<(), RegistryError> {
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "rebuild admin endpoints require Admin role".into(),
+        });
+    }
+    Ok(())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RebuildTriggerBody {
+    tenant: String,
+    /// Subscription name within the tenant.
+    subscription: String,
+    upstream_ref: String,
+    downstream_ref: String,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    fixed_cves: Vec<String>,
+    #[serde(default = "default_severity")]
+    severity_max: String,
+}
+
+fn default_severity() -> String {
+    "high".into()
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RebuildSubPath {
+    tenant: String,
+    name: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RebuildSubUpsert {
+    #[serde(default)]
+    id: Option<Uuid>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    spec: specton_rebuild::SubscriptionSpec,
+}
+
+// ── Admission (002) ──────────────────────────────────────────────────────────
+
+fn claims_bypass_admission(claims: &TokenClaims) -> bool {
+    claims.sub.contains("bypass-admission")
+        || (claims.role == Role::Admin
+            && claims
+                .scopes
+                .iter()
+                .any(|s| s.repository == "*" || s.actions.contains(&Action::Manage)))
+}
+
+async fn enforce_admission(
+    state: &AppState,
+    claims: &TokenClaims,
+    tenant: &str,
+    project: &str,
+    repository: &str,
+    digest: &str,
+) -> Result<(), RegistryError> {
+    let pool = match state.gc_pool.as_ref() {
+        Some(p) => p,
+        None => return Ok(()), // no PG → no policies loaded
+    };
+    let store = admission::PgAdmissionStore::new(pool.clone());
+    let policies = store.list_tenant(tenant).await.unwrap_or_default();
+    if policies.is_empty() {
+        return Ok(());
+    }
+
+    let scan = admission::fetch_scan(state.scan_store.as_ref(), digest).await;
+    let signature_ok = if policies.iter().any(|p| p.spec.signature_required) {
+        // Reuse signing policy path when signing enabled; else treat as missing.
+        if state.config.signing.enabled {
+            Some(
+                enforce_pull_signature_policy(
+                    state,
+                    &claims.sub,
+                    tenant,
+                    project,
+                    repository,
+                    digest,
+                )
+                .await
+                .is_ok(),
+            )
+        } else {
+            Some(false)
+        }
+    } else {
+        Some(true)
+    };
+
+    let bypass = claims_bypass_admission(claims);
+    let verdict = admission::evaluate(
+        &policies,
+        scan.as_ref(),
+        &state.admission_cache,
+        admission::EvaluateInput {
+            tenant,
+            project,
+            repository,
+            digest,
+            subject: &claims.sub,
+            bypass,
+            signature_ok,
+        },
+    )
+    .await;
+
+    let _ = store
+        .record_decision(
+            digest,
+            policies.first().map(|p| p.id),
+            &verdict,
+            &claims.sub,
+        )
+        .await;
+
+    match verdict {
+        admission::AdmissionVerdict::Allow => Ok(()),
+        admission::AdmissionVerdict::Warn { reason } => {
+            warn!(%digest, %reason, "admission warn");
+            let _ = state
+                .audit_log
+                .record(audit::RegistryAuditEvent {
+                    timestamp: chrono::Utc::now(),
+                    event_type: "admission.warn".into(),
+                    subject: claims.sub.clone(),
+                    tenant: tenant.into(),
+                    project: project.into(),
+                    repository: repository.into(),
+                    reference: digest.into(),
+                    digest: digest.into(),
+                    size_bytes: 0,
+                    status_code: 200,
+                    duration_ms: 0,
+                })
+                .await;
+            Ok(())
+        }
+        admission::AdmissionVerdict::Block { reason, .. } => {
+            let _ = state
+                .audit_log
+                .record(audit::RegistryAuditEvent {
+                    timestamp: chrono::Utc::now(),
+                    event_type: "admission.block".into(),
+                    subject: claims.sub.clone(),
+                    tenant: tenant.into(),
+                    project: project.into(),
+                    repository: repository.into(),
+                    reference: digest.into(),
+                    digest: digest.into(),
+                    size_bytes: 0,
+                    status_code: 403,
+                    duration_ms: 0,
+                })
+                .await;
+            Err(RegistryError::ManifestUnverified { reason })
+        }
+    }
+}
+
+fn admission_enabled(state: &AppState) -> Result<(), RegistryError> {
+    if state.config.admission.enabled {
+        Ok(())
+    } else {
+        Err(RegistryError::Forbidden {
+            reason: "admission disabled ([admission] enabled=false)".into(),
+        })
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AdmitTestBody {
+    #[serde(rename = "ref")]
+    image_ref: String,
+    #[serde(default)]
+    policy_name: Option<String>,
+}
+
+/// POST /v2/_admit/test — dry-run evaluator.
+#[instrument(name = "admit_test", skip(state, claims))]
+async fn admit_test(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    axum::Json(body): axum::Json<AdmitTestBody>,
+) -> Result<Response, RegistryError> {
+    admission_enabled(&state)?;
+    let parsed = promote::ImageRef::parse(&body.image_ref)?;
+    authorize(
+        &claims,
+        &parsed.tenant,
+        &parsed.project,
+        &parsed.repository,
+        Action::Manage,
+    )?;
+    let (_, bytes) = {
+        // Resolve digest via promote helper paths
+        let store = &state.store;
+        let digest = if parsed.reference.starts_with("sha256:") {
+            parsed.reference.clone()
+        } else {
+            read_tag_link(
+                store,
+                &parsed.tenant,
+                &parsed.project,
+                &parsed.repository,
+                &parsed.reference,
+            )
+            .await?
+            .ok_or_else(|| RegistryError::TagUnknown {
+                tag: parsed.reference.clone(),
+            })?
+        };
+        (digest.clone(), digest)
+    };
+    let digest = bytes;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("admission requires Postgres".into()))?;
+    let store = admission::PgAdmissionStore::new(pool);
+    let mut policies = store.list_tenant(&parsed.tenant).await?;
+    if let Some(name) = &body.policy_name {
+        policies.retain(|p| &p.name == name);
+    }
+    let scan = admission::fetch_scan(state.scan_store.as_ref(), &digest).await;
+    let verdict = admission::evaluate(
+        &policies,
+        scan.as_ref(),
+        &state.admission_cache,
+        admission::EvaluateInput {
+            tenant: &parsed.tenant,
+            project: &parsed.project,
+            repository: &parsed.repository,
+            digest: &digest,
+            subject: &claims.sub,
+            bypass: false,
+            signature_ok: Some(true),
+        },
+    )
+    .await;
+    Ok((StatusCode::OK, axum::Json(verdict)).into_response())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AdmissionPolicyBody {
+    #[serde(default)]
+    id: Option<Uuid>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    spec: admission::AdmissionPolicySpec,
+}
+
+/// PUT /v2/_admit/policies/{tenant}/{name}
+#[instrument(name = "upsert_admission_policy", skip(state, claims))]
+async fn upsert_admission_policy(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path((tenant, name)): Path<(String, String)>,
+    axum::Json(body): axum::Json<AdmissionPolicyBody>,
+) -> Result<Response, RegistryError> {
+    admission_enabled(&state)?;
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "admin required to upsert AdmissionPolicy".into(),
+        });
+    }
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("admission requires Postgres".into()))?;
+    let policy = admission::AdmissionPolicy {
+        id: body.id.unwrap_or_else(Uuid::new_v4),
+        name,
+        tenant,
+        spec: body.spec,
+        enabled: body.enabled.unwrap_or(true),
+        updated_at: chrono::Utc::now(),
+    };
+    admission::PgAdmissionStore::new(pool)
+        .upsert(&policy)
+        .await?;
+    Ok((StatusCode::OK, axum::Json(&policy)).into_response())
+}
+
+/// GET /v2/_admit/policies?tenant=
+#[instrument(name = "list_admission_policies", skip(state, claims))]
+async fn list_admission_policies(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, RegistryError> {
+    admission_enabled(&state)?;
+    let tenant = q
+        .get("tenant")
+        .cloned()
+        .ok_or_else(|| RegistryError::ManifestInvalid {
+            reason: "tenant query required".into(),
+        })?;
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "admin required to list admission policies".into(),
+        });
+    }
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("admission requires Postgres".into()))?;
+    let rows = admission::PgAdmissionStore::new(pool)
+        .list_tenant(&tenant)
+        .await?;
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "items": rows })),
+    )
+        .into_response())
+}
+
+// ── Promotion (006) ──────────────────────────────────────────────────────────
+
+fn promotion_enabled(state: &AppState) -> Result<(), RegistryError> {
+    if state.config.promotion.enabled {
+        Ok(())
+    } else {
+        Err(RegistryError::Forbidden {
+            reason: "promotion disabled ([promotion] enabled=false)".into(),
+        })
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PromoteBody {
+    source: String,
+    dest: String,
+    #[serde(default = "promote_default_true")]
+    include_signatures: bool,
+    #[serde(default = "promote_default_true")]
+    include_attestations: bool,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    policy: Option<String>,
+}
+
+fn promote_default_true() -> bool {
+    true
+}
+
+/// POST /v2/_promote — copy manifest (+ blobs, optional signatures) to dest.
+#[instrument(name = "promote", skip(state, claims))]
+async fn promote_handler(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    axum::Json(body): axum::Json<PromoteBody>,
+) -> Result<Response, RegistryError> {
+    promotion_enabled(&state)?;
+    let source = promote::ImageRef::parse(&body.source)?;
+    let dest = promote::ImageRef::parse(&body.dest)?;
+    authorize(
+        &claims,
+        &source.tenant,
+        &source.project,
+        &source.repository,
+        Action::Pull,
+    )?;
+    authorize(
+        &claims,
+        &dest.tenant,
+        &dest.project,
+        &dest.repository,
+        Action::Push,
+    )?;
+
+    let mode = match body.mode.as_deref() {
+        Some("dry_run") | Some("dry-run") => promote::PromoteMode::DryRun,
+        Some("on_policy_pass") => promote::PromoteMode::OnPolicyPass {
+            policy: body.policy.clone().unwrap_or_default(),
+        },
+        _ => promote::PromoteMode::Force,
+    };
+
+    if let promote::PromoteMode::OnPolicyPass { ref policy } = mode {
+        // C3: evaluate dest-scoped admission against source digest before copy.
+        if state.config.admission.enabled {
+            let (_, man_bytes) = {
+                let dig = if source.reference.starts_with("sha256:") {
+                    source.reference.clone()
+                } else {
+                    read_tag_link(
+                        &state.store,
+                        &source.tenant,
+                        &source.project,
+                        &source.repository,
+                        &source.reference,
+                    )
+                    .await?
+                    .ok_or_else(|| RegistryError::TagUnknown {
+                        tag: source.reference.clone(),
+                    })?
+                };
+                (dig.clone(), dig)
+            };
+            let digest = man_bytes;
+            let pool = state.gc_pool.as_ref().ok_or_else(|| {
+                RegistryError::Internal("on_policy_pass requires Postgres".into())
+            })?;
+            let mut policies = admission::PgAdmissionStore::new(pool.clone())
+                .list_tenant(&dest.tenant)
+                .await?;
+            if !policy.is_empty() {
+                policies.retain(|p| p.name == *policy);
+            }
+            let scan = admission::fetch_scan(state.scan_store.as_ref(), &digest).await;
+            let verdict = admission::evaluate(
+                &policies,
+                scan.as_ref(),
+                &state.admission_cache,
+                admission::EvaluateInput {
+                    tenant: &dest.tenant,
+                    project: &dest.project,
+                    repository: &dest.repository,
+                    digest: &digest,
+                    subject: &claims.sub,
+                    bypass: false,
+                    signature_ok: Some(true),
+                },
+            )
+            .await;
+            if let admission::AdmissionVerdict::Block { reason, .. } = verdict {
+                return Err(RegistryError::ManifestUnverified {
+                    reason: format!("promote on_policy_pass failed: {reason}"),
+                });
+            }
+        }
+    }
+
+    let req = promote::PromoteRequest {
+        source,
+        dest,
+        include_signatures: body.include_signatures,
+        include_attestations: body.include_attestations,
+        mode: match mode {
+            promote::PromoteMode::OnPolicyPass { .. } => promote::PromoteMode::Force,
+            other => other,
+        },
+    };
+
+    let outcome = promote::promote(promote::PromoteParams {
+        store: &state.store,
+        dest_store: state.promote_dest_store.as_ref(),
+        pool: state.gc_pool.as_ref(),
+        actor: &claims.sub,
+        req: &req,
+    })
+    .await?;
+
+    let _ = state
+        .audit_log
+        .record(audit::RegistryAuditEvent {
+            timestamp: chrono::Utc::now(),
+            event_type: "manifest.promote".into(),
+            subject: claims.sub.clone(),
+            tenant: req.dest.tenant.clone(),
+            project: req.dest.project.clone(),
+            repository: req.dest.repository.clone(),
+            reference: req.dest.reference.clone(),
+            digest: outcome.dst_digest.clone(),
+            size_bytes: outcome.bytes_copied,
+            status_code: 200,
+            duration_ms: 0,
+        })
+        .await;
+
+    Ok((StatusCode::OK, axum::Json(outcome)).into_response())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PromoteHistoryQuery {
+    tenant: String,
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default)]
+    repository: Option<String>,
+    #[serde(default = "default_promote_limit")]
+    limit: i64,
+}
+
+fn default_promote_limit() -> i64 {
+    50
+}
+
+/// GET /v2/_promote/history?tenant=&project=&repository=
+#[instrument(name = "promote_history", skip(state, claims))]
+async fn promote_history(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Query(q): Query<PromoteHistoryQuery>,
+) -> Result<Response, RegistryError> {
+    promotion_enabled(&state)?;
+    if claims.role != Role::Admin {
+        let project = q
+            .project
+            .as_deref()
+            .ok_or_else(|| RegistryError::Forbidden {
+                reason: "project query required for non-admin promote history".into(),
+            })?;
+        let repo = q.repository.as_deref().unwrap_or("*");
+        authorize(&claims, &q.tenant, project, repo, Action::Pull)?;
+    }
+    let pool = state
+        .gc_pool
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("promotion history requires Postgres".into()))?;
+
+    let rows = sqlx::query(
+        "SELECT id, started_at, finished_at, actor,
+                src_tenant, src_project, src_repository, src_reference, src_digest,
+                dst_tenant, dst_project, dst_repository, dst_reference,
+                state, error, bytes_copied, blob_count, signatures_copied
+         FROM promotions
+         WHERE dst_tenant = $1
+           AND ($2::text IS NULL OR dst_project = $2)
+           AND ($3::text IS NULL OR dst_repository = $3)
+         ORDER BY started_at DESC
+         LIMIT $4",
+    )
+    .bind(&q.tenant)
+    .bind(q.project.as_deref())
+    .bind(q.repository.as_deref())
+    .bind(q.limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    use sqlx::Row;
+    let items: Vec<_> = rows
+        .iter()
+        .map(|r| {
+            let src_tenant: String = r.get("src_tenant");
+            let src_project: String = r.get("src_project");
+            let src_repository: String = r.get("src_repository");
+            let src_reference: String = r.get("src_reference");
+            let dst_tenant: String = r.get("dst_tenant");
+            let dst_project: String = r.get("dst_project");
+            let dst_repository: String = r.get("dst_repository");
+            let dst_reference: String = r.get("dst_reference");
+            serde_json::json!({
+                "id": r.get::<Uuid, _>("id"),
+                "started_at": r.get::<chrono::DateTime<chrono::Utc>, _>("started_at"),
+                "finished_at": r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("finished_at"),
+                "actor": r.get::<String, _>("actor"),
+                "source": format!("{src_tenant}/{src_project}/{src_repository}:{src_reference}"),
+                "dest": format!("{dst_tenant}/{dst_project}/{dst_repository}:{dst_reference}"),
+                "src_digest": r.get::<String, _>("src_digest"),
+                "state": r.get::<String, _>("state"),
+                "error": r.get::<Option<String>, _>("error"),
+                "bytes_copied": r.get::<i64, _>("bytes_copied"),
+                "blob_count": r.get::<i32, _>("blob_count"),
+                "signatures_copied": r.get::<i32, _>("signatures_copied"),
+            })
+        })
+        .collect();
+
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "items": items })),
+    )
+        .into_response())
+}
+
+/// GET /v2/_promote/{id}
+#[instrument(name = "promote_status", skip(state, claims))]
+async fn promote_status(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(id): Path<Uuid>,
+) -> Result<Response, RegistryError> {
+    promotion_enabled(&state)?;
+    let pool = state
+        .gc_pool
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("promotion status requires Postgres".into()))?;
+    type PromoRow = (
+        Uuid,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+    );
+    let row: Option<PromoRow> = sqlx::query_as(
+        "SELECT id, actor, src_tenant, src_project, src_repository, src_reference,
+                dst_tenant, dst_project, dst_repository, dst_reference, state, error
+         FROM promotions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    let Some((
+        id,
+        actor,
+        src_tenant,
+        src_project,
+        src_repository,
+        src_reference,
+        dst_tenant,
+        dst_project,
+        dst_repository,
+        dst_reference,
+        st,
+        error,
+    )) = row
+    else {
+        return Err(RegistryError::NameUnknown {
+            name: id.to_string(),
+        });
+    };
+    authorize(
+        &claims,
+        &dst_tenant,
+        &dst_project,
+        &dst_repository,
+        Action::Pull,
+    )?;
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "id": id,
+            "actor": actor,
+            "source": format!("{src_tenant}/{src_project}/{src_repository}:{src_reference}"),
+            "dest": format!("{dst_tenant}/{dst_project}/{dst_repository}:{dst_reference}"),
+            "state": st,
+            "error": error,
+        })),
+    )
+        .into_response())
+}
+
+/// POST /v2/_rebuild/trigger — manual fire (admin).
+#[instrument(name = "rebuild_trigger", skip(state, claims))]
+async fn rebuild_trigger(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    axum::Json(body): axum::Json<RebuildTriggerBody>,
+) -> Result<Response, RegistryError> {
+    rebuild_enabled(&state)?;
+    rebuild_admin_authorize(&claims)?;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("rebuild store requires Postgres".into()))?;
+
+    use specton_rebuild::SubscriptionStore as _;
+    let sub = specton_rebuild::PgSubscriptionStore::new(pool.clone())
+        .get(&body.tenant, &body.subscription)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?
+        .ok_or_else(|| RegistryError::NameUnknown {
+            name: body.subscription.clone(),
+        })?;
+
+    if !sub.matches(&body.upstream_ref, &body.downstream_ref) {
+        return Err(RegistryError::Forbidden {
+            reason: "subscription watch does not match upstream/downstream".into(),
+        });
+    }
+
+    let trigger = match body.reason.as_deref() {
+        Some("base_pushed") => specton_rebuild::TriggerCause::BasePushed,
+        Some("cve_fixed") => specton_rebuild::TriggerCause::CveFixed,
+        Some("scheduled_nightly") => specton_rebuild::TriggerCause::ScheduledNightly,
+        _ => specton_rebuild::TriggerCause::Manual,
+    };
+
+    let svc = specton_rebuild::RebuildService::new(pool);
+    match svc
+        .fire(specton_rebuild::FireRequest {
+            subscription: sub,
+            upstream_ref: body.upstream_ref,
+            downstream_ref: body.downstream_ref,
+            trigger,
+            fixed_cves: body.fixed_cves,
+            severity_max: body.severity_max,
+        })
+        .await
+    {
+        Ok(result) => Ok((StatusCode::OK, axum::Json(result)).into_response()),
+        Err(e) => Ok((
+            StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({
+                "status": "failed",
+                "error": e.to_string(),
+            })),
+        )
+            .into_response()),
+    }
+}
+
+/// GET /v2/_rebuild/subscriptions?tenant=
+#[instrument(name = "list_rebuild_subscriptions", skip(state, claims))]
+async fn list_rebuild_subscriptions(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, RegistryError> {
+    rebuild_enabled(&state)?;
+    let tenant = q.get("tenant").cloned().unwrap_or_else(|| "default".into());
+    // Admin or any authenticated reader for the tenant list.
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("rebuild store requires Postgres".into()))?;
+    use specton_rebuild::SubscriptionStore as _;
+    let rows = specton_rebuild::PgSubscriptionStore::new(pool)
+        .list_for_tenant(&tenant)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    let _ = &claims;
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "subscriptions": rows })),
+    )
+        .into_response())
+}
+
+/// PUT /v2/_rebuild/subscriptions/{tenant}/{name}
+#[instrument(name = "upsert_rebuild_subscription", skip(state, claims))]
+async fn upsert_rebuild_subscription(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(path): Path<RebuildSubPath>,
+    axum::Json(body): axum::Json<RebuildSubUpsert>,
+) -> Result<Response, RegistryError> {
+    rebuild_enabled(&state)?;
+    rebuild_admin_authorize(&claims)?;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("rebuild store requires Postgres".into()))?;
+    let sub = specton_rebuild::RebuildSubscription {
+        id: body.id.unwrap_or_else(Uuid::new_v4),
+        tenant: path.tenant,
+        name: path.name,
+        spec: body.spec,
+        enabled: body.enabled.unwrap_or(true),
+        updated_at: chrono::Utc::now(),
+    };
+    use specton_rebuild::SubscriptionStore as _;
+    specton_rebuild::PgSubscriptionStore::new(pool)
+        .upsert(&sub)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    Ok((StatusCode::OK, axum::Json(sub)).into_response())
+}
+
+/// GET /v2/_rebuild/events?tenant=&limit=
+#[instrument(name = "list_rebuild_events", skip(state, claims))]
+async fn list_rebuild_events(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, RegistryError> {
+    rebuild_enabled(&state)?;
+    let _ = &claims;
+    let tenant = q.get("tenant").cloned().unwrap_or_else(|| "default".into());
+    let limit: i64 = q
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
+        .clamp(1, 500);
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("rebuild store requires Postgres".into()))?;
+    let events = specton_rebuild::RebuildService::new(pool)
+        .list_events(&tenant, limit)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "events": events })),
+    )
+        .into_response())
+}
+
+/// GET /v2/_lineage/{digest}
+#[instrument(name = "get_lineage", skip(state, claims))]
+async fn get_lineage(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(digest): Path<String>,
+) -> Result<Response, RegistryError> {
+    let _ = &claims;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("lineage store requires Postgres".into()))?;
+    let parents: Vec<(String, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT parent_digest, confidence, detected_at
+         FROM image_lineage WHERE child_digest = $1
+         ORDER BY detected_at DESC",
+    )
+    .bind(&digest)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    let children: Vec<(String, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT child_digest, confidence, detected_at
+         FROM image_lineage WHERE parent_digest = $1
+         ORDER BY detected_at DESC
+         LIMIT 100",
+    )
+    .bind(&digest)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "digest": digest,
+            "parents": parents.iter().map(|(p, c, at)| serde_json::json!({
+                "parent_digest": p, "confidence": c, "detected_at": at
+            })).collect::<Vec<_>>(),
+            "children": children.iter().map(|(ch, c, at)| serde_json::json!({
+                "child_digest": ch, "confidence": c, "detected_at": at
+            })).collect::<Vec<_>>(),
+        })),
+    )
+        .into_response())
+}
+
 // ── Helper Functions ─────────────────────────────────────────────────────────
 
 /// Read a tag link. `Ok(None)` when the tag doesn't exist.
@@ -2920,7 +4775,8 @@ async fn internal_replicate_manifest(
             duration_ms: 0,
             timestamp: chrono::Utc::now(),
         })
-        .await;
+        .await
+        .map_err(|e| RegistryError::AuditUnavailable(e.0))?;
 
     Ok(StatusCode::OK.into_response())
 }
@@ -3380,6 +5236,35 @@ async fn image_status_2seg(
     image_status(state, claims, Path(params)).await
 }
 
+async fn upload_signature_2seg(
+    state: State<AppState>,
+    claims: AuthenticatedClaims,
+    Path(p): Path<BlobRef2>,
+    body: Bytes,
+) -> Result<Response, RegistryError> {
+    let params = BlobRef {
+        tenant: "default".into(),
+        project: p.project,
+        name: p.name,
+        digest: p.digest,
+    };
+    upload_signature(state, claims, Path(params), body).await
+}
+
+async fn list_signatures_2seg(
+    state: State<AppState>,
+    claims: AuthenticatedClaims,
+    Path(p): Path<BlobRef2>,
+) -> Result<Response, RegistryError> {
+    let params = BlobRef {
+        tenant: "default".into(),
+        project: p.project,
+        name: p.name,
+        digest: p.digest,
+    };
+    list_signatures(state, claims, Path(params)).await
+}
+
 async fn list_tags_2seg(
     state: State<AppState>,
     claims: AuthenticatedClaims,
@@ -3798,6 +5683,20 @@ async fn main() -> anyhow::Result<()> {
 
     info!(backend = %storage_backend, root = %storage_root, "Storage backend initialized");
 
+    // Optional second store for true cross-backend promote (design 006).
+    let promote_dest_store: Option<Arc<dyn ObjectStore>> =
+        if let Some(ref dest_cfg) = config.promotion.dest_storage {
+            let dest = build_object_store(dest_cfg)?;
+            info!(
+                backend = %dest_cfg.backend,
+                root = %dest_cfg.root,
+                "Promotion dest storage backend initialized"
+            );
+            Some(dest)
+        } else {
+            None
+        };
+
     // Load JWT verification key — fail hard if key is missing or invalid.
     // A silent fallback to a dummy key causes all token validation to fail
     // after pod restart, making pushes return 401 with no diagnostic info.
@@ -3961,7 +5860,6 @@ async fn main() -> anyhow::Result<()> {
         .map(|mr| mr.internal_port)
         .unwrap_or(5002);
 
-    let audit_log = Arc::new(audit::RegistryAuditLog::new());
     let start_time = Instant::now();
 
     // ── Scanner runtime (optional; enabled by SPECTONCR_SCANNER__ENABLED) ──
@@ -3977,6 +5875,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     let scanner_queue = scanner_runtime.as_ref().map(|rt| rt.queue.clone());
+    let scan_store = scanner_runtime.as_ref().map(|rt| rt.scan_store.clone());
     let scanner_router = scanner_runtime.as_ref().map(|rt| rt.router.clone());
 
     // ── Online-GC refcounter (009 slice 1) ───────────────────────────
@@ -4240,6 +6139,133 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(specton_cost::NoopUsageRecorder)
     };
 
+    // ── Registry audit sink (005) ───────────────────────────────────
+    // Default backend = memory (pre-005 behaviour). Postgres reuses the
+    // shared pool (scanner/GC) and seals a hash chain with HMAC.
+    let audit_cfg = &config.audit;
+    let audit_hmac_key = std::env::var("SPECTONCR_AUDIT__HMAC_KEY")
+        .ok()
+        .or_else(|| audit_cfg.hmac_key.clone())
+        .unwrap_or_else(|| "dev-only-audit-hmac-key-change-me!".into());
+    let mut audit_pg_pool: Option<sqlx::PgPool> = None;
+    let audit_sink: Arc<dyn specton_audit::AuditSink> = match audit_cfg.backend {
+        specton_common::config::AuditBackend::Memory => {
+            info!(key_id = %audit_cfg.hmac_key_id, "audit backend: memory");
+            Arc::new(specton_audit::InMemoryAudit::new(
+                audit_hmac_key.into_bytes(),
+                audit_cfg.hmac_key_id.clone(),
+            ))
+        }
+        specton_common::config::AuditBackend::Postgres => {
+            let pool = match gc_pool.clone() {
+                Some(p) => p,
+                None => {
+                    // Dedicated connect when GC/scanner left no pool.
+                    let url = std::env::var("SPECTONCR_AUDIT__POSTGRES_URL")
+                        .or_else(|_| std::env::var("SPECTONCR_GC__POSTGRES_URL"))
+                        .or_else(|_| std::env::var("DATABASE_URL"))
+                        .expect(
+                            "audit.backend=postgres requires a Postgres pool \
+                             (enable scanner/GC, or set SPECTONCR_AUDIT__POSTGRES_URL)",
+                        );
+                    let p = specton_db::connect(&url, 4)
+                        .await
+                        .expect("audit postgres connect failed");
+                    specton_db::migrate(&p)
+                        .await
+                        .expect("audit postgres migrate failed");
+                    p
+                }
+            };
+            audit_pg_pool = Some(pool.clone());
+            let keyring = specton_audit::Keyring::single(
+                audit_cfg.hmac_key_id.clone(),
+                audit_hmac_key.into_bytes(),
+            );
+            let pg = specton_audit::PgChainedAudit::new(pool, keyring);
+            if let Err(e) = pg.ensure_key_row().await {
+                tracing::error!(error = %e, "failed to register audit hmac key row");
+                panic!("audit postgres key registration failed: {e}");
+            }
+            info!(key_id = %audit_cfg.hmac_key_id, "audit backend: postgres (chained)");
+            Arc::new(pg)
+        }
+    };
+    let audit_fail_closed = matches!(
+        audit_cfg.backend,
+        specton_common::config::AuditBackend::Postgres
+    ) && audit_cfg.fail_closed_writes;
+    let audit_log = Arc::new(audit::RegistryAuditLog::with_sink(
+        audit_sink.clone(),
+        audit_cfg.sample_pulls,
+        audit_fail_closed,
+    ));
+
+    // Export destination + checkpoint store (A3). Always build handles so
+    // POST /v2/_audit/export works; the background loop is gated by
+    // audit.export.enabled.
+    let audit_export: Option<Arc<AuditExportRuntime>> = {
+        let compress = audit_cfg.export.compress;
+        let dest: Arc<dyn specton_audit::ExportDestination> =
+            if let Some(ref path) = audit_cfg.export.filesystem_path {
+                Arc::new(specton_audit::FilesystemDestination::new(path))
+            } else {
+                Arc::new(specton_audit::MemoryDestination::default())
+            };
+        let checkpoints: Arc<dyn specton_audit::CheckpointStore> = match audit_pg_pool {
+            Some(pool) => Arc::new(specton_audit::PgCheckpointStore::new(pool)),
+            None => Arc::new(specton_audit::MemoryCheckpointStore::default()),
+        };
+        let runtime = Arc::new(AuditExportRuntime {
+            checkpoints,
+            dest,
+            compress,
+        });
+        if audit_cfg.export.enabled {
+            let interval = std::time::Duration::from_secs(audit_cfg.export.interval_secs.max(60));
+            let sink = audit_sink.clone();
+            let rt = runtime.clone();
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(interval);
+                loop {
+                    ticker.tick().await;
+                    match specton_audit::export_pending(
+                        sink.as_ref(),
+                        rt.checkpoints.as_ref(),
+                        rt.dest.as_ref(),
+                        rt.compress,
+                    )
+                    .await
+                    {
+                        Ok(r) => info!(
+                            rows = r.row_count,
+                            merkle = %r.merkle_root,
+                            path = %r.exported_to,
+                            "audit export checkpoint written"
+                        ),
+                        Err(specton_audit::ExportError::Empty) => {}
+                        Err(e) => warn!(error = %e, "audit export failed"),
+                    }
+                }
+            });
+            info!(
+                interval_secs = audit_cfg.export.interval_secs,
+                "audit export loop spawned"
+            );
+        }
+        Some(runtime)
+    };
+
+    let admission_ttl = config.admission.cache_ttl_secs;
+    let pilot_budget = if config.pilot.enabled && config.pilot.tokens_per_day > 0 {
+        Some(Arc::new(specton_pilot::BudgetTracker::new(
+            specton_pilot::SpendCap {
+                tokens_per_day: config.pilot.tokens_per_day,
+            },
+        )))
+    } else {
+        None
+    };
     let state = AppState {
         store,
         config: Arc::new(config),
@@ -4259,6 +6285,11 @@ async fn main() -> anyhow::Result<()> {
         usage_recorder,
         artifact_registry,
         audit_log: audit_log.clone(),
+        audit_export,
+        scan_store,
+        admission_cache: Arc::new(admission::DecisionCache::new(admission_ttl)),
+        promote_dest_store,
+        pilot_budget,
         start_time,
     };
 
@@ -4371,6 +6402,47 @@ async fn main() -> anyhow::Result<()> {
             "/v2/{tenant}/{project}/{name}/attestations",
             post(upload_attestation),
         )
+        // Image signatures — 001 B3
+        .route(
+            "/v2/{tenant}/{project}/{name}/signatures/{digest}",
+            get(list_signatures).post(upload_signature),
+        )
+        .route(
+            "/v2/{project}/{name}/signatures/{digest}",
+            get(list_signatures_2seg).post(upload_signature_2seg),
+        )
+        .route("/v2/_verify", post(verify_image))
+        .route(
+            "/v2/_signing/policies/{tenant}/{name}",
+            get(get_verification_policy)
+                .put(upsert_verification_policy)
+                .delete(delete_verification_policy),
+        )
+        // Auto-rebuild (018 R2)
+        .route("/v2/_rebuild/trigger", post(rebuild_trigger))
+        .route(
+            "/v2/_rebuild/subscriptions",
+            get(list_rebuild_subscriptions),
+        )
+        .route(
+            "/v2/_rebuild/subscriptions/{tenant}/{name}",
+            put(upsert_rebuild_subscription),
+        )
+        .route("/v2/_rebuild/events", get(list_rebuild_events))
+        .route("/v2/_lineage/{digest}", get(get_lineage))
+        // Atomic promotion (006 C1)
+        .route("/v2/_promote", post(promote_handler))
+        .route("/v2/_promote/history", get(promote_history))
+        .route("/v2/_promote/{id}", get(promote_status))
+        .route("/v2/_pilot/chat", post(pilot_http::pilot_chat))
+        .route("/v2/_pilot/tools", get(pilot_http::pilot_tools))
+        // Admission gate (002)
+        .route("/v2/_admit/test", post(admit_test))
+        .route("/v2/_admit/policies", get(list_admission_policies))
+        .route(
+            "/v2/_admit/policies/{tenant}/{name}",
+            put(upsert_admission_policy),
+        )
         // Catalog
         .route("/v2/_catalog", get(catalog))
         // Online GC control plane (009 slice 2-3)
@@ -4384,7 +6456,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/v2/_ttl/resume", post(ttl_resume))
         // Usage read API (017 polish)
         .route("/v2/_usage/tenant/{tenant}", get(usage_tenant))
-        .route("/v2/_usage/top-pulled", get(usage_top_pulled));
+        .route("/v2/_usage/top-pulled", get(usage_top_pulled))
+        // Chained audit (005 slice 2–3)
+        .route("/v2/_audit", get(audit_query))
+        .route("/v2/_audit/verify", post(audit_verify))
+        .route("/v2/_audit/export", post(audit_export_handler))
+        .route("/v2/_audit/{id}", get(audit_get));
 
     // Internal replication routes — served on both the main port (for cross-cluster
     // access via proxy) and the dedicated internal port (for intra-cluster use).

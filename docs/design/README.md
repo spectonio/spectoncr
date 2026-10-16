@@ -22,13 +22,13 @@ telemetry, auto-rebuild, AI agent).
 
 | #   | Feature                          | Doc                                            | Status   | Effort   |
 | --- | -------------------------------- | ---------------------------------------------- | -------- | -------- |
-| 001 | Cosign/Notation image signing    | [001-image-signing.md](./001-image-signing.md) | proposed | 4 slices |
-| 002 | Pull-time admission gate         | [002-admission-gate.md](./002-admission-gate.md) | proposed | 3 slices |
+| 001 | Cosign/Notation image signing    | [001-image-signing.md](./001-image-signing.md) | in-progress (B1–B4) | 4 slices |
+| 002 | Pull-time admission gate         | [002-admission-gate.md](./002-admission-gate.md) | in-progress (D1–D3) | 3 slices |
 | 003 | Tag immutability + quarantine    | [003-tag-immutability-quarantine.md](./003-tag-immutability-quarantine.md) | proposed | 3 slices |
 | 004 | Garbage collection + retention   | [004-gc-retention.md](./004-gc-retention.md)   | proposed | 4 slices |
-| 005 | Append-only signed audit log     | [005-audit-log.md](./005-audit-log.md)         | proposed | 3 slices |
-| 006 | Atomic promotion API             | [006-promotion-api.md](./006-promotion-api.md) | proposed | 3 slices |
-| 007 | Web UI parity                    | [007-web-ui-parity.md](./007-web-ui-parity.md) | proposed | 4 slices |
+| 005 | Append-only signed audit log     | [005-audit-log.md](./005-audit-log.md)         | shipped (A1–A3) | 3 slices |
+| 006 | Atomic promotion API             | [006-promotion-api.md](./006-promotion-api.md) | in-progress (C1–C3; cross-backend dest_storage) | 3 slices |
+| 007 | Web UI parity                    | [007-web-ui-parity.md](./007-web-ui-parity.md) | in-progress (pilot chat sidebar) | 4 slices |
 | 008 | CMK / envelope encryption at rest | [008-cmk-encryption-at-rest.md](./008-cmk-encryption-at-rest.md) | proposed | 4 slices |
 
 ### Open-source-launch differentiators (009–019)
@@ -44,8 +44,8 @@ telemetry, auto-rebuild, AI agent).
 | 015 | SLSA provenance + in-toto        | [015-slsa-provenance.md](./015-slsa-provenance.md) | proposed | 3 slices |
 | 016 | Typed artifacts (Helm/WASM/AI/TF) | [016-typed-artifacts.md](./016-typed-artifacts.md) | proposed | 4 slices |
 | 017 | Cost & pull-telemetry            | [017-cost-telemetry.md](./017-cost-telemetry.md) | proposed | 3 slices |
-| 018 | Auto-rebuild on base CVE patch   | [018-auto-rebuild.md](./018-auto-rebuild.md)   | proposed | 3 slices |
-| 019 | AI agent (`specton-pilot`)        | [019-ai-agent.md](./019-ai-agent.md)           | proposed | 5 slices |
+| 018 | Auto-rebuild on base CVE patch   | [018-auto-rebuild.md](./018-auto-rebuild.md)   | shipped (R1–R3) | 3 slices |
+| 019 | AI agent (`specton-pilot`)        | [019-ai-agent.md](./019-ai-agent.md)           | in-progress (P1b–P4) | 5 slices |
 
 A "slice" is calibrated against the scanner work — each is roughly one week
 of engineer time including tests and docs.

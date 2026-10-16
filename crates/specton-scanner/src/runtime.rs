@@ -31,6 +31,8 @@ pub struct ScannerRuntime {
     /// `queue.enqueue(job)`. Implementation is either `TokioQueue` (in-proc)
     /// or `PostgresQueue` (durable, cross-process).
     pub queue: Arc<dyn Queue>,
+    /// Redis scan-result cache — used by admission (002) on pull.
+    pub scan_store: Arc<dyn EphemeralStore>,
     pub worker_handles: Vec<JoinHandle<()>>,
     pub ingest_handles: Vec<JoinHandle<()>>,
     pub pg: PgPool,
@@ -198,6 +200,7 @@ impl ScannerRuntime {
         Ok(Self {
             router,
             queue,
+            scan_store: redis,
             worker_handles,
             ingest_handles,
             pg,

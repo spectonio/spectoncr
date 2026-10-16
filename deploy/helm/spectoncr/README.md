@@ -410,6 +410,13 @@ Both services run with hardened security contexts:
 | `Project` | `spectoncr.io/v1alpha1` | Namespace | Repository group with visibility and retention |
 | `AccessPolicy` | `spectoncr.io/v1alpha1` | Namespace | RBAC rules with conditions (IP, time, MFA) |
 | `TokenPolicy` | `spectoncr.io/v1alpha1` | Namespace | Token lifecycle, rotation, robot accounts |
+| `ImageVerificationPolicy` | `spectoncr.io/v1alpha1` | Namespace | Cosign verify-on-pull (`block` / `warn` / `log`) |
+| `RebuildSubscription` | `spectoncr.io/v1alpha1` | Namespace | CI rebuild triggers when a watched base is patched |
+| `AdmissionPolicy` | `spectoncr.io/v1alpha1` | Namespace | Pull-time CVE / signature admission gate |
+
+Image signing is off by default (`--set signing.enabled=true`). Auto-rebuild
+emission is also off by default (`--set rebuild.enabled=true`). Promotion is
+off by default (`--set promotion.enabled=true`).
 
 ---
 

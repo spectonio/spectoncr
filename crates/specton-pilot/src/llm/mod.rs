@@ -9,6 +9,7 @@
 //! caching, system-prompt management, and image input are slice 3.
 
 pub mod anthropic;
+pub mod echo;
 pub mod ollama;
 pub mod openai;
 
@@ -21,6 +22,7 @@ pub enum LlmProvider {
     Anthropic,
     OpenAi,
     Ollama,
+    Echo,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

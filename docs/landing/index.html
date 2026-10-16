@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="SpectonCR — Cloud-Native OCI Container Registry. Enterprise-grade, multi-region, Rust-powered." />
+  <meta name="description" content="SpectonCR — Cloud-Native OCI Container Registry. Cosign signing, chained audit, multi-region replication, CVE scanning — Rust-powered." />
   <meta name="theme-color" content="#0a0a1a" />
   <title>SpectonCR — Cloud-Native OCI Container Registry</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -121,7 +121,7 @@
     .section-divider { width: 48px; height: 3px; background: var(--cyan); border-radius: 2px; margin: 0 auto 16px; }
 
     /* ===== HIGHLIGHTS GRID ===== */
-    .highlights { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+    .highlights { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
     .highlight-card {
       padding: 24px; background: var(--surface-2); border: 1px solid var(--border);
       border-radius: var(--radius); transition: all 0.2s; text-align: center;
@@ -311,8 +311,8 @@
   <h1>Your Images.<br>Your Infrastructure.<br>Zero Compromise.</h1>
   <p class="hero-sub">
     SpectonCR is a cloud-native OCI container registry built in Rust. Multi-region replication,
-    enterprise AD/OIDC authentication, pull-through caching, and a real-time dashboard &mdash;
-    all in a single binary.
+    cosign signing with verify-on-pull, chained audit, enterprise OIDC, and CVE scanning &mdash;
+    in a single binary.
   </p>
   <div class="hero-buttons">
     <a href="#install" class="btn btn-primary">Get Started</a>
@@ -321,8 +321,8 @@
   </div>
   <div class="hero-trust">
     <span class="trust-item"><span class="trust-dot" style="background:var(--green)"></span> OCI Distribution Spec</span>
-    <span class="trust-item"><span class="trust-dot" style="background:var(--cyan)"></span> Multi-Region Replication</span>
-    <span class="trust-item"><span class="trust-dot" style="background:var(--purple)"></span> Enterprise SSO/OIDC</span>
+    <span class="trust-item"><span class="trust-dot" style="background:var(--cyan)"></span> Cosign Signing</span>
+    <span class="trust-item"><span class="trust-dot" style="background:var(--purple)"></span> Chained Audit</span>
     <span class="trust-item"><span class="trust-dot" style="background:var(--amber)"></span> Built in Rust</span>
   </div>
 </section>
@@ -354,6 +354,11 @@
       <div class="highlight-icon">&#x1F50E;</div>
       <div class="highlight-title">CVE Scanning</div>
       <div class="highlight-desc">Built-in scanner for every push: SBOM extraction, OSV/GHSA/NVD matching, AI-assisted remediation, nightly PDF reports.</div>
+    </div>
+    <div class="highlight-card">
+      <div class="highlight-icon">&#x1F510;</div>
+      <div class="highlight-title">Cosign Signing</div>
+      <div class="highlight-desc">Keyed cosign signatures, verify-on-pull policies, and Vault-backed keys &mdash; kill-switch OFF until you enable it.</div>
     </div>
   </div>
 </section>
@@ -477,14 +482,30 @@
         <div class="feature-icon-box">&#x1F6E1;</div>
         <div class="feature-title">Security &amp; Compliance</div>
         <div class="feature-desc">
-          JWT-based auth with RS256/EdDSA signing. Rate limiting, network policies, audit logging, and Vault integration for key management.
+          JWT auth, Vault keys, rate limits, and a tamper-evident HMAC-chained registry audit log with export and Merkle checkpoints.
         </div>
         <ul class="feature-list">
           <li>HashiCorp Vault integration (Transit + KV)</li>
           <li>Per-tenant rate limiting</li>
-          <li>Kubernetes NetworkPolicy templates</li>
-          <li>Full audit trail (push/pull/delete)</li>
+          <li>Chained audit: <code>/v2/_audit</code> query, verify, export</li>
+          <li>Fail-closed pushes when durable audit is down</li>
           <li>Webhook notifications for events</li>
+        </ul>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon-box">&#x1F510;</div>
+        <div class="feature-title">Image Signing <span style="margin-left:8px;padding:3px 10px;border-radius:12px;background:rgba(74,222,128,0.12);color:var(--green);font-size:0.6rem;font-weight:700;letter-spacing:0.5px;vertical-align:middle;">NEW</span></div>
+        <div class="feature-desc">
+          Cosign simple-signing with sigstore-rs. Store <code>.sig</code> artifacts, list referrers, and enforce
+          <code>ImageVerificationPolicy</code> on pull.
+        </div>
+        <ul class="feature-list">
+          <li><code>specton-sign</code> CLI &mdash; keygen, sign, verify</li>
+          <li>PEM file or Vault KV / Transit key providers</li>
+          <li><code>POST/GET …/signatures/{digest}</code> + <code>POST /v2/_verify</code></li>
+          <li>Verify-on-pull: block, warn, or log</li>
+          <li>Kill-switch: <code>signing.enabled=false</code> by default</li>
         </ul>
       </div>
 
@@ -492,7 +513,8 @@
         <div class="feature-icon-box">&#x2638;</div>
         <div class="feature-title">Kubernetes Native</div>
         <div class="feature-desc">
-          Helm chart with CRDs for Tenant, Project, AccessPolicy, and TokenPolicy. Horizontal autoscaling, pod anti-affinity, and service monitors.
+          Helm chart with CRDs for Tenant, Project, AccessPolicy, TokenPolicy, and ImageVerificationPolicy.
+          Horizontal autoscaling, pod anti-affinity, and service monitors.
         </div>
         <ul class="feature-list">
           <li>Helm chart with comprehensive values</li>
@@ -521,7 +543,7 @@
 
       <div class="feature-card">
         <div class="feature-icon-box">&#x1F501;</div>
-        <div class="feature-title">Large Layer Uploads <span style="margin-left:8px;padding:3px 10px;border-radius:12px;background:rgba(74,222,128,0.12);color:var(--green);font-size:0.6rem;font-weight:700;letter-spacing:0.5px;vertical-align:middle;">NEW</span></div>
+        <div class="feature-title">Large Layer Uploads</div>
         <div class="feature-desc">
           Multi-GB layers &mdash; ML images, model weights, fat data-science bases &mdash; are written to
           object storage as multipart uploads, so a single request deadline never caps blob size.

@@ -121,6 +121,43 @@ data:
         {{- end }}
     {{- end }}
 
+    signing:
+      enabled: {{ .Values.signing.enabled }}
+      require_for_pull: {{ .Values.signing.requireForPull }}
+      {{- if .Values.signing.defaultKeyRef }}
+      default_key_ref: {{ .Values.signing.defaultKeyRef | quote }}
+      {{- end }}
+      {{- if .Values.signing.keyRoot }}
+      key_root: {{ .Values.signing.keyRoot | quote }}
+      {{- end }}
+
+    rebuild:
+      enabled: {{ .Values.rebuild.enabled }}
+
+    promotion:
+      enabled: {{ .Values.promotion.enabled }}
+      {{- if .Values.promotion.destStorage }}
+      dest_storage:
+        backend: {{ .Values.promotion.destStorage.backend | quote }}
+        root: {{ .Values.promotion.destStorage.root | quote }}
+        {{- if .Values.promotion.destStorage.endpoint }}
+        endpoint: {{ .Values.promotion.destStorage.endpoint | quote }}
+        {{- end }}
+        {{- if .Values.promotion.destStorage.region }}
+        region: {{ .Values.promotion.destStorage.region | quote }}
+        {{- end }}
+      {{- end }}
+
+    admission:
+      enabled: {{ .Values.admission.enabled }}
+      cache_ttl_secs: {{ .Values.admission.cacheTtlSecs }}
+
+    pilot:
+      enabled: {{ .Values.pilot.enabled }}
+      backend: {{ .Values.pilot.backend | quote }}
+      model: {{ .Values.pilot.model | quote }}
+      tokens_per_day: {{ .Values.pilot.tokensPerDay }}
+
   auth.yaml: |
     server:
       listen_addr: "0.0.0.0:{{ .Values.auth.port }}"

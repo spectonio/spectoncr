@@ -1,0 +1,109 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: admissionpolicies.spectoncr.io
+  labels:
+    {{- include "spectoncr.labels" . | nindent 4 }}
+spec:
+  group: spectoncr.io
+  names:
+    kind: AdmissionPolicy
+    listKind: AdmissionPolicyList
+    plural: admissionpolicies
+    singular: admissionpolicy
+    shortNames:
+      - admit
+    categories:
+      - spectoncr
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Tenant
+          type: string
+          jsonPath: .spec.tenantRef
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: AdmissionPolicy gates image pulls (design 002).
+          required: [spec]
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [tenantRef]
+              properties:
+                tenantRef:
+                  type: string
+                scope:
+                  type: object
+                  properties:
+                    projects:
+                      type: array
+                      items:
+                        type: string
+                    repositories:
+                      type: array
+                      items:
+                        type: string
+                signatureRequired:
+                  type: boolean
+                  default: false
+                severityThreshold:
+                  type: object
+                  properties:
+                    block:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    warn:
+                      type: object
+                      additionalProperties:
+                        type: string
+                onUnknown:
+                  type: string
+                  enum: [block, scan, allow]
+                  default: block
+                onTimeout:
+                  type: string
+                  enum: [block, warn, allow]
+                  default: block
+                scanWaitSecs:
+                  type: integer
+                  default: 5
+                  minimum: 0
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string

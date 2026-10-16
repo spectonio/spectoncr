@@ -9,6 +9,8 @@
 //! that product is a Couchbase XDCR platform whose AI module is for log
 //! analysis, not CVE analysis.
 
+#![allow(clippy::double_must_use)] // async_trait + Future on rustc ≥1.99
+
 mod ollama;
 
 pub use ollama::{CveAnalysis, CveInput, OllamaClient, OllamaConfig};

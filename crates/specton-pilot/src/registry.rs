@@ -1,8 +1,9 @@
 //! ToolRegistry — name -> Arc<dyn Tool> dispatcher.
 
-use crate::tool::{Tool, ToolCtx, ToolError, ToolOutput};
+use crate::tool::{Destructiveness, Tool, ToolCtx, ToolError, ToolOutput};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::info;
 
 #[derive(Default)]
 pub struct ToolRegistry {
@@ -21,7 +22,20 @@ impl ToolRegistry {
     }
 
     pub fn names(&self) -> Vec<&'static str> {
-        self.tools.keys().copied().collect()
+        let mut n: Vec<_> = self.tools.keys().copied().collect();
+        n.sort_unstable();
+        n
+    }
+
+    pub fn descriptors(&self) -> Vec<crate::llm::ToolDescriptor> {
+        self.tools
+            .values()
+            .map(|t| crate::llm::ToolDescriptor {
+                name: t.name().to_string(),
+                description: t.description().to_string(),
+                input_schema: t.input_schema(),
+            })
+            .collect()
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
@@ -37,6 +51,34 @@ impl ToolRegistry {
         let tool = self
             .get(name)
             .ok_or_else(|| ToolError::NotFound(format!("unknown tool: {name}")))?;
-        tool.invoke(ctx, input).await
+
+        // Destructive tools force dry-run unless confirm phrase present.
+        let mut effective_ctx = ctx.clone();
+        if tool.destructiveness() == Destructiveness::Destructive {
+            let confirmed = input
+                .get("confirm")
+                .and_then(|v| v.as_str())
+                .map(|s| s == "I_UNDERSTAND")
+                .unwrap_or(false);
+            if !confirmed {
+                effective_ctx.dry_run = true;
+            }
+        }
+
+        info!(
+            tool = name,
+            actor = %ctx.actor_sub,
+            tenant = %ctx.tenant,
+            dry_run = effective_ctx.dry_run,
+            "pilot tool invoke"
+        );
+
+        let out = tool.invoke(&effective_ctx, input.clone()).await?;
+        info!(
+            tool = name,
+            outcome = ?out.outcome,
+            "pilot tool complete"
+        );
+        Ok(out)
     }
 }

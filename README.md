@@ -13,9 +13,12 @@ A cloud-native Docker/OCI container registry built in Rust with multi-tenancy, z
 
 - **OCI Distribution API v2** compliant registry
 - **Pull-through cache** for Docker Hub, GHCR, GCR, Quay.io, and registry.k8s.io
-- **Multi-tenancy** with Tenant, Project, AccessPolicy, and TokenPolicy CRDs
+- **Multi-tenancy** with Tenant, Project, AccessPolicy, TokenPolicy, and ImageVerificationPolicy CRDs
 - **Zero-trust auth** via OIDC (Google, GitHub Actions, GitLab CI, Azure AD)
+- **Image signing** -- cosign simple-signing (sigstore-rs), Vault/file keys, `.sig` artifacts, verify-on-pull (kill-switch OFF by default)
+- **Chained registry audit** -- HMAC-SHA256 hash chain, `/v2/_audit` query/verify/export, fail-closed writes when Postgres audit is down
 - **Multiple storage backends** -- filesystem, S3, GCS, Azure Blob
+- **Multipart large-layer uploads** -- multi-GB blobs without single-request timeouts
 - **High availability** -- stateless services, HPA, PDB, circuit breakers
 - **Multi-region replication** with async/semi-sync modes
 - **Observability** -- Prometheus metrics, structured JSON logging, OpenTelemetry tracing
@@ -371,6 +374,35 @@ See [`config/spectoncr.example.toml`](config/spectoncr.example.toml) for all ava
 | `Project` | Namespace | Groups repositories; sets visibility, retention, scanning policies |
 | `AccessPolicy` | Namespace | Fine-grained RBAC with subjects, resources, actions, conditions |
 | `TokenPolicy` | Namespace | Token lifetime, rotation, revocation, robot accounts |
+| `ImageVerificationPolicy` | Namespace | Require cosign signatures on pull (`block` / `warn` / `log`) |
+
+## Image Signing & Audit
+
+Cosign-compatible signing and a tamper-evident audit log ship behind kill-switches
+(default OFF). See [docs/design/001-image-signing.md](docs/design/001-image-signing.md)
+and [docs/design/005-audit-log.md](docs/design/005-audit-log.md).
+
+```bash
+# Enable signing (Helm)
+helm upgrade spectoncr oci://ghcr.io/bwalia/charts/spectoncr \
+  --set signing.enabled=true \
+  --set signing.requireForPull=false
+
+# Sign a digest (after specton-sign keygen)
+specton-sign sign --digest sha256:... --key file:///path/to/cosign.key --out sig.json
+
+# Attach via API (or push the cosign sha256-<hex>.sig tag)
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  --data-binary @sig.json \
+  "https://registry.example.com/v2/myorg/myapp/signatures/sha256:..."
+```
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST/GET /v2/.../signatures/{digest}` | Upload or list signature artifacts |
+| `POST /v2/_verify` | List or cryptographically verify signatures |
+| `PUT /v2/_signing/policies/{tenant}/{name}` | Upsert an ImageVerificationPolicy (admin) |
+| `GET /v2/_audit` / `POST /v2/_audit/verify` / `POST /v2/_audit/export` | Query, verify, and export the chained audit log |
 
 ## CI/CD Integration
 
@@ -434,11 +466,14 @@ spectoncr/
 │   ├── specton-resilience/    # Retry, circuit breaker, failover
 │   ├── specton-replication/   # Multi-region replication
 │   ├── specton-scanner/       # CVE scanner (SBOM, vulndb match, policy, AI)
-│   ├── specton-db/            # Postgres-backed vulndb + suppression store
+│   ├── specton-signing/       # Cosign sign/verify (sigstore-rs, Vault/file keys)
+│   ├── specton-audit/         # HMAC-chained registry audit log
+│   ├── specton-db/            # Postgres migrations + vulndb store
 │   └── specton-ai/            # Ollama client for CVE analysis + Dockerfile fixes
 ├── deploy/helm/spectoncr/     # Helm chart
 ├── config/                   # Example configuration
-├── docs/                     # Documentation
+├── docs/                     # Documentation (+ design/ Phase A–D plan)
+├── docs/landing/             # Marketing landing pages (spectoncr.org)
 ├── examples/                 # CI/CD and Kubernetes examples
 └── docker-compose.yml        # Local development stack
 ```
@@ -470,6 +505,9 @@ docker build -f Dockerfile.scratch -t spectoncr:scratch .
 - [Threat Model](docs/threat-model.md)
 - [Security Audit Checklist](docs/security-audit-checklist.md)
 - [System Architecture Diagrams](docs/system-architecture-diagrams.md)
+- [Feature designs](docs/design/README.md) (signing, audit, promote, rebuild, …)
+- [Phase A–D build lifecycle plan](docs/design/PHASE-A-D-BUILD-LIFECYCLE.md)
+- [Landing / feature pages](docs/landing/)
 - [Helm Chart Reference](deploy/helm/spectoncr/README.md)
 - [Configuration Reference](config/spectoncr.example.toml)
 

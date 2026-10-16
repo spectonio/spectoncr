@@ -20,6 +20,176 @@ pub struct RegistryConfig {
     /// Enterprise authentication and identity configuration.
     #[serde(default)]
     pub enterprise: EnterpriseAuthConfig,
+    /// Append-only registry audit log (design 005).
+    #[serde(default)]
+    pub audit: AuditConfig,
+    /// Image signing / verification (design 001). Kill-switch OFF by default.
+    #[serde(default)]
+    pub signing: SigningConfig,
+    /// Auto-rebuild on base CVE patch (design 018). Kill-switch OFF by default.
+    #[serde(default)]
+    pub rebuild: RebuildConfig,
+    /// Atomic promotion API (design 006). Kill-switch OFF by default.
+    #[serde(default)]
+    pub promotion: PromotionConfig,
+    /// Pull-time admission gate (design 002). Kill-switch OFF by default.
+    #[serde(default)]
+    pub admission: AdmissionConfig,
+    /// AI agent HTTP chat surface (design 019). Kill-switch OFF by default.
+    #[serde(default)]
+    pub pilot: PilotConfig,
+}
+
+/// `[admission]` — design 002; kill-switch OFF by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AdmissionConfig {
+    /// Master kill-switch. When false, pulls are never gated.
+    pub enabled: bool,
+    /// Decision cache TTL in seconds (default 30).
+    pub cache_ttl_secs: u64,
+}
+
+impl Default for AdmissionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cache_ttl_secs: 30,
+        }
+    }
+}
+
+/// `[promotion]` — design 006; kill-switch OFF by default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromotionConfig {
+    /// Master kill-switch. When false, `/v2/_promote` returns forbidden.
+    pub enabled: bool,
+    /// Optional second object-store for true cross-backend promote.
+    /// When set, destination blobs/manifests/tags are written here while
+    /// source reads use the primary `[storage]` backend.
+    pub dest_storage: Option<StorageConfig>,
+}
+
+/// `[pilot]` — design 019 HTTP chat surface; kill-switch OFF by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PilotConfig {
+    /// Master kill-switch. When false, `/v2/_pilot/*` returns forbidden.
+    pub enabled: bool,
+    /// LLM backend: `anthropic` | `openai` | `ollama` | `echo` (no external LLM).
+    pub backend: String,
+    /// Model id for the chosen backend.
+    pub model: String,
+    /// Daily token budget per tenant (0 = unlimited).
+    pub tokens_per_day: u64,
+}
+
+impl Default for PilotConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            backend: "echo".into(),
+            model: "echo".into(),
+            tokens_per_day: 500_000,
+        }
+    }
+}
+
+/// `[rebuild]` — design 018; kill-switch OFF by default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RebuildConfig {
+    /// Master kill-switch. When false, rebuild APIs return forbidden.
+    pub enabled: bool,
+}
+
+/// `[signing]` — design 001; kill-switch OFF by default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SigningConfig {
+    /// Master kill-switch. When false, signing APIs are not mounted.
+    pub enabled: bool,
+    /// When true (and enabled), unsigned pulls are refused under policy.
+    pub require_for_pull: bool,
+    /// Default key ref for `specton-sign` / auto-sign
+    /// (`file://…`, `vault://kv/…`, `vault://transit/…`).
+    pub default_key_ref: Option<String>,
+    /// Optional directory for relative `file://` key refs.
+    pub key_root: Option<String>,
+}
+
+// ── Audit configuration (005) ────────────────────────────────────
+
+/// Backend for the chained registry audit log.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditBackend {
+    /// In-process ring + in-memory chain (default — preserves pre-005 behaviour).
+    #[default]
+    Memory,
+    /// Postgres `registry_audit_log` with HMAC hash chain.
+    Postgres,
+}
+
+/// `[audit]` section — kill-switch defaults keep current behaviour.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuditConfig {
+    /// `memory` (default) or `postgres`.
+    pub backend: AuditBackend,
+    /// Fraction of pull events to persist (0.0 = off, writes always persist).
+    pub sample_pulls: f64,
+    /// HMAC key material for chain sealing. Required when `backend = postgres`.
+    /// Prefer injecting via env `SPECTONCR_AUDIT__HMAC_KEY`.
+    pub hmac_key: Option<String>,
+    /// Key id stored alongside each row (supports rotation).
+    pub hmac_key_id: String,
+    /// When true (default for postgres), write-class ops return 503 if
+    /// the durable sink is unavailable.
+    pub fail_closed_writes: bool,
+    /// Periodic JSONL export + Merkle checkpoint (slice A3).
+    #[serde(default)]
+    pub export: AuditExportConfig,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            backend: AuditBackend::Memory,
+            sample_pulls: 0.0,
+            hmac_key: None,
+            hmac_key_id: "v1".into(),
+            fail_closed_writes: true,
+            export: AuditExportConfig::default(),
+        }
+    }
+}
+
+/// `[audit.export]` — off by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuditExportConfig {
+    /// Spawn the hourly (or `interval_secs`) export loop.
+    pub enabled: bool,
+    /// Seconds between export attempts.
+    pub interval_secs: u64,
+    /// Filesystem directory for exports when not using object storage.
+    /// Relative paths are under the process cwd.
+    pub filesystem_path: Option<String>,
+    /// Compress JSONL with zstd (`.jsonl.zst`).
+    pub compress: bool,
+}
+
+impl Default for AuditExportConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 3600,
+            filesystem_path: Some("./audit-export".into()),
+            compress: true,
+        }
+    }
 }
 
 // ── Resilience configuration ─────────────────────────────────────
@@ -660,6 +830,12 @@ impl Default for RegistryConfig {
             multi_region: None,
             webhooks: None,
             enterprise: EnterpriseAuthConfig::default(),
+            audit: AuditConfig::default(),
+            signing: SigningConfig::default(),
+            rebuild: RebuildConfig::default(),
+            promotion: PromotionConfig::default(),
+            admission: AdmissionConfig::default(),
+            pilot: PilotConfig::default(),
         }
     }
 }

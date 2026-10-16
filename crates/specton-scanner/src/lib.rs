@@ -65,7 +65,12 @@ pub mod ws;
 pub use runtime::ScannerRuntime;
 
 pub use config::ScannerConfig;
-pub use model::{PolicyEvaluation, ScanJob, ScanResult, ScanSummary, Severity, Vulnerability};
+pub use model::{
+    PolicyEvaluation, PolicyStatus, ScanJob, ScanResult, ScanStatus, ScanSummary, Severity,
+    Vulnerability,
+};
+pub use policy::{BlockRules, Policy};
+pub use store::EphemeralStore;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ScanError {

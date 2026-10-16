@@ -3,6 +3,10 @@ name = "specton-registry"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "specton-promote"
+path = "src/bin/specton-promote.rs"
+
 [dependencies]
 specton-common = { workspace = true }
 specton-resilience = { workspace = true }
@@ -16,8 +20,12 @@ specton-rebuild = { workspace = true }
 specton-lazy = { workspace = true }
 specton-artifact-types = { workspace = true }
 specton-attest = { workspace = true }
+specton-audit = { workspace = true }
+specton-signing = { workspace = true }
+specton-pilot = { workspace = true }
 async-trait = { workspace = true }
 specton-db = { workspace = true }
+rand = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }

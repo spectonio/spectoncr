@@ -11,6 +11,7 @@
 //! in-memory; slice-3 will persist into pilot_messages so sessions
 //! survive restarts.
 
+use crate::budget::BudgetTracker;
 use crate::llm::{ChatMessage, ChatRole, LlmClient, LlmError, LlmStep, ToolDescriptor};
 use crate::registry::ToolRegistry;
 use crate::tool::{ToolCtx, ToolError};
@@ -21,6 +22,13 @@ use std::sync::Arc;
 pub struct ChatConfig {
     pub max_tool_rounds: u32,
     pub system_prompt: Option<String>,
+    /// Estimated tokens charged per LLM step (P4 spend cap).
+    #[serde(default = "default_tokens_per_step")]
+    pub tokens_per_step: u64,
+}
+
+fn default_tokens_per_step() -> u64 {
+    1500
 }
 
 impl Default for ChatConfig {
@@ -28,6 +36,7 @@ impl Default for ChatConfig {
         Self {
             max_tool_rounds: 8,
             system_prompt: Some(default_system_prompt().to_string()),
+            tokens_per_step: default_tokens_per_step(),
         }
     }
 }
@@ -54,6 +63,8 @@ pub enum ChatError {
     Tool(#[from] ToolError),
     #[error("max_tool_rounds ({0}) exceeded — aborting")]
     MaxRounds(u32),
+    #[error("budget: {0}")]
+    Budget(String),
 }
 
 /// Drive a chat turn to completion (or to the round budget).
@@ -67,6 +78,19 @@ pub async fn run_turn(
     history: &mut Vec<ChatMessage>,
     user_input: &str,
     config: &ChatConfig,
+) -> Result<u32, ChatError> {
+    run_turn_with_budget(llm, registry, ctx, history, user_input, config, None).await
+}
+
+/// Same as [`run_turn`] but enforces an optional per-tenant token budget (P4).
+pub async fn run_turn_with_budget(
+    llm: Arc<dyn LlmClient>,
+    registry: Arc<ToolRegistry>,
+    ctx: ToolCtx,
+    history: &mut Vec<ChatMessage>,
+    user_input: &str,
+    config: &ChatConfig,
+    budget: Option<&BudgetTracker>,
 ) -> Result<u32, ChatError> {
     history.push(ChatMessage {
         role: ChatRole::User,
@@ -94,6 +118,11 @@ pub async fn run_turn(
     loop {
         if rounds > config.max_tool_rounds {
             return Err(ChatError::MaxRounds(config.max_tool_rounds));
+        }
+
+        if let Some(b) = budget {
+            b.check_and_add(&ctx.tenant, config.tokens_per_step)
+                .map_err(ChatError::Budget)?;
         }
 
         let step = llm

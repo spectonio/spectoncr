@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { fetchLiveScan, ScanResult, Vulnerability } from './api';
+import { PilotSidebar } from './PilotSidebar';
 import { Header, SevBadge, SEVERITIES, SeverityBar, sortBySeverity, CopyButton } from './ui';
 
 // Scan drill-down: subscribes to /v2/ws/scan/{digest} and streams results.
@@ -72,6 +73,7 @@ export function ScanDetail() {
   return (
     <div className="shell">
       <Header right={statusPill} />
+      <PilotSidebar />
 
       <main className="page">
         <div className="page-head">

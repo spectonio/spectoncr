@@ -11,6 +11,7 @@ use kube::{Client, CustomResourceExt, ResourceExt};
 use tracing::{error, info};
 
 mod operator;
+mod policies;
 mod tenancy;
 
 use operator::SpectonRegistry;
@@ -23,10 +24,14 @@ use tenancy::{AccessPolicy, Project, Tenant, TokenPolicy};
 // Context shared across reconcilers
 // ---------------------------------------------------------------------------
 
-struct Ctx {
-    client: Client,
-    http: reqwest::Client,
-    auth_service_url: String,
+pub(crate) struct Ctx {
+    pub(crate) client: Client,
+    pub(crate) http: reqwest::Client,
+    pub(crate) auth_service_url: String,
+    /// Registry base URL for policy sync (optional).
+    pub(crate) registry_service_url: Option<String>,
+    /// Bearer token for admin PUT to registry (optional).
+    pub(crate) registry_admin_token: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -34,9 +39,12 @@ struct Ctx {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, thiserror::Error)]
-enum ControllerError {
+pub(crate) enum ControllerError {
     #[error("Kubernetes API error: {0}")]
     Kube(#[from] kube::Error),
+
+    #[error("Validation failed: {0}")]
+    Validation(String),
 
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
@@ -49,7 +57,7 @@ enum ControllerError {
 // Helper: publish a Kubernetes Event
 // ---------------------------------------------------------------------------
 
-struct EventInfo<'a> {
+pub(crate) struct EventInfo<'a> {
     namespace: Option<&'a str>,
     regarding_kind: &'a str,
     regarding_name: &'a str,
@@ -59,7 +67,10 @@ struct EventInfo<'a> {
     event_type: &'a str,
 }
 
-async fn publish_event(client: &Client, info: &EventInfo<'_>) -> Result<(), ControllerError> {
+pub(crate) async fn publish_event(
+    client: &Client,
+    info: &EventInfo<'_>,
+) -> Result<(), ControllerError> {
     let events: Api<k8s_openapi::api::events::v1::Event> = match info.namespace {
         Some(ns) => Api::namespaced(client.clone(), ns),
         None => Api::default_namespaced(client.clone()),
@@ -133,12 +144,16 @@ async fn main() -> anyhow::Result<()> {
     let auth_service_url = std::env::var("AUTH_SERVICE_URL")
         .unwrap_or_else(|_| "http://specton-auth:8080".to_string());
 
+    let registry_service_url = std::env::var("REGISTRY_SERVICE_URL").ok();
+    let registry_admin_token = std::env::var("REGISTRY_ADMIN_TOKEN").ok();
     let ctx = Arc::new(Ctx {
         client: client.clone(),
         http: reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()?,
         auth_service_url,
+        registry_service_url,
+        registry_admin_token,
     });
 
     // --- Tenant controller (cluster-scoped) ---
@@ -202,6 +217,54 @@ async fn main() -> anyhow::Result<()> {
             match res {
                 Ok(o) => info!(resource = ?o, "token-policy reconciled"),
                 Err(e) => error!(error = %e, "token-policy reconcile loop error"),
+            }
+        });
+
+    // --- ImageVerificationPolicy controller (001 B4) ---
+    let ivp: Api<policies::ImageVerificationPolicy> = Api::all(client.clone());
+    let ivp_ctrl = Controller::new(ivp, WatcherConfig::default())
+        .shutdown_on_signal()
+        .run(
+            policies::reconcile_image_verification_policy,
+            policies::image_verification_policy_error_policy,
+            ctx.clone(),
+        )
+        .for_each(|res| async move {
+            match res {
+                Ok(o) => info!(resource = ?o, "image-verification-policy reconciled"),
+                Err(e) => error!(error = %e, "image-verification-policy reconcile loop error"),
+            }
+        });
+
+    // --- RebuildSubscription controller (018 R2) ---
+    let rsubs: Api<policies::RebuildSubscription> = Api::all(client.clone());
+    let rsub_ctrl = Controller::new(rsubs, WatcherConfig::default())
+        .shutdown_on_signal()
+        .run(
+            policies::reconcile_rebuild_subscription,
+            policies::rebuild_subscription_error_policy,
+            ctx.clone(),
+        )
+        .for_each(|res| async move {
+            match res {
+                Ok(o) => info!(resource = ?o, "rebuild-subscription reconciled"),
+                Err(e) => error!(error = %e, "rebuild-subscription reconcile loop error"),
+            }
+        });
+
+    // --- AdmissionPolicy controller (002 D2) ---
+    let admits: Api<policies::AdmissionPolicy> = Api::all(client.clone());
+    let admit_ctrl = Controller::new(admits, WatcherConfig::default())
+        .shutdown_on_signal()
+        .run(
+            policies::reconcile_admission_policy,
+            policies::admission_policy_error_policy,
+            ctx.clone(),
+        )
+        .for_each(|res| async move {
+            match res {
+                Ok(o) => info!(resource = ?o, "admission-policy reconciled"),
+                Err(e) => error!(error = %e, "admission-policy reconcile loop error"),
             }
         });
 
@@ -271,6 +334,9 @@ async fn main() -> anyhow::Result<()> {
         () = project_ctrl => info!("project controller exited"),
         () = access_ctrl => info!("access-policy controller exited"),
         () = token_ctrl => info!("token-policy controller exited"),
+        () = ivp_ctrl => info!("image-verification-policy controller exited"),
+        () = rsub_ctrl => info!("rebuild-subscription controller exited"),
+        () = admit_ctrl => info!("admission-policy controller exited"),
         () = registry_ctrl => info!("spectonregistry operator exited"),
     }
 
