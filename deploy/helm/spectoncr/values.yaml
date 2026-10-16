@@ -638,6 +638,11 @@ signing:
 rebuild:
   enabled: false
 
+## -- Atomic promotion (design 006) --
+## Kill-switch OFF by default. Enables POST /v2/_promote.
+promotion:
+  enabled: false
+
 ## -- Scanner (CVE scanning — runs in-process inside the registry) --
 ## When enabled, every manifest push enqueues a scan; workers materialize
 ## results to Redis (1h TTL) and Postgres (audit log + suppressions). The

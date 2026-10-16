@@ -54,6 +54,7 @@ impl RegistryAuditEvent {
             "manifest.push" | "blob.push" | "manifest.replicated" => Category::Push,
             "manifest.pull" | "blob.pull" | "tag.list" | "catalog.list" => Category::Pull,
             "manifest.delete" => Category::Delete,
+            "manifest.promote" => Category::Promote,
             _ => Category::Admin,
         }
     }
@@ -61,7 +62,11 @@ impl RegistryAuditEvent {
     fn is_write(&self) -> bool {
         matches!(
             self.event_type.as_str(),
-            "manifest.push" | "blob.push" | "manifest.delete" | "manifest.replicated"
+            "manifest.push"
+                | "blob.push"
+                | "manifest.delete"
+                | "manifest.replicated"
+                | "manifest.promote"
         )
     }
 

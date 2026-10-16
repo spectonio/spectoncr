@@ -29,6 +29,23 @@ pub struct RegistryConfig {
     /// Auto-rebuild on base CVE patch (design 018). Kill-switch OFF by default.
     #[serde(default)]
     pub rebuild: RebuildConfig,
+    /// Atomic promotion API (design 006). Kill-switch OFF by default.
+    #[serde(default)]
+    pub promotion: PromotionConfig,
+}
+
+/// `[promotion]` — design 006; kill-switch OFF by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromotionConfig {
+    /// Master kill-switch. When false, `/v2/_promote` returns forbidden.
+    pub enabled: bool,
+}
+
+impl Default for PromotionConfig {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
 }
 
 /// `[rebuild]` — design 018; kill-switch OFF by default.
@@ -785,6 +802,7 @@ impl Default for RegistryConfig {
             audit: AuditConfig::default(),
             signing: SigningConfig::default(),
             rebuild: RebuildConfig::default(),
+            promotion: PromotionConfig::default(),
         }
     }
 }

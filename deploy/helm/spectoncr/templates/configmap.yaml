@@ -134,6 +134,9 @@ data:
     rebuild:
       enabled: {{ .Values.rebuild.enabled }}
 
+    promotion:
+      enabled: {{ .Values.promotion.enabled }}
+
   auth.yaml: |
     server:
       listen_addr: "0.0.0.0:{{ .Values.auth.port }}"

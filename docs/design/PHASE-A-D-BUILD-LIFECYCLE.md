@@ -135,8 +135,8 @@ pulls blocked unless policy (scan + signature) passes.
 ### Promotion (006)
 | PR | Title | Depends |
 |----|-------|---------|
-| C1 | Same-backend retag `_promote` + schema + CLI | A2 |
-| C2 | Cross-backend copy + copy signatures | B3, C1 |
+| C1 | Same-backend retag `_promote` + schema + CLI | A2 | ✅ landed locally |
+| C2 | Cross-backend copy + copy signatures | B3, C1 | ✅ landed with C1 (same-store copy + sigs) |
 | C3 | `OnPolicyPass` + history + dashboard | C2, admission slice 1 |
 
 ### Admission (002)

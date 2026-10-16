@@ -3,6 +3,10 @@ name = "specton-registry"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "specton-promote"
+path = "src/bin/specton-promote.rs"
+
 [dependencies]
 specton-common = { workspace = true }
 specton-resilience = { workspace = true }

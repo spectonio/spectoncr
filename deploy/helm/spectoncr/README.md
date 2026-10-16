@@ -414,7 +414,8 @@ Both services run with hardened security contexts:
 | `RebuildSubscription` | `spectoncr.io/v1alpha1` | Namespace | CI rebuild triggers when a watched base is patched |
 
 Image signing is off by default (`--set signing.enabled=true`). Auto-rebuild
-emission is also off by default (`--set rebuild.enabled=true`).
+emission is also off by default (`--set rebuild.enabled=true`). Promotion is
+off by default (`--set promotion.enabled=true`).
 
 ---
 

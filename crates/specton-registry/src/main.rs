@@ -5,6 +5,7 @@
 
 mod audit;
 mod dashboard;
+mod promote;
 mod webhook;
 
 use std::collections::HashMap;
@@ -3709,6 +3710,267 @@ struct RebuildSubUpsert {
     spec: specton_rebuild::SubscriptionSpec,
 }
 
+// ── Promotion (006) ──────────────────────────────────────────────────────────
+
+fn promotion_enabled(state: &AppState) -> Result<(), RegistryError> {
+    if state.config.promotion.enabled {
+        Ok(())
+    } else {
+        Err(RegistryError::Forbidden {
+            reason: "promotion disabled ([promotion] enabled=false)".into(),
+        })
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PromoteBody {
+    source: String,
+    dest: String,
+    #[serde(default = "promote_default_true")]
+    include_signatures: bool,
+    #[serde(default = "promote_default_true")]
+    include_attestations: bool,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    policy: Option<String>,
+}
+
+fn promote_default_true() -> bool {
+    true
+}
+
+/// POST /v2/_promote — copy manifest (+ blobs, optional signatures) to dest.
+#[instrument(name = "promote", skip(state, claims))]
+async fn promote_handler(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    axum::Json(body): axum::Json<PromoteBody>,
+) -> Result<Response, RegistryError> {
+    promotion_enabled(&state)?;
+    let source = promote::ImageRef::parse(&body.source)?;
+    let dest = promote::ImageRef::parse(&body.dest)?;
+    authorize(
+        &claims,
+        &source.tenant,
+        &source.project,
+        &source.repository,
+        Action::Pull,
+    )?;
+    authorize(
+        &claims,
+        &dest.tenant,
+        &dest.project,
+        &dest.repository,
+        Action::Push,
+    )?;
+
+    let mode = match body.mode.as_deref() {
+        Some("dry_run") | Some("dry-run") => promote::PromoteMode::DryRun,
+        Some("on_policy_pass") => promote::PromoteMode::OnPolicyPass {
+            policy: body.policy.unwrap_or_default(),
+        },
+        _ => promote::PromoteMode::Force,
+    };
+
+    let req = promote::PromoteRequest {
+        source,
+        dest,
+        include_signatures: body.include_signatures,
+        include_attestations: body.include_attestations,
+        mode,
+    };
+
+    let outcome = promote::promote(promote::PromoteParams {
+        store: &state.store,
+        pool: state.gc_pool.as_ref(),
+        actor: &claims.sub,
+        req: &req,
+    })
+    .await?;
+
+    let _ = state
+        .audit_log
+        .record(audit::RegistryAuditEvent {
+            timestamp: chrono::Utc::now(),
+            event_type: "manifest.promote".into(),
+            subject: claims.sub.clone(),
+            tenant: req.dest.tenant.clone(),
+            project: req.dest.project.clone(),
+            repository: req.dest.repository.clone(),
+            reference: req.dest.reference.clone(),
+            digest: outcome.dst_digest.clone(),
+            size_bytes: outcome.bytes_copied,
+            status_code: 200,
+            duration_ms: 0,
+        })
+        .await;
+
+    Ok((StatusCode::OK, axum::Json(outcome)).into_response())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PromoteHistoryQuery {
+    tenant: String,
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default)]
+    repository: Option<String>,
+    #[serde(default = "default_promote_limit")]
+    limit: i64,
+}
+
+fn default_promote_limit() -> i64 {
+    50
+}
+
+/// GET /v2/_promote/history?tenant=&project=&repository=
+#[instrument(name = "promote_history", skip(state, claims))]
+async fn promote_history(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Query(q): Query<PromoteHistoryQuery>,
+) -> Result<Response, RegistryError> {
+    promotion_enabled(&state)?;
+    if claims.role != Role::Admin {
+        let project = q.project.as_deref().ok_or_else(|| RegistryError::Forbidden {
+            reason: "project query required for non-admin promote history".into(),
+        })?;
+        let repo = q.repository.as_deref().unwrap_or("*");
+        authorize(&claims, &q.tenant, project, repo, Action::Pull)?;
+    }
+    let pool = state
+        .gc_pool
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("promotion history requires Postgres".into()))?;
+
+    let rows = sqlx::query(
+        "SELECT id, started_at, finished_at, actor,
+                src_tenant, src_project, src_repository, src_reference, src_digest,
+                dst_tenant, dst_project, dst_repository, dst_reference,
+                state, error, bytes_copied, blob_count, signatures_copied
+         FROM promotions
+         WHERE dst_tenant = $1
+           AND ($2::text IS NULL OR dst_project = $2)
+           AND ($3::text IS NULL OR dst_repository = $3)
+         ORDER BY started_at DESC
+         LIMIT $4",
+    )
+    .bind(&q.tenant)
+    .bind(q.project.as_deref())
+    .bind(q.repository.as_deref())
+    .bind(q.limit)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    use sqlx::Row;
+    let items: Vec<_> = rows
+        .iter()
+        .map(|r| {
+            let src_tenant: String = r.get("src_tenant");
+            let src_project: String = r.get("src_project");
+            let src_repository: String = r.get("src_repository");
+            let src_reference: String = r.get("src_reference");
+            let dst_tenant: String = r.get("dst_tenant");
+            let dst_project: String = r.get("dst_project");
+            let dst_repository: String = r.get("dst_repository");
+            let dst_reference: String = r.get("dst_reference");
+            serde_json::json!({
+                "id": r.get::<Uuid, _>("id"),
+                "started_at": r.get::<chrono::DateTime<chrono::Utc>, _>("started_at"),
+                "finished_at": r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("finished_at"),
+                "actor": r.get::<String, _>("actor"),
+                "source": format!("{src_tenant}/{src_project}/{src_repository}:{src_reference}"),
+                "dest": format!("{dst_tenant}/{dst_project}/{dst_repository}:{dst_reference}"),
+                "src_digest": r.get::<String, _>("src_digest"),
+                "state": r.get::<String, _>("state"),
+                "error": r.get::<Option<String>, _>("error"),
+                "bytes_copied": r.get::<i64, _>("bytes_copied"),
+                "blob_count": r.get::<i32, _>("blob_count"),
+                "signatures_copied": r.get::<i32, _>("signatures_copied"),
+            })
+        })
+        .collect();
+
+    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "items": items }))).into_response())
+}
+
+/// GET /v2/_promote/{id}
+#[instrument(name = "promote_status", skip(state, claims))]
+async fn promote_status(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(id): Path<Uuid>,
+) -> Result<Response, RegistryError> {
+    promotion_enabled(&state)?;
+    let pool = state
+        .gc_pool
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("promotion status requires Postgres".into()))?;
+    let row: Option<(
+        Uuid,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT id, actor, src_tenant, src_project, src_repository, src_reference,
+                dst_tenant, dst_project, dst_repository, dst_reference, state, error
+         FROM promotions WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    let Some((
+        id,
+        actor,
+        src_tenant,
+        src_project,
+        src_repository,
+        src_reference,
+        dst_tenant,
+        dst_project,
+        dst_repository,
+        dst_reference,
+        st,
+        error,
+    )) = row
+    else {
+        return Err(RegistryError::NameUnknown {
+            name: id.to_string(),
+        });
+    };
+    authorize(
+        &claims,
+        &dst_tenant,
+        &dst_project,
+        &dst_repository,
+        Action::Pull,
+    )?;
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "id": id,
+            "actor": actor,
+            "source": format!("{src_tenant}/{src_project}/{src_repository}:{src_reference}"),
+            "dest": format!("{dst_tenant}/{dst_project}/{dst_repository}:{dst_reference}"),
+            "state": st,
+            "error": error,
+        })),
+    )
+        .into_response())
+}
+
 /// POST /v2/_rebuild/trigger — manual fire (admin).
 #[instrument(name = "rebuild_trigger", skip(state, claims))]
 async fn rebuild_trigger(
@@ -5711,6 +5973,10 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/v2/_rebuild/events", get(list_rebuild_events))
         .route("/v2/_lineage/{digest}", get(get_lineage))
+        // Atomic promotion (006 C1)
+        .route("/v2/_promote", post(promote_handler))
+        .route("/v2/_promote/history", get(promote_history))
+        .route("/v2/_promote/{id}", get(promote_status))
         // Catalog
         .route("/v2/_catalog", get(catalog))
         // Online GC control plane (009 slice 2-3)
