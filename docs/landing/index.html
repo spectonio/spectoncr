@@ -289,6 +289,7 @@
   </div>
   <div class="nav-links">
     <a href="#features">Features</a>
+    <a href="features.html">All Features</a>
     <a href="#dashboard">Dashboard</a>
     <a href="#enterprise">Enterprise</a>
     <a href="#scanning">CVE Scanning</a>
@@ -315,6 +316,7 @@
   </p>
   <div class="hero-buttons">
     <a href="#install" class="btn btn-primary">Get Started</a>
+    <a href="features.html" class="btn btn-secondary">Full Feature List</a>
     <a href="https://github.com/spectonio/spectoncr" class="btn btn-secondary">View on GitHub</a>
   </div>
   <div class="hero-trust">
@@ -513,9 +515,33 @@
           <li>Google Cloud Storage</li>
           <li>Azure Blob Storage</li>
           <li>Configurable storage backends per deployment</li>
+          <li>Multipart writes for multi-GB layers</li>
         </ul>
       </div>
 
+      <div class="feature-card">
+        <div class="feature-icon-box">&#x1F501;</div>
+        <div class="feature-title">Large Layer Uploads <span style="margin-left:8px;padding:3px 10px;border-radius:12px;background:rgba(74,222,128,0.12);color:var(--green);font-size:0.6rem;font-weight:700;letter-spacing:0.5px;vertical-align:middle;">NEW</span></div>
+        <div class="feature-desc">
+          Multi-GB layers &mdash; ML images, model weights, fat data-science bases &mdash; are written to
+          object storage as multipart uploads, so a single request deadline never caps blob size.
+        </div>
+        <ul class="feature-list">
+          <li>Multipart above <code>storage.multipart_threshold_mb</code> (64 MiB default)</li>
+          <li>Every part gets its own request and retry budget</li>
+          <li>Parts uploaded concurrently to keep a WAN link busy</li>
+          <li>5 MiB floor and 10,000-part cap handled automatically</li>
+          <li>Failed uploads aborted &mdash; no orphaned parts left billing</li>
+        </ul>
+      </div>
+
+    </div>
+
+    <div style="text-align:center;margin-top:40px;">
+      <a href="features.html" class="btn btn-primary">See the Full Feature List</a>
+      <p style="margin-top:14px;font-size:0.78rem;color:var(--text-secondary);">
+        Every capability, config key and environment override &mdash; plus what shipped this month.
+      </p>
     </div>
   </div>
 </section>
@@ -871,6 +897,8 @@ openssl rsa -in private.pem -pubout -out public.pem
 <!-- ===== FOOTER ===== -->
 <footer class="footer">
   <div class="footer-links">
+    <a href="features.html">Features</a>
+    <a href="api.html">API Docs</a>
     <a href="https://specton.io">specton.io</a>
     <a href="https://github.com/spectonio/spectoncr">GitHub</a>
     <a href="https://github.com/spectonio/spectoncr#readme">Documentation</a>
