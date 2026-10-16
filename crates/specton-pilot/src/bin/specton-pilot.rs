@@ -108,10 +108,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn print_assistant(history: &[ChatMessage]) {
-    if let Some(m) = history.last() {
-        if matches!(m.role, specton_pilot::ChatRole::Assistant) {
-            println!("{}", m.content);
-        }
+    if let Some(m) = history.last()
+        && matches!(m.role, specton_pilot::ChatRole::Assistant)
+    {
+        println!("{}", m.content);
     }
 }
 

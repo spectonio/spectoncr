@@ -1438,48 +1438,47 @@ async fn put_manifest(
 
     // Cosign `.sig` tag push (001 B3): register signature metadata +
     // referrer + Sign audit without failing the OCI put.
-    if state.config.signing.enabled {
-        if let Some(subject) = specton_signing::subject_digest_from_sig_tag(&params.reference) {
-            let (signer_identity, signature_type, media_type) = if let Ok(art) =
-                serde_json::from_slice::<specton_signing::SignatureArtifact>(&body)
-            {
-                (
-                    Some(art.signer_identity),
-                    art.signature_type,
-                    art.media_type,
-                )
-            } else if let Ok(env) = serde_json::from_slice::<specton_signing::CosignEnvelope>(&body)
-            {
-                (
-                    Some(env.key_ref),
-                    "cosign-key".to_string(),
-                    specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.to_string(),
-                )
-            } else {
-                (
-                    None,
-                    "cosign-key".to_string(),
-                    detect_manifest_media_type(&body),
-                )
-            };
-            if let Err(e) = register_signature_metadata(
-                &state,
-                &claims.sub,
-                &params.tenant,
-                &params.project,
-                &params.name,
-                &subject,
-                &digest,
-                body.len() as i64,
-                signer_identity,
-                &signature_type,
-                &media_type,
-                &params.reference,
+    if state.config.signing.enabled
+        && let Some(subject) = specton_signing::subject_digest_from_sig_tag(&params.reference)
+    {
+        let (signer_identity, signature_type, media_type) = if let Ok(art) =
+            serde_json::from_slice::<specton_signing::SignatureArtifact>(&body)
+        {
+            (
+                Some(art.signer_identity),
+                art.signature_type,
+                art.media_type,
             )
-            .await
-            {
-                warn!(error = %e, tag = %params.reference, "signature metadata register failed");
-            }
+        } else if let Ok(env) = serde_json::from_slice::<specton_signing::CosignEnvelope>(&body) {
+            (
+                Some(env.key_ref),
+                "cosign-key".to_string(),
+                specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.to_string(),
+            )
+        } else {
+            (
+                None,
+                "cosign-key".to_string(),
+                detect_manifest_media_type(&body),
+            )
+        };
+        if let Err(e) = register_signature_metadata(
+            &state,
+            &claims.sub,
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &subject,
+            &digest,
+            body.len() as i64,
+            signer_identity,
+            &signature_type,
+            &media_type,
+            &params.reference,
+        )
+        .await
+        {
+            warn!(error = %e, tag = %params.reference, "signature metadata register failed");
         }
     }
 
@@ -3108,22 +3107,22 @@ async fn enforce_pull_signature_policy(
         let mut artifacts = Vec::new();
         for rec in &records {
             let path = blob_path(tenant, project, repo, &rec.signature_digest);
-            if let Ok(r) = state.store.get(&StorePath::from(path)).await {
-                if let Ok(bytes) = r.bytes().await {
-                    if let Ok(art) =
-                        serde_json::from_slice::<specton_signing::SignatureArtifact>(&bytes)
-                    {
-                        artifacts.push(art);
-                    } else if let Ok(env) =
-                        serde_json::from_slice::<specton_signing::CosignEnvelope>(&bytes)
-                    {
-                        artifacts.push(specton_signing::SignatureArtifact {
-                            media_type: specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.into(),
-                            body: bytes.to_vec(),
-                            signer_identity: env.key_ref,
-                            signature_type: "cosign-key".into(),
-                        });
-                    }
+            if let Ok(r) = state.store.get(&StorePath::from(path)).await
+                && let Ok(bytes) = r.bytes().await
+            {
+                if let Ok(art) =
+                    serde_json::from_slice::<specton_signing::SignatureArtifact>(&bytes)
+                {
+                    artifacts.push(art);
+                } else if let Ok(env) =
+                    serde_json::from_slice::<specton_signing::CosignEnvelope>(&bytes)
+                {
+                    artifacts.push(specton_signing::SignatureArtifact {
+                        media_type: specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.into(),
+                        body: bytes.to_vec(),
+                        signer_identity: env.key_ref,
+                        signature_type: "cosign-key".into(),
+                    });
                 }
             }
         }
@@ -3222,6 +3221,7 @@ struct VerifyBody {
 }
 
 /// Postgres metadata + OCI referrer + Sign audit (bytes already in object store).
+#[allow(clippy::too_many_arguments)]
 async fn register_signature_metadata(
     state: &AppState,
     claims_sub: &str,
@@ -3321,6 +3321,7 @@ async fn register_signature_metadata(
 }
 
 /// Persist signature blob + tag + Postgres row + referrer + audit.
+#[allow(clippy::too_many_arguments)]
 async fn persist_signature(
     state: &AppState,
     claims_sub: &str,
@@ -4323,7 +4324,7 @@ async fn promote_status(
         .gc_pool
         .as_ref()
         .ok_or_else(|| RegistryError::Internal("promotion status requires Postgres".into()))?;
-    let row: Option<(
+    type PromoRow = (
         Uuid,
         String,
         String,
@@ -4336,7 +4337,8 @@ async fn promote_status(
         String,
         String,
         Option<String>,
-    )> = sqlx::query_as(
+    );
+    let row: Option<PromoRow> = sqlx::query_as(
         "SELECT id, actor, src_tenant, src_project, src_repository, src_reference,
                 dst_tenant, dst_project, dst_repository, dst_reference, state, error
          FROM promotions WHERE id = $1",

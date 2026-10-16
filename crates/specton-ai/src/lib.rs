@@ -29,6 +29,7 @@ pub type Result<T> = std::result::Result<T, AiError>;
 
 /// CVE-analysis interface — Ollama is one implementation; others (vLLM,
 /// Anthropic API, local llama.cpp server) can plug in behind the same trait.
+#[allow(clippy::double_must_use)] // async_trait + Future are both must_use
 #[async_trait]
 pub trait CveAnalyzer: Send + Sync {
     async fn analyze(&self, input: &CveInput) -> Result<CveAnalysis>;

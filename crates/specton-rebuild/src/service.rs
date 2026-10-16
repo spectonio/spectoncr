@@ -149,7 +149,7 @@ impl RebuildService {
         tenant: &str,
         limit: i64,
     ) -> Result<Vec<serde_json::Value>, FireError> {
-        let rows: Vec<(
+        type EventRow = (
             Uuid,
             Uuid,
             String,
@@ -160,7 +160,8 @@ impl RebuildService {
             Option<String>,
             chrono::DateTime<chrono::Utc>,
             String,
-        )> = sqlx::query_as(
+        );
+        let rows: Vec<EventRow> = sqlx::query_as(
             "SELECT e.id, e.subscription_id, e.upstream_ref, e.downstream_ref,
                     e.fixed_cves, e.severity_max, e.emitter_status, e.emitter_response,
                     e.fired_at, s.name

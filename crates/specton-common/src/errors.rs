@@ -159,10 +159,10 @@ impl IntoResponse for RegistryError {
                 response.headers_mut().insert("www-authenticate", val);
             }
         }
-        if let Self::ManifestUnverified { reason } = &self {
-            if let Ok(val) = axum::http::HeaderValue::from_str(reason) {
-                response.headers_mut().insert("www-spectoncr-reason", val);
-            }
+        if let Self::ManifestUnverified { reason } = &self
+            && let Ok(val) = axum::http::HeaderValue::from_str(reason)
+        {
+            response.headers_mut().insert("www-spectoncr-reason", val);
         }
         response
     }

@@ -176,7 +176,7 @@ impl AuditSink for InMemoryAudit {
                     checked,
                     broken_at: Some(row.id),
                     expected_hash: Some(hex::encode(&expected_prev)),
-                    actual_hash: Some(hex::encode(&row.prev_hash.clone().unwrap_or_default())),
+                    actual_hash: Some(hex::encode(row.prev_hash.clone().unwrap_or_default())),
                 });
             }
 

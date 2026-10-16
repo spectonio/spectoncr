@@ -74,21 +74,16 @@ impl ImageRef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PromoteMode {
+    #[default]
     Force,
     DryRun,
     #[serde(rename = "on_policy_pass")]
     OnPolicyPass {
         policy: String,
     },
-}
-
-impl Default for PromoteMode {
-    fn default() -> Self {
-        Self::Force
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,7 +156,7 @@ async fn store_get(store: &dyn ObjectStore, path: &str) -> Result<Bytes, Registr
 async fn store_exists(store: &dyn ObjectStore, path: &str) -> Result<bool, RegistryError> {
     match store.head(&StorePath::from(path)).await {
         Ok(_) => Ok(true),
-        Err(e) if matches!(e, object_store::Error::NotFound { .. }) => Ok(false),
+        Err(object_store::Error::NotFound { .. }) => Ok(false),
         Err(e) => Err(RegistryError::Storage(e.to_string())),
     }
 }

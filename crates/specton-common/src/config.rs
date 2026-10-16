@@ -60,7 +60,7 @@ impl Default for AdmissionConfig {
 }
 
 /// `[promotion]` — design 006; kill-switch OFF by default.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PromotionConfig {
     /// Master kill-switch. When false, `/v2/_promote` returns forbidden.
@@ -69,15 +69,6 @@ pub struct PromotionConfig {
     /// When set, destination blobs/manifests/tags are written here while
     /// source reads use the primary `[storage]` backend.
     pub dest_storage: Option<StorageConfig>,
-}
-
-impl Default for PromotionConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            dest_storage: None,
-        }
-    }
 }
 
 /// `[pilot]` — design 019 HTTP chat surface; kill-switch OFF by default.
@@ -106,21 +97,15 @@ impl Default for PilotConfig {
 }
 
 /// `[rebuild]` — design 018; kill-switch OFF by default.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RebuildConfig {
     /// Master kill-switch. When false, rebuild APIs return forbidden.
     pub enabled: bool,
 }
 
-impl Default for RebuildConfig {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
-}
-
 /// `[signing]` — design 001; kill-switch OFF by default.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SigningConfig {
     /// Master kill-switch. When false, signing APIs are not mounted.
@@ -132,17 +117,6 @@ pub struct SigningConfig {
     pub default_key_ref: Option<String>,
     /// Optional directory for relative `file://` key refs.
     pub key_root: Option<String>,
-}
-
-impl Default for SigningConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            require_for_pull: false,
-            default_key_ref: None,
-            key_root: None,
-        }
-    }
 }
 
 // ── Audit configuration (005) ────────────────────────────────────

@@ -11,32 +11,22 @@ use specton_scanner::{EphemeralStore, Policy, PolicyEvaluation, PolicyStatus, Sc
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OnUnknown {
+    #[default]
     Block,
     Scan,
     Allow,
 }
 
-impl Default for OnUnknown {
-    fn default() -> Self {
-        Self::Block
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OnTimeout {
+    #[default]
     Block,
     Warn,
     Allow,
-}
-
-impl Default for OnTimeout {
-    fn default() -> Self {
-        Self::Block
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

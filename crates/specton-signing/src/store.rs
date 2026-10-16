@@ -133,20 +133,7 @@ impl SignatureStore for PgSignatureStore {
         &self,
         subject_digest: &str,
     ) -> Result<Vec<SignatureRecord>, SignatureStoreError> {
-        let rows: Vec<(
-            Uuid,
-            String,
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-            String,
-            Option<String>,
-            i64,
-            Option<i64>,
-            DateTime<Utc>,
-        )> = sqlx::query_as(
+        let rows: Vec<SignatureRow> = sqlx::query_as(
             "SELECT id, subject_digest, tenant, project, repository,
                     signature_digest, signer_identity, signature_type,
                     media_type, size_bytes, rekor_log_index, signed_at
@@ -160,6 +147,21 @@ impl SignatureStore for PgSignatureStore {
         Ok(rows.into_iter().map(row_to_rec).collect())
     }
 }
+
+type SignatureRow = (
+    Uuid,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    i64,
+    Option<i64>,
+    DateTime<Utc>,
+);
 
 fn row_to_rec(
     (
@@ -175,20 +177,7 @@ fn row_to_rec(
         size_bytes,
         rekor_log_index,
         signed_at,
-    ): (
-        Uuid,
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        i64,
-        Option<i64>,
-        DateTime<Utc>,
-    ),
+    ): SignatureRow,
 ) -> SignatureRecord {
     SignatureRecord {
         id,

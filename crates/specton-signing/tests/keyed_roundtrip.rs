@@ -24,7 +24,7 @@ async fn fixed_keypair_sign_verify() {
 
     let policy = VerificationPolicy::require_keys("default", &["cosign://ci"]);
     let outcome = verifier
-        .verify(DIGEST, &[artifact.clone()], &policy)
+        .verify(DIGEST, std::slice::from_ref(&artifact), &policy)
         .await
         .expect("verify");
     assert!(outcome.trusted);

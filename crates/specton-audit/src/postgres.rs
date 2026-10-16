@@ -113,6 +113,7 @@ impl PgChainedAudit {
         event.subject.as_ref().and_then(|s| s.tenant.clone())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn row_from_db(
         id: i64,
         at: DateTime<Utc>,
