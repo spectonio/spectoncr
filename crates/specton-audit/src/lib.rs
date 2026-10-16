@@ -10,6 +10,8 @@
 //! **Naming:** tables are `registry_audit_*` so we do not collide with the
 //! scanner's simpler `audit_log` from `0001_init.sql`.
 
+#![allow(clippy::double_must_use)] // async_trait + Future on rustc ≥1.99
+
 pub mod checkpoint;
 pub mod event;
 pub mod export;

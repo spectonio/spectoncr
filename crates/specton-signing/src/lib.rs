@@ -9,6 +9,8 @@
 //!
 //! Kill-switch: `[signing] enabled = false` (wired in B4 registry hooks).
 
+#![allow(clippy::double_must_use)] // async_trait + Future on rustc ≥1.99
+
 pub mod artifact;
 pub mod cosign_payload;
 pub mod error;
