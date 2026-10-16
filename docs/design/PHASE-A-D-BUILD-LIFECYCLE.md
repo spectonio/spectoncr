@@ -90,13 +90,13 @@ signatures; rebuilds must be able to re-attach or verify cosign artifacts.
   `spectoncr sign` (or registry admin route if CLI deferred)
 - **Verify:** round-trip with fixed PEM; Vault optional behind feature
 
-### PR B3 — `feat(signing): store cosign .sig artifacts + referrers + audit`
+### PR B3 — `feat(signing): store cosign .sig artifacts + referrers + audit` ✅ landed locally
 - **Docs:** 001 §§b,d,e,i slice 3 — **depends on A2**
 - **Deliver:** tag `sha256-<hex>.sig`, signatures table if needed,
   `POST/GET .../signatures/{digest}`, audit category `Sign`
 - **Verify:** push → sign → referrers lists sig; audit row present
 
-### PR B4 — `feat(signing): ImageVerificationPolicy + verify-on-pull`
+### PR B4 — `feat(signing): ImageVerificationPolicy + verify-on-pull` ✅ landed locally
 - **Docs:** 001 §§c,f,g,i slice 4
 - **Deliver:** CRD + reconciler, middleware on `get_manifest`, Helm
   `[signing] enabled=false`

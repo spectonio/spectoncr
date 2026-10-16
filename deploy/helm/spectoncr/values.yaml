@@ -623,6 +623,15 @@ multiRegion:
   #     priority: 2
   regions: []
 
+## -- Image signing / verify-on-pull (design 001) --
+## Kill-switch OFF by default. Flip enabled=true after signing keys and
+## ImageVerificationPolicy resources are in place.
+signing:
+  enabled: false
+  requireForPull: false
+  # defaultKeyRef: "vault://transit/cosign-key"
+  # keyRoot: "/etc/spectoncr/signing-keys"
+
 ## -- Scanner (CVE scanning — runs in-process inside the registry) --
 ## When enabled, every manifest push enqueues a scan; workers materialize
 ## results to Redis (1h TTL) and Postgres (audit log + suppressions). The

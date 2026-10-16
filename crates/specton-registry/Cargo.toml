@@ -17,6 +17,7 @@ specton-lazy = { workspace = true }
 specton-artifact-types = { workspace = true }
 specton-attest = { workspace = true }
 specton-audit = { workspace = true }
+specton-signing = { workspace = true }
 async-trait = { workspace = true }
 specton-db = { workspace = true }
 rand = { workspace = true }

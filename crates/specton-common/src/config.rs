@@ -28,7 +28,7 @@ pub struct RegistryConfig {
     pub signing: SigningConfig,
 }
 
-/// `[signing]` — B1/B2 config; registry hooks land in B3/B4.
+/// `[signing]` — design 001; kill-switch OFF by default.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SigningConfig {

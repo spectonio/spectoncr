@@ -200,6 +200,70 @@ pub struct TokenPolicyStatus {
 }
 
 // ---------------------------------------------------------------------------
+// ImageVerificationPolicy CRD (design 001 B4)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyScopeSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repositories: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TrustedSignerSpec {
+    /// `Key` or `Keyless` (keyless is v1.1).
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_pattern: Option<String>,
+}
+
+#[derive(CustomResource, Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[kube(
+    group = "spectoncr.io",
+    version = "v1alpha1",
+    kind = "ImageVerificationPolicy",
+    plural = "imageverificationpolicies",
+    shortname = "ivp",
+    status = "ImageVerificationPolicyStatus",
+    namespaced
+)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageVerificationPolicySpec {
+    pub tenant_ref: String,
+    #[serde(default)]
+    pub scope: PolicyScopeSpec,
+    #[serde(default = "default_true")]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_signers: Vec<TrustedSignerSpec>,
+    /// `block` | `warn` | `log`
+    #[serde(default = "default_on_violation")]
+    pub on_violation: String,
+}
+
+fn default_on_violation() -> String {
+    "block".into()
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+pub struct ImageVerificationPolicyStatus {
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<Condition>,
+}
+
+// ---------------------------------------------------------------------------
 // Context shared across reconcilers
 // ---------------------------------------------------------------------------
 
@@ -207,6 +271,10 @@ struct Ctx {
     client: Client,
     http: reqwest::Client,
     auth_service_url: String,
+    /// Registry base URL for ImageVerificationPolicy sync (optional).
+    registry_service_url: Option<String>,
+    /// Bearer token for admin PUT to registry (optional).
+    registry_admin_token: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -324,6 +392,29 @@ async fn sync_to_auth_service(
             %text,
             "auth-service sync returned non-success"
         );
+    }
+    Ok(())
+}
+
+async fn sync_to_registry(
+    http: &reqwest::Client,
+    base_url: &str,
+    path: &str,
+    body: &serde_json::Value,
+    bearer: Option<&str>,
+) -> Result<(), ControllerError> {
+    let url = format!("{base_url}{path}");
+    let mut req = http.put(&url).json(body);
+    if let Some(token) = bearer {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(ControllerError::Validation(format!(
+            "registry sync {url} → {status}: {text}"
+        )));
     }
     Ok(())
 }
@@ -742,6 +833,146 @@ fn token_policy_error_policy(
 }
 
 // ---------------------------------------------------------------------------
+// Reconcile: ImageVerificationPolicy
+// ---------------------------------------------------------------------------
+
+async fn reconcile_image_verification_policy(
+    policy: Arc<ImageVerificationPolicy>,
+    ctx: Arc<Ctx>,
+) -> Result<Action, ControllerError> {
+    let name = policy.name_any();
+    let ns = policy.namespace().unwrap_or_default();
+    info!(%name, %ns, "reconciling ImageVerificationPolicy");
+
+    let tenants: Api<Tenant> = Api::all(ctx.client.clone());
+    if tenants.get_opt(&policy.spec.tenant_ref).await?.is_none() {
+        return Err(ControllerError::Validation(format!(
+            "referenced Tenant '{}' not found",
+            policy.spec.tenant_ref
+        )));
+    }
+
+    let on_violation = match policy.spec.on_violation.as_str() {
+        "warn" | "log" | "block" => policy.spec.on_violation.clone(),
+        other => {
+            return Err(ControllerError::Validation(format!(
+                "onViolation must be block|warn|log, got '{other}'"
+            )));
+        }
+    };
+
+    let mut trusted_signers = Vec::new();
+    for s in &policy.spec.trusted_signers {
+        match s.kind.as_str() {
+            "Key" => {
+                let key_ref = s.key_ref.clone().ok_or_else(|| {
+                    ControllerError::Validation("Key signer requires keyRef".into())
+                })?;
+                trusted_signers.push(serde_json::json!({
+                    "key": { "key_ref": key_ref, "identity_name": s.identity_name }
+                }));
+            }
+            "Keyless" => {
+                trusted_signers.push(serde_json::json!({
+                    "keyless": {
+                        "issuer": s.issuer.clone().unwrap_or_default(),
+                        "subject_pattern": s.subject_pattern.clone().unwrap_or_default()
+                    }
+                }));
+            }
+            other => {
+                return Err(ControllerError::Validation(format!(
+                    "trustedSigner.kind must be Key or Keyless, got '{other}'"
+                )));
+            }
+        }
+    }
+
+    let uid = policy.uid().unwrap_or_default();
+    let body = serde_json::json!({
+        "id": uid.to_string(),
+        "enabled": true,
+        "on_violation": on_violation,
+        "spec": {
+            "scope": {
+                "projects": policy.spec.scope.projects,
+                "repositories": policy.spec.scope.repositories,
+            },
+            "required": policy.spec.required,
+            "trusted_signers": trusted_signers,
+            "on_violation": on_violation,
+        }
+    });
+
+    if let Some(ref registry_url) = ctx.registry_service_url {
+        if let Err(e) = sync_to_registry(
+            &ctx.http,
+            registry_url,
+            &format!(
+                "/v2/_signing/policies/{}/{}",
+                policy.spec.tenant_ref, name
+            ),
+            &body,
+            ctx.registry_admin_token.as_deref(),
+        )
+        .await
+        {
+            warn!(%name, error = %e, "failed to sync ImageVerificationPolicy; will retry");
+            return Ok(Action::requeue(Duration::from_secs(30)));
+        }
+    } else {
+        info!(
+            %name,
+            "REGISTRY_SERVICE_URL unset; ImageVerificationPolicy validated only"
+        );
+    }
+
+    let api: Api<ImageVerificationPolicy> = Api::namespaced(ctx.client.clone(), &ns);
+    let now = Utc::now().to_rfc3339();
+    let status = serde_json::json!({
+        "phase": "Active",
+        "conditions": [{
+            "type": "Ready",
+            "status": "True",
+            "lastTransitionTime": now,
+            "reason": "Reconciled",
+            "message": "ImageVerificationPolicy reconciled",
+        }]
+    });
+    update_status(&api, &name, status).await?;
+
+    let msg = format!("ImageVerificationPolicy {name} reconciled");
+    if let Err(e) = publish_event(
+        &ctx.client,
+        &EventInfo {
+            namespace: Some(&ns),
+            regarding_kind: "ImageVerificationPolicy",
+            regarding_name: &name,
+            regarding_uid: &uid,
+            reason: "Reconciled",
+            message: &msg,
+            event_type: "Normal",
+        },
+    )
+    .await
+    {
+        warn!(%name, error = %e, "failed to publish event");
+    }
+
+    Ok(Action::requeue(Duration::from_secs(300)))
+}
+
+fn image_verification_policy_error_policy(
+    policy: Arc<ImageVerificationPolicy>,
+    error: &ControllerError,
+    _ctx: Arc<Ctx>,
+) -> Action {
+    let name = policy.name_any();
+    error!(%name, %error, "image-verification-policy reconciliation failed");
+    Action::requeue(Duration::from_secs(60))
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -776,6 +1007,8 @@ async fn main() -> anyhow::Result<()> {
 
     let auth_service_url = std::env::var("AUTH_SERVICE_URL")
         .unwrap_or_else(|_| "http://specton-auth:8080".to_string());
+    let registry_service_url = std::env::var("REGISTRY_SERVICE_URL").ok();
+    let registry_admin_token = std::env::var("REGISTRY_ADMIN_TOKEN").ok();
 
     let ctx = Arc::new(Ctx {
         client: client.clone(),
@@ -783,6 +1016,8 @@ async fn main() -> anyhow::Result<()> {
             .timeout(Duration::from_secs(10))
             .build()?,
         auth_service_url,
+        registry_service_url,
+        registry_admin_token,
     });
 
     // --- Tenant controller (cluster-scoped) ---
@@ -838,6 +1073,22 @@ async fn main() -> anyhow::Result<()> {
             match res {
                 Ok(o) => info!(resource = ?o, "token-policy reconciled"),
                 Err(e) => error!(error = %e, "token-policy reconcile loop error"),
+            }
+        });
+
+    // --- ImageVerificationPolicy controller (001 B4) ---
+    let ivp: Api<ImageVerificationPolicy> = Api::all(client.clone());
+    let ivp_ctrl = Controller::new(ivp, WatcherConfig::default())
+        .shutdown_on_signal()
+        .run(
+            reconcile_image_verification_policy,
+            image_verification_policy_error_policy,
+            ctx.clone(),
+        )
+        .for_each(|res| async move {
+            match res {
+                Ok(o) => info!(resource = ?o, "image-verification-policy reconciled"),
+                Err(e) => error!(error = %e, "image-verification-policy reconcile loop error"),
             }
         });
 
@@ -907,6 +1158,7 @@ async fn main() -> anyhow::Result<()> {
         () = project_ctrl => info!("project controller exited"),
         () = access_ctrl => info!("access-policy controller exited"),
         () = token_ctrl => info!("token-policy controller exited"),
+        () = ivp_ctrl => info!("image-verification-policy controller exited"),
         () = registry_ctrl => info!("spectonregistry operator exited"),
     }
 

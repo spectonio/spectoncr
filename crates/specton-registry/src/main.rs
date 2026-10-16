@@ -941,6 +941,21 @@ async fn get_manifest(
     let digest = sha256_digest(&data);
     let media_type = detect_manifest_media_type(&data);
 
+    // Verify-on-pull (001 B4). Skip cosign `.sig` artifacts themselves.
+    if state.config.signing.enabled
+        && !specton_signing::is_cosign_sig_tag(&params.reference)
+    {
+        enforce_pull_signature_policy(
+            &state,
+            &claims.sub,
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &digest,
+        )
+        .await?;
+    }
+
     let mut headers = HeaderMap::new();
     headers.insert(
         "Docker-Content-Digest",
@@ -1333,6 +1348,55 @@ async fn put_manifest(
         201,
         Some(claims.sub.clone()),
     );
+
+    // Cosign `.sig` tag push (001 B3): register signature metadata +
+    // referrer + Sign audit without failing the OCI put.
+    if state.config.signing.enabled {
+        if let Some(subject) = specton_signing::subject_digest_from_sig_tag(&params.reference) {
+            let (signer_identity, signature_type, media_type) =
+                if let Ok(art) =
+                    serde_json::from_slice::<specton_signing::SignatureArtifact>(&body)
+                {
+                    (
+                        Some(art.signer_identity),
+                        art.signature_type,
+                        art.media_type,
+                    )
+                } else if let Ok(env) =
+                    serde_json::from_slice::<specton_signing::CosignEnvelope>(&body)
+                {
+                    (
+                        Some(env.key_ref),
+                        "cosign-key".to_string(),
+                        specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.to_string(),
+                    )
+                } else {
+                    (
+                        None,
+                        "cosign-key".to_string(),
+                        detect_manifest_media_type(&body),
+                    )
+                };
+            if let Err(e) = register_signature_metadata(
+                &state,
+                &claims.sub,
+                &params.tenant,
+                &params.project,
+                &params.name,
+                &subject,
+                &digest,
+                body.len() as i64,
+                signer_identity,
+                &signature_type,
+                &media_type,
+                &params.reference,
+            )
+            .await
+            {
+                warn!(error = %e, tag = %params.reference, "signature metadata register failed");
+            }
+        }
+    }
 
     Ok((StatusCode::CREATED, headers).into_response())
 }
@@ -2889,6 +2953,708 @@ async fn upload_attestation(
     Ok((StatusCode::CREATED, axum::Json(resp)).into_response())
 }
 
+// ── Verify-on-pull (001 B4) ──────────────────────────────────────────────────
+
+/// Enforce [`ImageVerificationPolicy`] (or `[signing].require_for_pull`) on
+/// manifest GET. Warn/log modes audit and allow; block returns Forbidden.
+async fn enforce_pull_signature_policy(
+    state: &AppState,
+    claims_sub: &str,
+    tenant: &str,
+    project: &str,
+    repo: &str,
+    subject_digest: &str,
+) -> Result<(), RegistryError> {
+    let pool = match state.gc_pool.clone() {
+        Some(p) => p,
+        None => {
+            // No Postgres ⇒ cannot evaluate policies; fail open unless
+            // require_for_pull is set (then fail closed — no way to prove).
+            if state.config.signing.require_for_pull {
+                return Err(RegistryError::Forbidden {
+                    reason: "signature required but policy store unavailable".into(),
+                });
+            }
+            return Ok(());
+        }
+    };
+
+    use specton_signing::PolicyStore as _;
+    let stored = specton_signing::PgPolicyStore::new(pool.clone())
+        .resolve(tenant, project, repo)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    let policy = match stored {
+        Some(p) => p.as_verification_policy(),
+        None if state.config.signing.require_for_pull => {
+            specton_signing::VerificationPolicy {
+                id: Uuid::nil(),
+                name: "require_for_pull".into(),
+                required: true,
+                trusted_signers: vec![],
+                on_violation: specton_signing::OnViolation::Block,
+            }
+        }
+        None => return Ok(()),
+    };
+
+    if !policy.required {
+        return Ok(());
+    }
+
+    use specton_signing::SignatureStore as _;
+    let records = specton_signing::PgSignatureStore::new(pool)
+        .list_for_subject(tenant, project, repo, subject_digest)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    let trusted_refs: Vec<&str> = policy
+        .trusted_signers
+        .iter()
+        .filter_map(|s| s.key_ref())
+        .collect();
+
+    let (trusted, reason) = if trusted_refs.is_empty() {
+        // Presence check: any registered signature satisfies the policy.
+        if records.is_empty() {
+            (false, "no signatures registered for digest".to_string())
+        } else {
+            (true, String::new())
+        }
+    } else {
+        let mut artifacts = Vec::new();
+        for rec in &records {
+            let path = blob_path(tenant, project, repo, &rec.signature_digest);
+            if let Ok(r) = state.store.get(&StorePath::from(path)).await {
+                if let Ok(bytes) = r.bytes().await {
+                    if let Ok(art) =
+                        serde_json::from_slice::<specton_signing::SignatureArtifact>(&bytes)
+                    {
+                        artifacts.push(art);
+                    } else if let Ok(env) =
+                        serde_json::from_slice::<specton_signing::CosignEnvelope>(&bytes)
+                    {
+                        artifacts.push(specton_signing::SignatureArtifact {
+                            media_type: specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.into(),
+                            body: bytes.to_vec(),
+                            signer_identity: env.key_ref,
+                            signature_type: "cosign-key".into(),
+                        });
+                    }
+                }
+            }
+        }
+        let file_provider = match &state.config.signing.key_root {
+            Some(root) => Arc::new(specton_signing::FilePemKeyProvider::with_root(root)),
+            None => Arc::new(specton_signing::FilePemKeyProvider::new()),
+        };
+        let keys = Arc::new(
+            specton_signing::CompositeKeyProvider::builder()
+                .file(file_provider)
+                .build(),
+        );
+        let verifier = specton_signing::SigstoreVerifier::new(keys);
+        use specton_signing::Verifier as _;
+        match verifier
+            .verify(subject_digest, &artifacts, &policy)
+            .await
+        {
+            Ok(outcome) => (
+                outcome.trusted,
+                outcome.reason.unwrap_or_default(),
+            ),
+            Err(e) => (false, e.to_string()),
+        }
+    };
+
+    if trusted {
+        return Ok(());
+    }
+
+    let _ = state
+        .audit_log
+        .sink()
+        .append(
+            specton_audit::AuditEvent::success(
+                specton_audit::Category::Policy,
+                "signature.verify.miss",
+                specton_audit::Actor {
+                    sub: claims_sub.to_string(),
+                    role: None,
+                    source_ip: None,
+                    ua: None,
+                },
+            )
+            .with_subject(specton_audit::Subject {
+                tenant: Some(tenant.to_string()),
+                project: Some(project.to_string()),
+                repo: Some(repo.to_string()),
+                reference: None,
+                digest: Some(subject_digest.to_string()),
+            })
+            .with_attr("policy", serde_json::json!(policy.name))
+            .with_attr("reason", serde_json::json!(reason))
+            .with_attr(
+                "on_violation",
+                serde_json::json!(format!("{:?}", policy.on_violation).to_lowercase()),
+            ),
+        )
+        .await;
+
+    match policy.on_violation {
+        specton_signing::OnViolation::Block => Err(RegistryError::Forbidden {
+            reason: format!("signature policy {:?}: {reason}", policy.name),
+        }),
+        specton_signing::OnViolation::Warn | specton_signing::OnViolation::Log => {
+            warn!(
+                policy = %policy.name,
+                digest = %subject_digest,
+                %reason,
+                "signature policy miss (warn/log)"
+            );
+            Ok(())
+        }
+    }
+}
+
+// ── Image signatures (001 B3) ────────────────────────────────────────────────
+//
+// POST /v2/{tenant}/{project}/{name}/signatures/{digest}
+//   Body: SignatureArtifact JSON (from specton-sign) or CosignEnvelope.
+//   Stores bytes, writes cosign tag `sha256-<hex>.sig`, metadata row,
+//   OCI referrer, and a Sign audit event.
+//
+// GET  /v2/{tenant}/{project}/{name}/signatures/{digest}
+//   Lists signature descriptors for the subject digest.
+//
+// POST /v2/_verify
+//   { digest, tenant, project, repository, key_refs?: [...] }
+//
+// PUT/GET/DELETE /v2/_signing/policies/{tenant}/{name} — ImageVerificationPolicy
+//   sync surface for the controller (admin).
+
+#[derive(Debug, serde::Deserialize)]
+struct VerifyBody {
+    digest: String,
+    tenant: String,
+    project: String,
+    repository: String,
+    /// Trusted key refs for verification policy. Empty ⇒ list-only mode.
+    #[serde(default)]
+    key_refs: Vec<String>,
+}
+
+/// Postgres metadata + OCI referrer + Sign audit (bytes already in object store).
+async fn register_signature_metadata(
+    state: &AppState,
+    claims_sub: &str,
+    tenant: &str,
+    project: &str,
+    repo: &str,
+    subject_digest: &str,
+    signature_digest: &str,
+    size_bytes: i64,
+    signer_identity: Option<String>,
+    signature_type: &str,
+    media_type: &str,
+    reference: &str,
+) -> Result<Uuid, RegistryError> {
+    let pool = state.gc_pool.clone().ok_or_else(|| {
+        RegistryError::Internal(
+            "signature store requires Postgres (enable scanner/GC or audit pool)".into(),
+        )
+    })?;
+
+    let id = Uuid::new_v4();
+    let rec = specton_signing::SignatureRecord {
+        id,
+        subject_digest: subject_digest.to_string(),
+        tenant: tenant.to_string(),
+        project: project.to_string(),
+        repository: repo.to_string(),
+        signature_digest: signature_digest.to_string(),
+        signer_identity: signer_identity.clone(),
+        signature_type: signature_type.to_string(),
+        media_type: Some(media_type.to_string()),
+        size_bytes,
+        rekor_log_index: None,
+        signed_at: chrono::Utc::now(),
+    };
+    use specton_signing::SignatureStore as _;
+    specton_signing::PgSignatureStore::new(pool.clone())
+        .put(&rec)
+        .await
+        .map_err(|e| RegistryError::Internal(format!("signature store: {e}")))?;
+
+    use specton_lazy::ReferrerStore as _;
+    let r = specton_lazy::Referrer {
+        subject_digest: subject_digest.to_string(),
+        artifact_digest: signature_digest.to_string(),
+        artifact_type: media_type.to_string(),
+        media_type: media_type.to_string(),
+        size: size_bytes,
+    };
+    if let Err(e) = specton_lazy::PgReferrerStore::new(pool).register(&r).await {
+        warn!(error = %e, "signature referrer register failed");
+    }
+
+    let _ = state
+        .audit_log
+        .record(audit::RegistryAuditEvent {
+            timestamp: chrono::Utc::now(),
+            event_type: "signature.push".into(),
+            subject: claims_sub.to_string(),
+            tenant: tenant.to_string(),
+            project: project.to_string(),
+            repository: repo.to_string(),
+            reference: reference.to_string(),
+            digest: signature_digest.to_string(),
+            size_bytes: size_bytes as u64,
+            status_code: 201,
+            duration_ms: 0,
+        })
+        .await;
+
+    let _ = state
+        .audit_log
+        .sink()
+        .append(
+            specton_audit::AuditEvent::success(
+                specton_audit::Category::Sign,
+                "signature.push",
+                specton_audit::Actor {
+                    sub: claims_sub.to_string(),
+                    role: None,
+                    source_ip: None,
+                    ua: None,
+                },
+            )
+            .with_subject(specton_audit::Subject {
+                tenant: Some(tenant.to_string()),
+                project: Some(project.to_string()),
+                repo: Some(repo.to_string()),
+                reference: Some(reference.to_string()),
+                digest: Some(signature_digest.to_string()),
+            })
+            .with_attr("signer_identity", serde_json::json!(signer_identity)),
+        )
+        .await;
+
+    Ok(id)
+}
+
+/// Persist signature blob + tag + Postgres row + referrer + audit.
+async fn persist_signature(
+    state: &AppState,
+    claims_sub: &str,
+    tenant: &str,
+    project: &str,
+    repo: &str,
+    subject_digest: &str,
+    body: Bytes,
+    signer_identity: Option<String>,
+    signature_type: &str,
+    media_type: &str,
+) -> Result<(String, Uuid), RegistryError> {
+    if !state.config.signing.enabled {
+        return Err(RegistryError::Forbidden {
+            reason: "signing disabled ([signing].enabled=false)".into(),
+        });
+    }
+
+    let signature_digest = sha256_digest(&body);
+
+    // Blob storage (content-addressable).
+    let blob_p = blob_path(tenant, project, repo, &signature_digest);
+    state
+        .store
+        .put(&StorePath::from(blob_p), body.clone().into())
+        .await
+        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+
+    // Manifest path so OCI clients can pull the signature artifact.
+    let man_p = manifest_path(tenant, project, repo, &signature_digest);
+    state
+        .store
+        .put(&StorePath::from(man_p), body.clone().into())
+        .await
+        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+
+    let tag = specton_signing::SignatureArtifact::cosign_sig_tag(subject_digest)
+        .ok_or_else(|| RegistryError::ManifestInvalid {
+            reason: "subject digest must be sha256:...".into(),
+        })?;
+    let tag_p = tag_link_path(tenant, project, repo, &tag);
+    state
+        .store
+        .put(
+            &StorePath::from(tag_p),
+            Bytes::from(signature_digest.clone()).into(),
+        )
+        .await
+        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+
+    let id = register_signature_metadata(
+        state,
+        claims_sub,
+        tenant,
+        project,
+        repo,
+        subject_digest,
+        &signature_digest,
+        body.len() as i64,
+        signer_identity,
+        signature_type,
+        media_type,
+        &tag,
+    )
+    .await?;
+
+    Ok((signature_digest, id))
+}
+
+#[instrument(name = "upload_signature", skip(state, claims, body), fields(tenant = %params.tenant, project = %params.project, name = %params.name, digest = %params.digest))]
+async fn upload_signature(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(params): Path<BlobRef>,
+    body: Bytes,
+) -> Result<Response, RegistryError> {
+    authorize(
+        &claims,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        Action::Push,
+    )?;
+
+    let subject_digest = params.digest.clone();
+    if !subject_digest.starts_with("sha256:") {
+        return Err(RegistryError::ManifestInvalid {
+            reason: "subject digest must be sha256:...".into(),
+        });
+    }
+
+    // Prefer SignatureArtifact JSON; fall back to CosignEnvelope; else raw bytes.
+    let (signer_identity, signature_type, media_type) =
+        if let Ok(art) = serde_json::from_slice::<specton_signing::SignatureArtifact>(&body) {
+            (
+                Some(art.signer_identity.clone()),
+                art.signature_type.clone(),
+                art.media_type.clone(),
+            )
+        } else if let Ok(env) = serde_json::from_slice::<specton_signing::CosignEnvelope>(&body) {
+            (
+                Some(env.key_ref.clone()),
+                "cosign-key".to_string(),
+                specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.to_string(),
+            )
+        } else {
+            (
+                None,
+                "cosign-key".to_string(),
+                specton_signing::MEDIA_TYPE_COSIGN_SIMPLE.to_string(),
+            )
+        };
+
+    let (signature_digest, id) = persist_signature(
+        &state,
+        &claims.sub,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        &subject_digest,
+        body,
+        signer_identity,
+        &signature_type,
+        &media_type,
+    )
+    .await?;
+
+    let location = format!(
+        "/v2/{}/{}/{}/blobs/{}",
+        params.tenant, params.project, params.name, signature_digest
+    );
+    let mut headers = HeaderMap::new();
+    if let Ok(hv) = HeaderValue::from_str(&location) {
+        headers.insert(header::LOCATION, hv);
+    }
+    let resp = serde_json::json!({
+        "id": id,
+        "subject_digest": subject_digest,
+        "signature_digest": signature_digest,
+        "tag": specton_signing::SignatureArtifact::cosign_sig_tag(&subject_digest),
+    });
+    Ok((StatusCode::CREATED, headers, axum::Json(resp)).into_response())
+}
+
+#[instrument(name = "list_signatures", skip(state, claims), fields(tenant = %params.tenant, project = %params.project, name = %params.name, digest = %params.digest))]
+async fn list_signatures(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(params): Path<BlobRef>,
+) -> Result<Response, RegistryError> {
+    authorize(
+        &claims,
+        &params.tenant,
+        &params.project,
+        &params.name,
+        Action::Pull,
+    )?;
+    if !state.config.signing.enabled {
+        return Err(RegistryError::Forbidden {
+            reason: "signing disabled ([signing].enabled=false)".into(),
+        });
+    }
+
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("signature store not configured".into()))?;
+
+    use specton_signing::SignatureStore as _;
+    let rows = specton_signing::PgSignatureStore::new(pool)
+        .list_for_subject(
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &params.digest,
+        )
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "signatures": rows }))).into_response())
+}
+
+#[instrument(name = "verify_image", skip(state, claims))]
+async fn verify_image(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    axum::Json(body): axum::Json<VerifyBody>,
+) -> Result<Response, RegistryError> {
+    authorize(
+        &claims,
+        &body.tenant,
+        &body.project,
+        &body.repository,
+        Action::Pull,
+    )?;
+
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("signature store not configured".into()))?;
+
+    use specton_signing::SignatureStore as _;
+    let records = specton_signing::PgSignatureStore::new(pool)
+        .list_for_subject(
+            &body.tenant,
+            &body.project,
+            &body.repository,
+            &body.digest,
+        )
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    if body.key_refs.is_empty() {
+        // List-only: report whether any signatures exist.
+        return Ok((
+            StatusCode::OK,
+            axum::Json(serde_json::json!({
+                "trusted": !records.is_empty(),
+                "signers": records.iter().filter_map(|r| r.signer_identity.clone()).collect::<Vec<_>>(),
+                "signature_count": records.len(),
+                "mode": "list-only",
+            })),
+        )
+            .into_response());
+    }
+
+    // Load artifact bodies from object storage and verify cryptographically.
+    let mut artifacts = Vec::new();
+    for rec in &records {
+        let path = blob_path(
+            &body.tenant,
+            &body.project,
+            &body.repository,
+            &rec.signature_digest,
+        );
+        match state.store.get(&StorePath::from(path)).await {
+            Ok(r) => {
+                let bytes = r
+                    .bytes()
+                    .await
+                    .map_err(|e| RegistryError::Storage(e.to_string()))?;
+                if let Ok(art) =
+                    serde_json::from_slice::<specton_signing::SignatureArtifact>(&bytes)
+                {
+                    artifacts.push(art);
+                } else if let Ok(env) =
+                    serde_json::from_slice::<specton_signing::CosignEnvelope>(&bytes)
+                {
+                    artifacts.push(specton_signing::SignatureArtifact {
+                        media_type: specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.into(),
+                        body: bytes.to_vec(),
+                        signer_identity: env.key_ref,
+                        signature_type: "cosign-key".into(),
+                    });
+                }
+            }
+            Err(e) => warn!(error = %e, digest = %rec.signature_digest, "sig blob missing"),
+        }
+    }
+
+    if !state.config.signing.enabled {
+        return Err(RegistryError::Forbidden {
+            reason: "signing disabled ([signing].enabled=false)".into(),
+        });
+    }
+
+    let file_provider = match &state.config.signing.key_root {
+        Some(root) => Arc::new(specton_signing::FilePemKeyProvider::with_root(root)),
+        None => Arc::new(specton_signing::FilePemKeyProvider::new()),
+    };
+    let keys = Arc::new(
+        specton_signing::CompositeKeyProvider::builder()
+            .file(file_provider)
+            .build(),
+    );
+    let verifier = specton_signing::SigstoreVerifier::new(keys);
+    let key_refs: Vec<&str> = body.key_refs.iter().map(|s| s.as_str()).collect();
+    let policy = specton_signing::VerificationPolicy::require_keys("api", &key_refs);
+    use specton_signing::Verifier as _;
+    match verifier.verify(&body.digest, &artifacts, &policy).await {
+        Ok(outcome) => Ok((StatusCode::OK, axum::Json(outcome)).into_response()),
+        Err(e) => Ok((
+            StatusCode::OK,
+            axum::Json(serde_json::json!({
+                "trusted": false,
+                "signers": [],
+                "reason": e.to_string(),
+            })),
+        )
+            .into_response()),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PolicyUpsertBody {
+    #[serde(default)]
+    id: Option<Uuid>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    spec: specton_signing::PolicySpec,
+    #[serde(default)]
+    on_violation: Option<specton_signing::OnViolation>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PolicyPath {
+    tenant: String,
+    name: String,
+}
+
+fn signing_admin_authorize(claims: &TokenClaims) -> Result<(), RegistryError> {
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "signing policy endpoints require Admin role".into(),
+        });
+    }
+    Ok(())
+}
+
+/// PUT /v2/_signing/policies/{tenant}/{name}
+#[instrument(name = "upsert_verification_policy", skip(state, claims))]
+async fn upsert_verification_policy(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(path): Path<PolicyPath>,
+    axum::Json(body): axum::Json<PolicyUpsertBody>,
+) -> Result<Response, RegistryError> {
+    signing_admin_authorize(&claims)?;
+    if !state.config.signing.enabled {
+        return Err(RegistryError::Forbidden {
+            reason: "signing disabled ([signing].enabled=false)".into(),
+        });
+    }
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("policy store not configured".into()))?;
+
+    let on_violation = body
+        .on_violation
+        .unwrap_or(body.spec.on_violation);
+    let policy = specton_signing::StoredVerificationPolicy {
+        id: body.id.unwrap_or_else(Uuid::new_v4),
+        name: path.name.clone(),
+        tenant: path.tenant.clone(),
+        spec: body.spec,
+        enabled: body.enabled.unwrap_or(true),
+        on_violation,
+        updated_at: chrono::Utc::now(),
+    };
+    use specton_signing::PolicyStore as _;
+    specton_signing::PgPolicyStore::new(pool)
+        .upsert(&policy)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+
+    Ok((StatusCode::OK, axum::Json(policy)).into_response())
+}
+
+/// GET /v2/_signing/policies/{tenant}/{name}
+#[instrument(name = "get_verification_policy", skip(state, claims))]
+async fn get_verification_policy(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(path): Path<PolicyPath>,
+) -> Result<Response, RegistryError> {
+    signing_admin_authorize(&claims)?;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("policy store not configured".into()))?;
+    use specton_signing::PolicyStore as _;
+    let found = specton_signing::PgPolicyStore::new(pool)
+        .get(&path.tenant, &path.name)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    match found {
+        Some(p) => Ok((StatusCode::OK, axum::Json(p)).into_response()),
+        None => Err(RegistryError::NameUnknown {
+            name: path.name,
+        }),
+    }
+}
+
+/// DELETE /v2/_signing/policies/{tenant}/{name}
+#[instrument(name = "delete_verification_policy", skip(state, claims))]
+async fn delete_verification_policy(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(path): Path<PolicyPath>,
+) -> Result<Response, RegistryError> {
+    signing_admin_authorize(&claims)?;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("policy store not configured".into()))?;
+    use specton_signing::PolicyStore as _;
+    let deleted = specton_signing::PgPolicyStore::new(pool)
+        .delete(&path.tenant, &path.name)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    if deleted {
+        Ok(StatusCode::NO_CONTENT.into_response())
+    } else {
+        Err(RegistryError::NameUnknown {
+            name: path.name,
+        })
+    }
+}
+
 // ── Helper Functions ─────────────────────────────────────────────────────────
 
 /// Read a tag link. `Ok(None)` when the tag doesn't exist.
@@ -3542,6 +4308,35 @@ async fn image_status_2seg(
         reference: p.reference,
     };
     image_status(state, claims, Path(params)).await
+}
+
+async fn upload_signature_2seg(
+    state: State<AppState>,
+    claims: AuthenticatedClaims,
+    Path(p): Path<BlobRef2>,
+    body: Bytes,
+) -> Result<Response, RegistryError> {
+    let params = BlobRef {
+        tenant: "default".into(),
+        project: p.project,
+        name: p.name,
+        digest: p.digest,
+    };
+    upload_signature(state, claims, Path(params), body).await
+}
+
+async fn list_signatures_2seg(
+    state: State<AppState>,
+    claims: AuthenticatedClaims,
+    Path(p): Path<BlobRef2>,
+) -> Result<Response, RegistryError> {
+    let params = BlobRef {
+        tenant: "default".into(),
+        project: p.project,
+        name: p.name,
+        digest: p.digest,
+    };
+    list_signatures(state, claims, Path(params)).await
 }
 
 async fn list_tags_2seg(
@@ -4651,6 +5446,22 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v2/{tenant}/{project}/{name}/attestations",
             post(upload_attestation),
+        )
+        // Image signatures — 001 B3
+        .route(
+            "/v2/{tenant}/{project}/{name}/signatures/{digest}",
+            get(list_signatures).post(upload_signature),
+        )
+        .route(
+            "/v2/{project}/{name}/signatures/{digest}",
+            get(list_signatures_2seg).post(upload_signature_2seg),
+        )
+        .route("/v2/_verify", post(verify_image))
+        .route(
+            "/v2/_signing/policies/{tenant}/{name}",
+            get(get_verification_policy)
+                .put(upsert_verification_policy)
+                .delete(delete_verification_policy),
         )
         // Catalog
         .route("/v2/_catalog", get(catalog))
