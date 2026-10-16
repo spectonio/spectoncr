@@ -632,6 +632,12 @@ signing:
   # defaultKeyRef: "vault://transit/cosign-key"
   # keyRoot: "/etc/spectoncr/signing-keys"
 
+## -- Auto-rebuild on base CVE patch (design 018) --
+## Kill-switch OFF by default. Lineage is still captured on push when
+## Postgres is available; emission requires enabled=true + subscriptions.
+rebuild:
+  enabled: false
+
 ## -- Scanner (CVE scanning — runs in-process inside the registry) --
 ## When enabled, every manifest push enqueues a scan; workers materialize
 ## results to Redis (1h TTL) and Postgres (audit log + suppressions). The

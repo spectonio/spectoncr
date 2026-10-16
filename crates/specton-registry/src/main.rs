@@ -17,7 +17,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header, request::Parts},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, head, patch, post},
+    routing::{get, head, patch, post, put},
 };
 use base64::Engine as _;
 use bytes::Bytes;
@@ -3655,6 +3655,245 @@ async fn delete_verification_policy(
     }
 }
 
+// ── Auto-rebuild (018 R2) ────────────────────────────────────────────────────
+
+fn rebuild_enabled(state: &AppState) -> Result<(), RegistryError> {
+    if !state.config.rebuild.enabled {
+        return Err(RegistryError::Forbidden {
+            reason: "rebuild disabled ([rebuild].enabled=false)".into(),
+        });
+    }
+    Ok(())
+}
+
+fn rebuild_admin_authorize(claims: &TokenClaims) -> Result<(), RegistryError> {
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "rebuild admin endpoints require Admin role".into(),
+        });
+    }
+    Ok(())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RebuildTriggerBody {
+    tenant: String,
+    /// Subscription name within the tenant.
+    subscription: String,
+    upstream_ref: String,
+    downstream_ref: String,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    fixed_cves: Vec<String>,
+    #[serde(default = "default_severity")]
+    severity_max: String,
+}
+
+fn default_severity() -> String {
+    "high".into()
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RebuildSubPath {
+    tenant: String,
+    name: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RebuildSubUpsert {
+    #[serde(default)]
+    id: Option<Uuid>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    spec: specton_rebuild::SubscriptionSpec,
+}
+
+/// POST /v2/_rebuild/trigger — manual fire (admin).
+#[instrument(name = "rebuild_trigger", skip(state, claims))]
+async fn rebuild_trigger(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    axum::Json(body): axum::Json<RebuildTriggerBody>,
+) -> Result<Response, RegistryError> {
+    rebuild_enabled(&state)?;
+    rebuild_admin_authorize(&claims)?;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("rebuild store requires Postgres".into()))?;
+
+    use specton_rebuild::SubscriptionStore as _;
+    let sub = specton_rebuild::PgSubscriptionStore::new(pool.clone())
+        .get(&body.tenant, &body.subscription)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?
+        .ok_or_else(|| RegistryError::NameUnknown {
+            name: body.subscription.clone(),
+        })?;
+
+    if !sub.matches(&body.upstream_ref, &body.downstream_ref) {
+        return Err(RegistryError::Forbidden {
+            reason: "subscription watch does not match upstream/downstream".into(),
+        });
+    }
+
+    let trigger = match body.reason.as_deref() {
+        Some("base_pushed") => specton_rebuild::TriggerCause::BasePushed,
+        Some("cve_fixed") => specton_rebuild::TriggerCause::CveFixed,
+        Some("scheduled_nightly") => specton_rebuild::TriggerCause::ScheduledNightly,
+        _ => specton_rebuild::TriggerCause::Manual,
+    };
+
+    let svc = specton_rebuild::RebuildService::new(pool);
+    match svc
+        .fire(specton_rebuild::FireRequest {
+            subscription: sub,
+            upstream_ref: body.upstream_ref,
+            downstream_ref: body.downstream_ref,
+            trigger,
+            fixed_cves: body.fixed_cves,
+            severity_max: body.severity_max,
+        })
+        .await
+    {
+        Ok(result) => Ok((StatusCode::OK, axum::Json(result)).into_response()),
+        Err(e) => Ok((
+            StatusCode::BAD_GATEWAY,
+            axum::Json(serde_json::json!({
+                "status": "failed",
+                "error": e.to_string(),
+            })),
+        )
+            .into_response()),
+    }
+}
+
+/// GET /v2/_rebuild/subscriptions?tenant=
+#[instrument(name = "list_rebuild_subscriptions", skip(state, claims))]
+async fn list_rebuild_subscriptions(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, RegistryError> {
+    rebuild_enabled(&state)?;
+    let tenant = q.get("tenant").cloned().unwrap_or_else(|| "default".into());
+    // Admin or any authenticated reader for the tenant list.
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("rebuild store requires Postgres".into()))?;
+    use specton_rebuild::SubscriptionStore as _;
+    let rows = specton_rebuild::PgSubscriptionStore::new(pool)
+        .list_for_tenant(&tenant)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    let _ = &claims;
+    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "subscriptions": rows }))).into_response())
+}
+
+/// PUT /v2/_rebuild/subscriptions/{tenant}/{name}
+#[instrument(name = "upsert_rebuild_subscription", skip(state, claims))]
+async fn upsert_rebuild_subscription(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(path): Path<RebuildSubPath>,
+    axum::Json(body): axum::Json<RebuildSubUpsert>,
+) -> Result<Response, RegistryError> {
+    rebuild_enabled(&state)?;
+    rebuild_admin_authorize(&claims)?;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("rebuild store requires Postgres".into()))?;
+    let sub = specton_rebuild::RebuildSubscription {
+        id: body.id.unwrap_or_else(Uuid::new_v4),
+        tenant: path.tenant,
+        name: path.name,
+        spec: body.spec,
+        enabled: body.enabled.unwrap_or(true),
+        updated_at: chrono::Utc::now(),
+    };
+    use specton_rebuild::SubscriptionStore as _;
+    specton_rebuild::PgSubscriptionStore::new(pool)
+        .upsert(&sub)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    Ok((StatusCode::OK, axum::Json(sub)).into_response())
+}
+
+/// GET /v2/_rebuild/events?tenant=&limit=
+#[instrument(name = "list_rebuild_events", skip(state, claims))]
+async fn list_rebuild_events(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, RegistryError> {
+    rebuild_enabled(&state)?;
+    let _ = &claims;
+    let tenant = q.get("tenant").cloned().unwrap_or_else(|| "default".into());
+    let limit: i64 = q
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
+        .clamp(1, 500);
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("rebuild store requires Postgres".into()))?;
+    let events = specton_rebuild::RebuildService::new(pool)
+        .list_events(&tenant, limit)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "events": events }))).into_response())
+}
+
+/// GET /v2/_lineage/{digest}
+#[instrument(name = "get_lineage", skip(state, claims))]
+async fn get_lineage(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(digest): Path<String>,
+) -> Result<Response, RegistryError> {
+    let _ = &claims;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("lineage store requires Postgres".into()))?;
+    let parents: Vec<(String, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT parent_digest, confidence, detected_at
+         FROM image_lineage WHERE child_digest = $1
+         ORDER BY detected_at DESC",
+    )
+    .bind(&digest)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    let children: Vec<(String, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT child_digest, confidence, detected_at
+         FROM image_lineage WHERE parent_digest = $1
+         ORDER BY detected_at DESC
+         LIMIT 100",
+    )
+    .bind(&digest)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "digest": digest,
+            "parents": parents.iter().map(|(p, c, at)| serde_json::json!({
+                "parent_digest": p, "confidence": c, "detected_at": at
+            })).collect::<Vec<_>>(),
+            "children": children.iter().map(|(ch, c, at)| serde_json::json!({
+                "child_digest": ch, "confidence": c, "detected_at": at
+            })).collect::<Vec<_>>(),
+        })),
+    )
+        .into_response())
+}
+
 // ── Helper Functions ─────────────────────────────────────────────────────────
 
 /// Read a tag link. `Ok(None)` when the tag doesn't exist.
@@ -5463,6 +5702,15 @@ async fn main() -> anyhow::Result<()> {
                 .put(upsert_verification_policy)
                 .delete(delete_verification_policy),
         )
+        // Auto-rebuild (018 R2)
+        .route("/v2/_rebuild/trigger", post(rebuild_trigger))
+        .route("/v2/_rebuild/subscriptions", get(list_rebuild_subscriptions))
+        .route(
+            "/v2/_rebuild/subscriptions/{tenant}/{name}",
+            put(upsert_rebuild_subscription),
+        )
+        .route("/v2/_rebuild/events", get(list_rebuild_events))
+        .route("/v2/_lineage/{digest}", get(get_lineage))
         // Catalog
         .route("/v2/_catalog", get(catalog))
         // Online GC control plane (009 slice 2-3)

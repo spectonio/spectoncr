@@ -131,6 +131,9 @@ data:
       key_root: {{ .Values.signing.keyRoot | quote }}
       {{- end }}
 
+    rebuild:
+      enabled: {{ .Values.rebuild.enabled }}
+
   auth.yaml: |
     server:
       listen_addr: "0.0.0.0:{{ .Values.auth.port }}"

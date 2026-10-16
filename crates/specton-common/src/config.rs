@@ -26,6 +26,23 @@ pub struct RegistryConfig {
     /// Image signing / verification (design 001). Kill-switch OFF by default.
     #[serde(default)]
     pub signing: SigningConfig,
+    /// Auto-rebuild on base CVE patch (design 018). Kill-switch OFF by default.
+    #[serde(default)]
+    pub rebuild: RebuildConfig,
+}
+
+/// `[rebuild]` — design 018; kill-switch OFF by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RebuildConfig {
+    /// Master kill-switch. When false, rebuild APIs return forbidden.
+    pub enabled: bool,
+}
+
+impl Default for RebuildConfig {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
 }
 
 /// `[signing]` — design 001; kill-switch OFF by default.
@@ -767,6 +784,7 @@ impl Default for RegistryConfig {
             enterprise: EnterpriseAuthConfig::default(),
             audit: AuditConfig::default(),
             signing: SigningConfig::default(),
+            rebuild: RebuildConfig::default(),
         }
     }
 }

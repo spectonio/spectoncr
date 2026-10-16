@@ -429,4 +429,49 @@ mod tests {
         assert_eq!(wh, "webhook");
         assert_eq!(tk, "tekton-eventlistener");
     }
+
+    /// Mock GitHub API: one successful `repository_dispatch` per call.
+    #[tokio::test]
+    async fn github_dispatch_hits_mock_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits2 = hits.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = vec![0u8; 4096];
+            let n = sock.read(&mut buf).await.unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]);
+            assert!(req.contains("POST /repos/acme/api/dispatches"));
+            assert!(req.contains("rebuild-on-cve"));
+            hits2.fetch_add(1, Ordering::SeqCst);
+            let body = b"{}";
+            let resp = format!(
+                "HTTP/1.1 204 No Content\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            sock.write_all(resp.as_bytes()).await.unwrap();
+            sock.write_all(body).await.ok();
+        });
+
+        let emitter = GitHubDispatchEmitter::new("acme/api", "tok", "rebuild-on-cve")
+            .with_api_base(format!("http://{addr}"));
+        let status = emitter
+            .emit(&RebuildEvent {
+                trigger: TriggerCause::CveFixed,
+                fixed_cves: vec!["CVE-2026-1".into()],
+                upstream_ref: "debian:bookworm-slim".into(),
+                downstream_ref: "acme/prod/api:latest".into(),
+                severity_max: "high".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(status, "204");
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
 }

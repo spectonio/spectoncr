@@ -264,6 +264,110 @@ pub struct ImageVerificationPolicyStatus {
 }
 
 // ---------------------------------------------------------------------------
+// RebuildSubscription CRD (design 018 R2)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RebuildWatchSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bases: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub descendants: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RebuildTriggersSpec {
+    #[serde(default = "default_true")]
+    pub on_cve_fix: bool,
+    #[serde(default)]
+    pub on_base_push: bool,
+    #[serde(default = "default_min_sev")]
+    pub min_severity_fixed: String,
+}
+
+fn default_min_sev() -> String {
+    "high".into()
+}
+
+impl Default for RebuildTriggersSpec {
+    fn default() -> Self {
+        Self {
+            on_cve_fix: true,
+            on_base_push: false,
+            min_severity_fixed: default_min_sev(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RebuildEmitterSpec {
+    /// `github-dispatch` (R2). GitLab/Tekton/webhook in R3.
+    #[serde(rename = "type")]
+    pub type_: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
+    /// Secret name holding the GitHub PAT (key `token` by default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_secret_ref: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RebuildRateLimitSpec {
+    #[serde(default = "default_per_day")]
+    pub per_downstream_per_day: i32,
+}
+
+fn default_per_day() -> i32 {
+    1
+}
+
+impl Default for RebuildRateLimitSpec {
+    fn default() -> Self {
+        Self {
+            per_downstream_per_day: default_per_day(),
+        }
+    }
+}
+
+#[derive(CustomResource, Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[kube(
+    group = "spectoncr.io",
+    version = "v1alpha1",
+    kind = "RebuildSubscription",
+    plural = "rebuildsubscriptions",
+    shortname = "rsub",
+    status = "RebuildSubscriptionStatus",
+    namespaced
+)]
+#[serde(rename_all = "camelCase")]
+pub struct RebuildSubscriptionSpec {
+    pub tenant_ref: String,
+    #[serde(default)]
+    pub watch: RebuildWatchSpec,
+    #[serde(default)]
+    pub triggers: RebuildTriggersSpec,
+    pub emitter: RebuildEmitterSpec,
+    #[serde(default)]
+    pub rate_limit: RebuildRateLimitSpec,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+pub struct RebuildSubscriptionStatus {
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<Condition>,
+}
+
+// ---------------------------------------------------------------------------
 // Context shared across reconcilers
 // ---------------------------------------------------------------------------
 
@@ -973,6 +1077,125 @@ fn image_verification_policy_error_policy(
 }
 
 // ---------------------------------------------------------------------------
+// Reconcile: RebuildSubscription
+// ---------------------------------------------------------------------------
+
+async fn reconcile_rebuild_subscription(
+    sub: Arc<RebuildSubscription>,
+    ctx: Arc<Ctx>,
+) -> Result<Action, ControllerError> {
+    let name = sub.name_any();
+    let ns = sub.namespace().unwrap_or_default();
+    info!(%name, %ns, "reconciling RebuildSubscription");
+
+    let tenants: Api<Tenant> = Api::all(ctx.client.clone());
+    if tenants.get_opt(&sub.spec.tenant_ref).await?.is_none() {
+        return Err(ControllerError::Validation(format!(
+            "referenced Tenant '{}' not found",
+            sub.spec.tenant_ref
+        )));
+    }
+
+    if sub.spec.emitter.type_ != "github-dispatch" {
+        return Err(ControllerError::Validation(format!(
+            "emitter.type must be github-dispatch in R2 (got '{}')",
+            sub.spec.emitter.type_
+        )));
+    }
+    let repo = sub
+        .spec
+        .emitter
+        .repo
+        .clone()
+        .ok_or_else(|| ControllerError::Validation("emitter.repo required".into()))?;
+
+    let mut token: Option<String> = None;
+    if let Some(ref secret_name) = sub.spec.emitter.token_secret_ref {
+        let secrets: Api<k8s_openapi::api::core::v1::Secret> =
+            Api::namespaced(ctx.client.clone(), &ns);
+        let secret = secrets.get(secret_name).await?;
+        let data = secret.data.unwrap_or_default();
+        let bytes = data.get("token").ok_or_else(|| {
+            ControllerError::Validation(format!("secret {secret_name} missing key 'token'"))
+        })?;
+        token = Some(String::from_utf8_lossy(&bytes.0).into_owned());
+    }
+
+    let uid = sub.uid().unwrap_or_default();
+    let body = serde_json::json!({
+        "id": uid.to_string(),
+        "enabled": true,
+        "spec": {
+            "watch": {
+                "bases": sub.spec.watch.bases,
+                "descendants": sub.spec.watch.descendants,
+            },
+            "triggers": {
+                "on_cve_fix": sub.spec.triggers.on_cve_fix,
+                "on_base_push": sub.spec.triggers.on_base_push,
+                "min_severity_fixed": sub.spec.triggers.min_severity_fixed,
+            },
+            "emitter": {
+                "type": "github-dispatch",
+                "repo": repo,
+                "event_type": sub.spec.emitter.event_type.clone()
+                    .unwrap_or_else(|| "rebuild-on-cve".into()),
+                "workflow": sub.spec.emitter.workflow,
+                "token": token,
+            },
+            "rate_limit": {
+                "per_downstream_per_day": sub.spec.rate_limit.per_downstream_per_day,
+            },
+        }
+    });
+
+    if let Some(ref registry_url) = ctx.registry_service_url {
+        if let Err(e) = sync_to_registry(
+            &ctx.http,
+            registry_url,
+            &format!(
+                "/v2/_rebuild/subscriptions/{}/{}",
+                sub.spec.tenant_ref, name
+            ),
+            &body,
+            ctx.registry_admin_token.as_deref(),
+        )
+        .await
+        {
+            warn!(%name, error = %e, "failed to sync RebuildSubscription; will retry");
+            return Ok(Action::requeue(Duration::from_secs(30)));
+        }
+    } else {
+        info!(%name, "REGISTRY_SERVICE_URL unset; RebuildSubscription validated only");
+    }
+
+    let api: Api<RebuildSubscription> = Api::namespaced(ctx.client.clone(), &ns);
+    let now = Utc::now().to_rfc3339();
+    let status = serde_json::json!({
+        "phase": "Active",
+        "conditions": [{
+            "type": "Ready",
+            "status": "True",
+            "lastTransitionTime": now,
+            "reason": "Reconciled",
+            "message": "RebuildSubscription reconciled",
+        }]
+    });
+    update_status(&api, &name, status).await?;
+    Ok(Action::requeue(Duration::from_secs(300)))
+}
+
+fn rebuild_subscription_error_policy(
+    sub: Arc<RebuildSubscription>,
+    error: &ControllerError,
+    _ctx: Arc<Ctx>,
+) -> Action {
+    let name = sub.name_any();
+    error!(%name, %error, "rebuild-subscription reconciliation failed");
+    Action::requeue(Duration::from_secs(60))
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -1092,6 +1315,22 @@ async fn main() -> anyhow::Result<()> {
             }
         });
 
+    // --- RebuildSubscription controller (018 R2) ---
+    let rsubs: Api<RebuildSubscription> = Api::all(client.clone());
+    let rsub_ctrl = Controller::new(rsubs, WatcherConfig::default())
+        .shutdown_on_signal()
+        .run(
+            reconcile_rebuild_subscription,
+            rebuild_subscription_error_policy,
+            ctx.clone(),
+        )
+        .for_each(|res| async move {
+            match res {
+                Ok(o) => info!(resource = ?o, "rebuild-subscription reconciled"),
+                Err(e) => error!(error = %e, "rebuild-subscription reconcile loop error"),
+            }
+        });
+
     // --- SpectonRegistry lifecycle operator ---
     // Owned objects are watched too, so a Deployment finishing its rollout
     // (or someone editing it) triggers a reconcile of its SpectonRegistry.
@@ -1159,6 +1398,7 @@ async fn main() -> anyhow::Result<()> {
         () = access_ctrl => info!("access-policy controller exited"),
         () = token_ctrl => info!("token-policy controller exited"),
         () = ivp_ctrl => info!("image-verification-policy controller exited"),
+        () = rsub_ctrl => info!("rebuild-subscription controller exited"),
         () = registry_ctrl => info!("spectonregistry operator exited"),
     }
 

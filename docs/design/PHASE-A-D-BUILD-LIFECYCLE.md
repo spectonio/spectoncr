@@ -113,7 +113,7 @@ tells CI to rebuild — SpectonCR stays the trigger, not the builder.
 - `specton-rebuild`: lineage extractor, emitters stubs, rate_limit
 - Migration `0013_auto_rebuild.sql`
 
-### PR R2 — `feat(rebuild): subscriptions + GitHub dispatch + trigger API`
+### PR R2 — `feat(rebuild): subscriptions + GitHub dispatch + trigger API` ✅ landed locally
 - **Docs:** `018-auto-rebuild.md` §§b,c,d,i slice 2
 - **Deliver:** `RebuildSubscription` CRD/reconciler, GitHub
   `repository_dispatch` emitter, rate limit enforce, `POST /v2/_rebuild/trigger`,
