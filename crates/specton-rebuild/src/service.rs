@@ -5,7 +5,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::emitter::{
-    EmitError, GitHubDispatchEmitter, RebuildEmitter, RebuildEvent, TriggerCause,
+    EmitError, GenericWebhookEmitter, GitHubDispatchEmitter, GitLabPipelineEmitter,
+    RebuildEmitter, RebuildEvent, TektonEventListenerEmitter, TriggerCause,
 };
 use crate::rate_limit::RateLimit;
 use crate::subscription::{EmitterSpec, RebuildSubscription};
@@ -228,6 +229,56 @@ fn build_emitter(spec: &EmitterSpec) -> Result<Box<dyn RebuildEmitter>, FireErro
             let mut e = GitHubDispatchEmitter::new(repo, token, event_type);
             if let Some(base) = api_base {
                 e = e.with_api_base(base);
+            }
+            Ok(Box::new(e))
+        }
+        EmitterSpec::GitlabTrigger {
+            project,
+            ref_,
+            trigger_token,
+            api_base,
+        } => {
+            let token = trigger_token
+                .clone()
+                .or_else(|| std::env::var("GITLAB_TRIGGER_TOKEN").ok())
+                .ok_or_else(|| {
+                    FireError::Config(
+                        "gitlab-trigger requires trigger_token or GITLAB_TRIGGER_TOKEN".into(),
+                    )
+                })?;
+            let mut e = GitLabPipelineEmitter::new(project, token, ref_);
+            if let Some(base) = api_base {
+                e = e.with_api_base(base);
+            }
+            Ok(Box::new(e))
+        }
+        EmitterSpec::Webhook {
+            url,
+            hmac_secret,
+            header_name,
+        } => {
+            let secret = hmac_secret
+                .clone()
+                .or_else(|| std::env::var("REBUILD_WEBHOOK_HMAC").ok())
+                .ok_or_else(|| {
+                    FireError::Config(
+                        "webhook requires hmac_secret or REBUILD_WEBHOOK_HMAC".into(),
+                    )
+                })?;
+            let mut e = GenericWebhookEmitter::new(url, secret);
+            if let Some(name) = header_name {
+                e = e.with_header_name(name);
+            }
+            Ok(Box::new(e))
+        }
+        EmitterSpec::Tekton {
+            url,
+            auth_header_name,
+            auth_header_value,
+        } => {
+            let mut e = TektonEventListenerEmitter::new(url);
+            if let (Some(name), Some(value)) = (auth_header_name, auth_header_value) {
+                e = e.with_auth(name, value);
             }
             Ok(Box::new(e))
         }

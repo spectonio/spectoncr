@@ -120,7 +120,7 @@ tells CI to rebuild — SpectonCR stays the trigger, not the builder.
   lineage write on push
 - **Verify:** mock GH API receives dispatch once per day bucket
 
-### PR R3 — `feat(rebuild): GitLab + Tekton + webhook emitters + e2e`
+### PR R3 — `feat(rebuild): GitLab + Tekton + webhook emitters + e2e` ✅ landed locally
 - **Docs:** 018 slice 3
 - **Deliver:** remaining emitters, CLI/MCP tools, e2e script, docs recipes
 - **Verify:** patch base fixture → downstream event

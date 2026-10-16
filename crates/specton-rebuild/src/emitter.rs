@@ -1,15 +1,12 @@
 //! Rebuild event emitters.
 //!
-//! Slice 2 ships:
-//! - [`RebuildEmitter`] trait — the boundary every CI integration
-//!   implements (GitHub Dispatch / GitLab Triggers / Tekton /
-//!   generic webhook).
-//! - [`GitHubDispatchEmitter`] — concrete impl that POSTs a
-//!   `repository_dispatch` to GitHub's API.
-//! - [`RebuildEvent`] — the payload + JSON serialisation shared by
-//!   every emitter.
-//!
-//! GitLab / Tekton / generic webhook emitters land in slice 3.
+//! Emitters for every CI integration (design 018 R2–R3):
+//! - [`RebuildEmitter`] trait
+//! - [`GitHubDispatchEmitter`] — `repository_dispatch`
+//! - [`GitLabPipelineEmitter`] — pipeline trigger token
+//! - [`GenericWebhookEmitter`] — HMAC-signed JSON POST
+//! - [`TektonEventListenerEmitter`] — Tekton EventListener
+//! - [`RebuildEvent`] — shared payload
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -430,6 +427,34 @@ mod tests {
         assert_eq!(tk, "tekton-eventlistener");
     }
 
+    async fn mock_http_once(
+        expect_path_substr: &str,
+        status: u16,
+        resp_body: &str,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let expect = expect_path_substr.to_string();
+        let body = resp_body.to_string();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 8192];
+            let n = sock.read(&mut buf).await.unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]);
+            assert!(
+                req.contains(&expect),
+                "expected path containing {expect:?}, got:\n{req}"
+            );
+            let resp = format!(
+                "HTTP/1.1 {status} OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            sock.write_all(resp.as_bytes()).await.unwrap();
+        });
+        (format!("http://{addr}"), handle)
+    }
+
     /// Mock GitHub API: one successful `repository_dispatch` per call.
     #[tokio::test]
     async fn github_dispatch_hits_mock_once() {
@@ -473,5 +498,61 @@ mod tests {
             .unwrap();
         assert_eq!(status, "204");
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn gitlab_pipeline_hits_mock() {
+        let (base, handle) =
+            mock_http_once("/api/v4/projects/42/trigger/pipeline", 201, r#"{"id":1}"#).await;
+        let emitter = GitLabPipelineEmitter::new("42", "tok", "main").with_api_base(&base);
+        let status = emitter
+            .emit(&RebuildEvent {
+                trigger: TriggerCause::CveFixed,
+                fixed_cves: vec!["CVE-2026-2".into()],
+                upstream_ref: "debian:bookworm-slim".into(),
+                downstream_ref: "acme/api:latest".into(),
+                severity_max: "high".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(status, "201");
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn webhook_hits_mock_with_signature() {
+        let (base, handle) = mock_http_once("POST /hooks/rebuild", 200, "ok").await;
+        let url = format!("{base}/hooks/rebuild");
+        let emitter = GenericWebhookEmitter::new(&url, "s3cret");
+        let status = emitter
+            .emit(&RebuildEvent {
+                trigger: TriggerCause::Manual,
+                fixed_cves: vec![],
+                upstream_ref: "x".into(),
+                downstream_ref: "y".into(),
+                severity_max: "low".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(status, "200");
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn tekton_hits_mock() {
+        let (base, handle) = mock_http_once("POST /", 202, "").await;
+        let emitter = TektonEventListenerEmitter::new(&base).with_auth("Authorization", "Bearer t");
+        let status = emitter
+            .emit(&RebuildEvent {
+                trigger: TriggerCause::BasePushed,
+                fixed_cves: vec![],
+                upstream_ref: "alpine:3.20".into(),
+                downstream_ref: "acme/svc:1".into(),
+                severity_max: "medium".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(status, "202");
+        handle.await.unwrap();
     }
 }

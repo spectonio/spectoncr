@@ -3,7 +3,7 @@
 //! - **R1:** lineage extractor + schema
 //! - **R2:** subscriptions store, GitHub dispatch fire path, rate limit,
 //!   registry `/v2/_rebuild/*` + `/v2/_lineage/{digest}`
-//! - **R3:** GitLab / Tekton / webhook emitters (stubs already present)
+//! - **R3:** GitLab / Tekton / webhook emitters wired end-to-end
 
 pub mod emitter;
 pub mod lineage;

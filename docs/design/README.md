@@ -44,7 +44,7 @@ telemetry, auto-rebuild, AI agent).
 | 015 | SLSA provenance + in-toto        | [015-slsa-provenance.md](./015-slsa-provenance.md) | proposed | 3 slices |
 | 016 | Typed artifacts (Helm/WASM/AI/TF) | [016-typed-artifacts.md](./016-typed-artifacts.md) | proposed | 4 slices |
 | 017 | Cost & pull-telemetry            | [017-cost-telemetry.md](./017-cost-telemetry.md) | proposed | 3 slices |
-| 018 | Auto-rebuild on base CVE patch   | [018-auto-rebuild.md](./018-auto-rebuild.md)   | in-progress (R1–R2) | 3 slices |
+| 018 | Auto-rebuild on base CVE patch   | [018-auto-rebuild.md](./018-auto-rebuild.md)   | in-progress (R1–R3) | 3 slices |
 | 019 | AI agent (`specton-pilot`)        | [019-ai-agent.md](./019-ai-agent.md)           | proposed | 5 slices |
 
 A "slice" is calibrated against the scanner work — each is roughly one week

@@ -304,9 +304,10 @@ impl Default for RebuildTriggersSpec {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RebuildEmitterSpec {
-    /// `github-dispatch` (R2). GitLab/Tekton/webhook in R3.
+    /// `github-dispatch` | `gitlab-trigger` | `webhook` | `tekton`
     #[serde(rename = "type")]
     pub type_: String,
+    // GitHub
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -316,6 +317,26 @@ pub struct RebuildEmitterSpec {
     /// Secret name holding the GitHub PAT (key `token` by default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_secret_ref: Option<String>,
+    // GitLab
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "ref")]
+    pub git_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_token_secret_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_base: Option<String>,
+    // Webhook / Tekton
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hmac_secret_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_secret_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_header_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -1080,6 +1101,105 @@ fn image_verification_policy_error_policy(
 // Reconcile: RebuildSubscription
 // ---------------------------------------------------------------------------
 
+async fn read_secret_key(
+    client: &Client,
+    ns: &str,
+    secret_name: &str,
+    key: &str,
+) -> Result<String, ControllerError> {
+    let secrets: Api<k8s_openapi::api::core::v1::Secret> = Api::namespaced(client.clone(), ns);
+    let secret = secrets.get(secret_name).await?;
+    let data = secret.data.unwrap_or_default();
+    let bytes = data.get(key).ok_or_else(|| {
+        ControllerError::Validation(format!("secret {secret_name} missing key '{key}'"))
+    })?;
+    Ok(String::from_utf8_lossy(&bytes.0).into_owned())
+}
+
+async fn build_rebuild_emitter_json(
+    sub: &RebuildSubscription,
+    ctx: &Ctx,
+    ns: &str,
+) -> Result<serde_json::Value, ControllerError> {
+    let emitter = &sub.spec.emitter;
+    match emitter.type_.as_str() {
+        "github-dispatch" => {
+            let repo = emitter
+                .repo
+                .clone()
+                .ok_or_else(|| ControllerError::Validation("emitter.repo required".into()))?;
+            let mut token: Option<String> = None;
+            if let Some(ref secret_name) = emitter.token_secret_ref {
+                token = Some(read_secret_key(&ctx.client, ns, secret_name, "token").await?);
+            }
+            Ok(serde_json::json!({
+                "type": "github-dispatch",
+                "repo": repo,
+                "event_type": emitter.event_type.clone()
+                    .unwrap_or_else(|| "rebuild-on-cve".into()),
+                "workflow": emitter.workflow,
+                "token": token,
+                "api_base": emitter.api_base,
+            }))
+        }
+        "gitlab-trigger" => {
+            let project = emitter
+                .project
+                .clone()
+                .ok_or_else(|| ControllerError::Validation("emitter.project required".into()))?;
+            let mut trigger_token: Option<String> = None;
+            if let Some(ref secret_name) = emitter.trigger_token_secret_ref {
+                trigger_token =
+                    Some(read_secret_key(&ctx.client, ns, secret_name, "token").await?);
+            }
+            Ok(serde_json::json!({
+                "type": "gitlab-trigger",
+                "project": project,
+                "ref": emitter.git_ref.clone().unwrap_or_else(|| "main".into()),
+                "trigger_token": trigger_token,
+                "api_base": emitter.api_base,
+            }))
+        }
+        "webhook" => {
+            let url = emitter
+                .url
+                .clone()
+                .ok_or_else(|| ControllerError::Validation("emitter.url required".into()))?;
+            let mut hmac_secret: Option<String> = None;
+            if let Some(ref secret_name) = emitter.hmac_secret_ref {
+                hmac_secret =
+                    Some(read_secret_key(&ctx.client, ns, secret_name, "secret").await?);
+            }
+            Ok(serde_json::json!({
+                "type": "webhook",
+                "url": url,
+                "hmac_secret": hmac_secret,
+                "header_name": emitter.header_name,
+            }))
+        }
+        "tekton" => {
+            let url = emitter
+                .url
+                .clone()
+                .ok_or_else(|| ControllerError::Validation("emitter.url required".into()))?;
+            let mut auth_header_value: Option<String> = None;
+            if let Some(ref secret_name) = emitter.auth_secret_ref {
+                auth_header_value =
+                    Some(read_secret_key(&ctx.client, ns, secret_name, "token").await?);
+            }
+            Ok(serde_json::json!({
+                "type": "tekton",
+                "url": url,
+                "auth_header_name": emitter.auth_header_name,
+                "auth_header_value": auth_header_value,
+            }))
+        }
+        other => Err(ControllerError::Validation(format!(
+            "emitter.type must be github-dispatch|gitlab-trigger|webhook|tekton (got '{other}')"
+        ))),
+    }
+}
+
 async fn reconcile_rebuild_subscription(
     sub: Arc<RebuildSubscription>,
     ctx: Arc<Ctx>,
@@ -1096,30 +1216,7 @@ async fn reconcile_rebuild_subscription(
         )));
     }
 
-    if sub.spec.emitter.type_ != "github-dispatch" {
-        return Err(ControllerError::Validation(format!(
-            "emitter.type must be github-dispatch in R2 (got '{}')",
-            sub.spec.emitter.type_
-        )));
-    }
-    let repo = sub
-        .spec
-        .emitter
-        .repo
-        .clone()
-        .ok_or_else(|| ControllerError::Validation("emitter.repo required".into()))?;
-
-    let mut token: Option<String> = None;
-    if let Some(ref secret_name) = sub.spec.emitter.token_secret_ref {
-        let secrets: Api<k8s_openapi::api::core::v1::Secret> =
-            Api::namespaced(ctx.client.clone(), &ns);
-        let secret = secrets.get(secret_name).await?;
-        let data = secret.data.unwrap_or_default();
-        let bytes = data.get("token").ok_or_else(|| {
-            ControllerError::Validation(format!("secret {secret_name} missing key 'token'"))
-        })?;
-        token = Some(String::from_utf8_lossy(&bytes.0).into_owned());
-    }
+    let emitter_json = build_rebuild_emitter_json(&sub, &ctx, &ns).await?;
 
     let uid = sub.uid().unwrap_or_default();
     let body = serde_json::json!({
@@ -1135,14 +1232,7 @@ async fn reconcile_rebuild_subscription(
                 "on_base_push": sub.spec.triggers.on_base_push,
                 "min_severity_fixed": sub.spec.triggers.min_severity_fixed,
             },
-            "emitter": {
-                "type": "github-dispatch",
-                "repo": repo,
-                "event_type": sub.spec.emitter.event_type.clone()
-                    .unwrap_or_else(|| "rebuild-on-cve".into()),
-                "workflow": sub.spec.emitter.workflow,
-                "token": token,
-            },
+            "emitter": emitter_json,
             "rate_limit": {
                 "per_downstream_per_day": sub.spec.rate_limit.per_downstream_per_day,
             },

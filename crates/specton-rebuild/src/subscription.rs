@@ -58,6 +58,36 @@ pub enum EmitterSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         api_base: Option<String>,
     },
+    #[serde(rename = "gitlab-trigger")]
+    GitlabTrigger {
+        project: String,
+        #[serde(default = "default_gitlab_ref", rename = "ref")]
+        ref_: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger_token: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        api_base: Option<String>,
+    },
+    #[serde(rename = "webhook")]
+    Webhook {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hmac_secret: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        header_name: Option<String>,
+    },
+    #[serde(rename = "tekton")]
+    Tekton {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth_header_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth_header_value: Option<String>,
+    },
+}
+
+fn default_gitlab_ref() -> String {
+    "main".into()
 }
 
 fn default_event_type() -> String {

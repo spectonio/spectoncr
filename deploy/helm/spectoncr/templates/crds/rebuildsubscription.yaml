@@ -83,7 +83,8 @@ spec:
                   properties:
                     type:
                       type: string
-                      enum: [github-dispatch]
+                      enum: [github-dispatch, gitlab-trigger, webhook, tekton]
+                    # GitHub
                     repo:
                       type: string
                     workflow:
@@ -91,6 +92,26 @@ spec:
                     eventType:
                       type: string
                     tokenSecretRef:
+                      type: string
+                    # GitLab
+                    project:
+                      type: string
+                    ref:
+                      type: string
+                    triggerTokenSecretRef:
+                      type: string
+                    apiBase:
+                      type: string
+                    # Webhook / Tekton
+                    url:
+                      type: string
+                    hmacSecretRef:
+                      type: string
+                    headerName:
+                      type: string
+                    authSecretRef:
+                      type: string
+                    authHeaderName:
                       type: string
                 rateLimit:
                   type: object
