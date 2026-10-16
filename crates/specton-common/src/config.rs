@@ -35,6 +35,9 @@ pub struct RegistryConfig {
     /// Pull-time admission gate (design 002). Kill-switch OFF by default.
     #[serde(default)]
     pub admission: AdmissionConfig,
+    /// AI agent HTTP chat surface (design 019). Kill-switch OFF by default.
+    #[serde(default)]
+    pub pilot: PilotConfig,
 }
 
 /// `[admission]` — design 002; kill-switch OFF by default.
@@ -62,11 +65,43 @@ impl Default for AdmissionConfig {
 pub struct PromotionConfig {
     /// Master kill-switch. When false, `/v2/_promote` returns forbidden.
     pub enabled: bool,
+    /// Optional second object-store for true cross-backend promote.
+    /// When set, destination blobs/manifests/tags are written here while
+    /// source reads use the primary `[storage]` backend.
+    pub dest_storage: Option<StorageConfig>,
 }
 
 impl Default for PromotionConfig {
     fn default() -> Self {
-        Self { enabled: false }
+        Self {
+            enabled: false,
+            dest_storage: None,
+        }
+    }
+}
+
+/// `[pilot]` — design 019 HTTP chat surface; kill-switch OFF by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PilotConfig {
+    /// Master kill-switch. When false, `/v2/_pilot/*` returns forbidden.
+    pub enabled: bool,
+    /// LLM backend: `anthropic` | `openai` | `ollama` | `echo` (no external LLM).
+    pub backend: String,
+    /// Model id for the chosen backend.
+    pub model: String,
+    /// Daily token budget per tenant (0 = unlimited).
+    pub tokens_per_day: u64,
+}
+
+impl Default for PilotConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            backend: "echo".into(),
+            model: "echo".into(),
+            tokens_per_day: 500_000,
+        }
     }
 }
 
@@ -826,6 +861,7 @@ impl Default for RegistryConfig {
             rebuild: RebuildConfig::default(),
             promotion: PromotionConfig::default(),
             admission: AdmissionConfig::default(),
+            pilot: PilotConfig::default(),
         }
     }
 }

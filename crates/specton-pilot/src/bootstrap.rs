@@ -7,8 +7,9 @@ use sqlx::PgPool;
 use crate::client::RegistryClient;
 use crate::registry::ToolRegistry;
 use crate::tools::{
-    EvaluateAdmissionTool, InspectImageTool, ListFindingsTool, ListRepositoriesTool, PingTool,
-    PromoteTagTool, QueryAuditTool, TriggerRebuildTool, TriggerScanTool,
+    EvaluateAdmissionTool, InspectImageTool, ListFindingsTool, ListRepositoriesTool, PauseGcTool,
+    PingTool, PromoteTagTool, QueryAuditTool, ResumeGcTool, RunGcReconcileTool,
+    SuppressFindingTool, TriggerRebuildTool, TriggerScanTool, UnsuppressFindingTool,
 };
 
 pub fn default_tools(client: Arc<RegistryClient>, pool: Option<PgPool>) -> ToolRegistry {
@@ -36,5 +37,20 @@ pub fn default_tools(client: Arc<RegistryClient>, pool: Option<PgPool>) -> ToolR
         .register(TriggerScanTool {
             client: client.clone(),
         })
-        .register(EvaluateAdmissionTool { client })
+        .register(EvaluateAdmissionTool {
+            client: client.clone(),
+        })
+        .register(SuppressFindingTool {
+            client: client.clone(),
+        })
+        .register(UnsuppressFindingTool {
+            client: client.clone(),
+        })
+        .register(RunGcReconcileTool {
+            client: client.clone(),
+        })
+        .register(PauseGcTool {
+            client: client.clone(),
+        })
+        .register(ResumeGcTool { client })
 }

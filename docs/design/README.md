@@ -27,8 +27,8 @@ telemetry, auto-rebuild, AI agent).
 | 003 | Tag immutability + quarantine    | [003-tag-immutability-quarantine.md](./003-tag-immutability-quarantine.md) | proposed | 3 slices |
 | 004 | Garbage collection + retention   | [004-gc-retention.md](./004-gc-retention.md)   | proposed | 4 slices |
 | 005 | Append-only signed audit log     | [005-audit-log.md](./005-audit-log.md)         | shipped (A1–A3) | 3 slices |
-| 006 | Atomic promotion API             | [006-promotion-api.md](./006-promotion-api.md) | in-progress (C1–C3) | 3 slices |
-| 007 | Web UI parity                    | [007-web-ui-parity.md](./007-web-ui-parity.md) | proposed | 4 slices |
+| 006 | Atomic promotion API             | [006-promotion-api.md](./006-promotion-api.md) | in-progress (C1–C3; cross-backend dest_storage) | 3 slices |
+| 007 | Web UI parity                    | [007-web-ui-parity.md](./007-web-ui-parity.md) | in-progress (pilot chat sidebar) | 4 slices |
 | 008 | CMK / envelope encryption at rest | [008-cmk-encryption-at-rest.md](./008-cmk-encryption-at-rest.md) | proposed | 4 slices |
 
 ### Open-source-launch differentiators (009–019)

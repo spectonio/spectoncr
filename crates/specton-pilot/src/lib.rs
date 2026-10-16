@@ -3,9 +3,9 @@
 //! - **P1b:** read-only tools (`list_repositories`, `inspect_image`,
 //!   `query_audit`, `get_scan_findings`)
 //! - **P2:** mutating tools (`trigger_rebuild`, `promote_tag`,
-//!   `trigger_scan`, `evaluate_admission`) with dry-run
+//!   `trigger_scan`, `evaluate_admission`, suppress, GC) with dry-run
 //! - **P3:** MCP server + CLI REPL binaries
-//! - **P4:** spend caps (`budget`) + audited invoke wrapper
+//! - **P4:** spend caps (`budget`) + audited invoke + `/v2/_pilot/chat`
 
 pub mod bootstrap;
 pub mod budget;

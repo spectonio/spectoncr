@@ -136,7 +136,7 @@ pulls blocked unless policy (scan + signature) passes.
 | PR | Title | Depends |
 |----|-------|---------|
 | C1 | Same-backend retag `_promote` + schema + CLI | A2 | ✅ landed locally |
-| C2 | Cross-backend copy + copy signatures | B3, C1 | ✅ landed with C1 (same-store copy + sigs) |
+| C2 | Cross-backend copy + copy signatures | B3, C1 | ✅ landed (same-store + optional `promotion.dest_storage`) |
 | C3 | `OnPolicyPass` + history + dashboard | C2, admission slice 1 | ✅ landed locally (history + on_policy_pass) |
 
 ### Admission (002)
@@ -166,16 +166,16 @@ inspect → rebuild → promote with RBAC, dry-run, and audit.
 - **Depends on:** A2 for real `query_audit`
 
 ### PR P2 — `feat(pilot): mutating tools + dry-run + approval` ✅ landed locally
-- `trigger_scan`, `suppress_finding`, `trigger_rebuild`, `promote_tag`,
-  `run_gc_reconcile`, destructive deletes with confirm phrase
+- `trigger_scan`, `suppress_finding`/`unsuppress_finding`, `trigger_rebuild`,
+  `promote_tag`, `run_gc_reconcile`/`pause_gc`/`resume_gc`
 - **Depends on:** R2, C1, A2
 
 ### PR P3 — `feat(pilot): MCP server specton-mcp + CLI REPL` ✅ landed locally
 - Each Tool → MCP tool; `spectoncr pilot --once "…"`
 - Cursor/Claude Code can drive rebuild+promote
 
-### PR P4 — `feat(pilot): spend caps + audit integration + dashboard chat hook` ✅ landed locally (budget + audited invoke; dashboard sidebar deferred to 007)
-- Token budget, every tool invoke → `registry_audit_log`, UI sidebar stub for 007
+### PR P4 — `feat(pilot): spend caps + audit integration + dashboard chat hook` ✅ landed locally
+- Token budget, `/v2/_pilot/chat` + `/v2/_pilot/tools`, dashboard `PilotSidebar`
 
 ---
 

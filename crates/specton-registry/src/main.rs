@@ -6,6 +6,7 @@
 mod admission;
 mod audit;
 mod dashboard;
+mod pilot_http;
 mod promote;
 mod webhook;
 
@@ -65,6 +66,67 @@ use specton_scanner::{
     ScannerRuntime, config::ScannerConfig, model::ScanJob, queue::Queue as ScanQueue,
 };
 
+/// Build an object store from a [`specton_common::config::StorageConfig`].
+fn build_object_store(
+    cfg: &specton_common::config::StorageConfig,
+) -> anyhow::Result<Arc<dyn ObjectStore>> {
+    let backend = cfg.backend.as_str();
+    let root = &cfg.root;
+    let raw: Arc<dyn ObjectStore> = match backend {
+        "filesystem" => {
+            std::fs::create_dir_all(root)?;
+            Arc::new(LocalFileSystem::new_with_prefix(root)?)
+        }
+        "s3" | "minio" => {
+            let mut builder = AmazonS3Builder::new()
+                .with_bucket_name(root)
+                .with_retry(ObjectStoreRetryConfig {
+                    max_retries: cfg.retry_max_retries,
+                    retry_timeout: Duration::from_secs(cfg.retry_timeout_secs),
+                    ..Default::default()
+                })
+                .with_client_options(
+                    ClientOptions::new()
+                        .with_connect_timeout(Duration::from_secs(cfg.connect_timeout_secs))
+                        .with_timeout(Duration::from_secs(cfg.request_timeout_secs)),
+                );
+            if let Some(ref endpoint) = cfg.endpoint {
+                builder = builder.with_endpoint(endpoint);
+                builder = builder.with_virtual_hosted_style_request(false);
+            }
+            if let Some(ref region) = cfg.region {
+                builder = builder.with_region(region);
+            }
+            if let Some(ref access_key) = cfg.access_key {
+                builder = builder.with_access_key_id(access_key);
+            }
+            if let Some(ref secret_key) = cfg.secret_key {
+                builder = builder.with_secret_access_key(secret_key);
+            }
+            if backend == "minio" {
+                builder = builder.with_virtual_hosted_style_request(false);
+                builder = builder.with_allow_http(true);
+            }
+            Arc::new(builder.build()?)
+        }
+        "gcs" => Arc::new(GoogleCloudStorageBuilder::new().with_bucket_name(root).build()?),
+        "azure" => {
+            let mut builder = MicrosoftAzureBuilder::new().with_container_name(root);
+            if let Some(ref access_key) = cfg.access_key {
+                builder = builder.with_account(access_key);
+            }
+            if let Some(ref secret_key) = cfg.secret_key {
+                builder = builder.with_access_key(secret_key);
+            }
+            Arc::new(builder.build()?)
+        }
+        other => anyhow::bail!(
+            "Unsupported storage backend: '{other}'. Supported: filesystem, s3, minio, gcs, azure"
+        ),
+    };
+    Ok(raw)
+}
+
 // ── Application State ────────────────────────────────────────────────────────
 
 type KeyedRateLimiter = RateLimiter<String, DefaultKeyedStateStore<String>, DefaultClock>;
@@ -121,6 +183,10 @@ struct AppState {
     scan_store: Option<Arc<dyn specton_scanner::EphemeralStore>>,
     /// Admission decision cache (002).
     admission_cache: Arc<admission::DecisionCache>,
+    /// Optional second object store for cross-backend promote (006).
+    promote_dest_store: Option<Arc<dyn ObjectStore>>,
+    /// Per-tenant LLM spend tracker for `/v2/_pilot/chat` (019).
+    pilot_budget: Option<Arc<specton_pilot::BudgetTracker>>,
     /// Process start time for uptime tracking.
     #[allow(dead_code)]
     start_time: Instant,
@@ -4123,6 +4189,7 @@ async fn promote_handler(
 
     let outcome = promote::promote(promote::PromoteParams {
         store: &state.store,
+        dest_store: state.promote_dest_store.as_ref(),
         pool: state.gc_pool.as_ref(),
         actor: &claims.sub,
         req: &req,
@@ -5598,6 +5665,20 @@ async fn main() -> anyhow::Result<()> {
 
     info!(backend = %storage_backend, root = %storage_root, "Storage backend initialized");
 
+    // Optional second store for true cross-backend promote (design 006).
+    let promote_dest_store: Option<Arc<dyn ObjectStore>> =
+        if let Some(ref dest_cfg) = config.promotion.dest_storage {
+            let dest = build_object_store(dest_cfg)?;
+            info!(
+                backend = %dest_cfg.backend,
+                root = %dest_cfg.root,
+                "Promotion dest storage backend initialized"
+            );
+            Some(dest)
+        } else {
+            None
+        };
+
     // Load JWT verification key — fail hard if key is missing or invalid.
     // A silent fallback to a dummy key causes all token validation to fail
     // after pod restart, making pushes return 401 with no diagnostic info.
@@ -6158,6 +6239,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let admission_ttl = config.admission.cache_ttl_secs;
+    let pilot_budget = if config.pilot.enabled && config.pilot.tokens_per_day > 0 {
+        Some(Arc::new(specton_pilot::BudgetTracker::new(
+            specton_pilot::SpendCap {
+                tokens_per_day: config.pilot.tokens_per_day,
+            },
+        )))
+    } else {
+        None
+    };
     let state = AppState {
         store,
         config: Arc::new(config),
@@ -6180,6 +6270,8 @@ async fn main() -> anyhow::Result<()> {
         audit_export,
         scan_store,
         admission_cache: Arc::new(admission::DecisionCache::new(admission_ttl)),
+        promote_dest_store,
+        pilot_budget,
         start_time,
     };
 
@@ -6321,6 +6413,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/v2/_promote", post(promote_handler))
         .route("/v2/_promote/history", get(promote_history))
         .route("/v2/_promote/{id}", get(promote_status))
+        .route("/v2/_pilot/chat", post(pilot_http::pilot_chat))
+        .route("/v2/_pilot/tools", get(pilot_http::pilot_tools))
         // Admission gate (002)
         .route("/v2/_admit/test", post(admit_test))
         .route("/v2/_admit/policies", get(list_admission_policies))

@@ -136,10 +136,27 @@ data:
 
     promotion:
       enabled: {{ .Values.promotion.enabled }}
+      {{- if .Values.promotion.destStorage }}
+      dest_storage:
+        backend: {{ .Values.promotion.destStorage.backend | quote }}
+        root: {{ .Values.promotion.destStorage.root | quote }}
+        {{- if .Values.promotion.destStorage.endpoint }}
+        endpoint: {{ .Values.promotion.destStorage.endpoint | quote }}
+        {{- end }}
+        {{- if .Values.promotion.destStorage.region }}
+        region: {{ .Values.promotion.destStorage.region | quote }}
+        {{- end }}
+      {{- end }}
 
     admission:
       enabled: {{ .Values.admission.enabled }}
       cache_ttl_secs: {{ .Values.admission.cacheTtlSecs }}
+
+    pilot:
+      enabled: {{ .Values.pilot.enabled }}
+      backend: {{ .Values.pilot.backend | quote }}
+      model: {{ .Values.pilot.model | quote }}
+      tokens_per_day: {{ .Values.pilot.tokensPerDay }}
 
   auth.yaml: |
     server:

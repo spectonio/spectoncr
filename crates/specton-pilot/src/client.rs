@@ -77,4 +77,24 @@ impl RegistryClient {
         }
         Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
     }
+
+    pub async fn delete_json(&self, path: &str) -> Result<Value, String> {
+        let url = format!("{}{path}", self.base);
+        let resp = self
+            .http
+            .delete(&url)
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = resp.status();
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        if !status.is_success() {
+            return Err(format!("{status}: {text}"));
+        }
+        if text.is_empty() {
+            return Ok(Value::Null);
+        }
+        Ok(serde_json::from_str(&text).unwrap_or(Value::String(text)))
+    }
 }

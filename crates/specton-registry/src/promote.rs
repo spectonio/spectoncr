@@ -1,7 +1,9 @@
-//! Atomic promotion (design 006 C1).
+//! Atomic promotion (design 006 C1+C2).
 //!
 //! Same object-store: copy blobs/manifests via `ObjectStore::copy` (or
 //! get+put fallback), then write the dest tag link last.
+//! Cross-backend: when `dest_store` differs, stream get→put from source
+//! store into the destination store.
 
 use std::sync::Arc;
 
@@ -169,46 +171,48 @@ async fn store_exists(store: &dyn ObjectStore, path: &str) -> Result<bool, Regis
 }
 
 async fn copy_object(
-    store: &dyn ObjectStore,
+    src: &dyn ObjectStore,
+    dst: &dyn ObjectStore,
     from: &str,
     to: &str,
+    same_store: bool,
 ) -> Result<u64, RegistryError> {
-    if from == to {
-        let meta = store
+    if same_store && from == to {
+        let meta = src
             .head(&StorePath::from(from))
             .await
             .map_err(|e| RegistryError::Storage(e.to_string()))?;
         return Ok(meta.size as u64);
     }
-    if store_exists(store, to).await? {
-        let meta = store
+    if store_exists(dst, to).await? {
+        let meta = dst
             .head(&StorePath::from(to))
             .await
             .map_err(|e| RegistryError::Storage(e.to_string()))?;
         return Ok(meta.size as u64);
     }
-    // Prefer native copy; fall back to get+put for backends that lack rename.
-    match store
-        .copy(&StorePath::from(from), &StorePath::from(to))
-        .await
-    {
-        Ok(()) => {
-            let meta = store
-                .head(&StorePath::from(to))
-                .await
-                .map_err(|e| RegistryError::Storage(e.to_string()))?;
-            Ok(meta.size as u64)
-        }
-        Err(_) => {
-            let bytes = store_get(store, from).await?;
-            let n = bytes.len() as u64;
-            store
-                .put(&StorePath::from(to), bytes.into())
-                .await
-                .map_err(|e| RegistryError::Storage(e.to_string()))?;
-            Ok(n)
+    // Same-backend: prefer native copy; cross-backend or fallback: get+put.
+    if same_store {
+        match src
+            .copy(&StorePath::from(from), &StorePath::from(to))
+            .await
+        {
+            Ok(()) => {
+                let meta = dst
+                    .head(&StorePath::from(to))
+                    .await
+                    .map_err(|e| RegistryError::Storage(e.to_string()))?;
+                return Ok(meta.size as u64);
+            }
+            Err(_) => { /* fall through to get+put */ }
         }
     }
+    let bytes = store_get(src, from).await?;
+    let n = bytes.len() as u64;
+    dst.put(&StorePath::from(to), bytes.into())
+        .await
+        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+    Ok(n)
 }
 
 async fn resolve_digest(
@@ -243,6 +247,9 @@ async fn resolve_digest(
 
 pub struct PromoteParams<'a> {
     pub store: &'a Arc<dyn ObjectStore>,
+    /// Optional second object store for true cross-backend promote.
+    /// When `None`, dest writes use `store` (same-backend path).
+    pub dest_store: Option<&'a Arc<dyn ObjectStore>>,
     pub pool: Option<&'a sqlx::PgPool>,
     pub actor: &'a str,
     pub req: &'a PromoteRequest,
@@ -254,7 +261,16 @@ pub async fn promote(p: PromoteParams<'_>) -> Result<PromoteOutcome, RegistryErr
     // OnPolicyPass is evaluated by the HTTP handler before calling promote
     // (needs admission policies + scan results from AppState).
 
-    let (src_digest, manifest_bytes) = resolve_digest(p.store.as_ref(), &p.req.source).await?;
+    let src_store = p.store.as_ref();
+    let dst_arc = p.dest_store.unwrap_or(p.store);
+    let dst_store = dst_arc.as_ref();
+    let same_store = p.dest_store.is_none()
+        || std::ptr::eq(
+            Arc::as_ptr(p.store) as *const (),
+            Arc::as_ptr(dst_arc) as *const (),
+        );
+
+    let (src_digest, manifest_bytes) = resolve_digest(src_store, &p.req.source).await?;
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).map_err(|e| {
         RegistryError::ManifestInvalid {
             reason: e.to_string(),
@@ -309,11 +325,13 @@ pub async fn promote(p: PromoteParams<'_>) -> Result<PromoteOutcome, RegistryErr
         let src_man = manifest_path(&src.tenant, &src.project, &src.repository, dig);
         let dst_man = manifest_path(&dst.tenant, &dst.project, &dst.repository, dig);
 
-        if store_exists(p.store.as_ref(), &src_blob).await? {
-            bytes_copied += copy_object(p.store.as_ref(), &src_blob, &dst_blob).await?;
+        if store_exists(src_store, &src_blob).await? {
+            bytes_copied +=
+                copy_object(src_store, dst_store, &src_blob, &dst_blob, same_store).await?;
             blob_count += 1;
-        } else if store_exists(p.store.as_ref(), &src_man).await? {
-            bytes_copied += copy_object(p.store.as_ref(), &src_man, &dst_man).await?;
+        } else if store_exists(src_store, &src_man).await? {
+            bytes_copied +=
+                copy_object(src_store, dst_store, &src_man, &dst_man, same_store).await?;
             blob_count += 1;
         } else {
             return Err(RegistryError::BlobUnknown {
@@ -325,7 +343,8 @@ pub async fn promote(p: PromoteParams<'_>) -> Result<PromoteOutcome, RegistryErr
     // Manifest by digest at dest
     let dst_manifest = manifest_path(&dst.tenant, &dst.project, &dst.repository, &src_digest);
     let src_manifest = manifest_path(&src.tenant, &src.project, &src.repository, &src_digest);
-    bytes_copied += copy_object(p.store.as_ref(), &src_manifest, &dst_manifest).await?;
+    bytes_copied +=
+        copy_object(src_store, dst_store, &src_manifest, &dst_manifest, same_store).await?;
 
     let mut signatures_copied: u32 = 0;
     if p.req.include_signatures {
@@ -334,8 +353,8 @@ pub async fn promote(p: PromoteParams<'_>) -> Result<PromoteOutcome, RegistryErr
         let sig_tag = format!("sha256-{hex}.sig");
         let src_sig_link =
             tag_link_path(&src.tenant, &src.project, &src.repository, &sig_tag);
-        if store_exists(p.store.as_ref(), &src_sig_link).await? {
-            let sig_digest_bytes = store_get(p.store.as_ref(), &src_sig_link).await?;
+        if store_exists(src_store, &src_sig_link).await? {
+            let sig_digest_bytes = store_get(src_store, &src_sig_link).await?;
             let sig_digest = String::from_utf8_lossy(&sig_digest_bytes)
                 .trim()
                 .to_string();
@@ -343,23 +362,24 @@ pub async fn promote(p: PromoteParams<'_>) -> Result<PromoteOutcome, RegistryErr
                 manifest_path(&src.tenant, &src.project, &src.repository, &sig_digest);
             let dst_sig_m =
                 manifest_path(&dst.tenant, &dst.project, &dst.repository, &sig_digest);
-            if store_exists(p.store.as_ref(), &src_sig_m).await? {
-                let sig_bytes = store_get(p.store.as_ref(), &src_sig_m).await?;
+            if store_exists(src_store, &src_sig_m).await? {
+                let sig_bytes = store_get(src_store, &src_sig_m).await?;
                 // Copy any blobs the sig manifest references
                 if let Ok(sig_json) = serde_json::from_slice::<serde_json::Value>(&sig_bytes) {
                     for dig in collect_referenced_digests(&sig_json) {
                         let s = blob_path(&src.tenant, &src.project, &src.repository, &dig);
                         let d = blob_path(&dst.tenant, &dst.project, &dst.repository, &dig);
-                        if store_exists(p.store.as_ref(), &s).await? {
-                            bytes_copied += copy_object(p.store.as_ref(), &s, &d).await?;
+                        if store_exists(src_store, &s).await? {
+                            bytes_copied +=
+                                copy_object(src_store, dst_store, &s, &d, same_store).await?;
                         }
                     }
                 }
-                bytes_copied += copy_object(p.store.as_ref(), &src_sig_m, &dst_sig_m).await?;
+                bytes_copied +=
+                    copy_object(src_store, dst_store, &src_sig_m, &dst_sig_m, same_store).await?;
                 let dst_sig_link =
                     tag_link_path(&dst.tenant, &dst.project, &dst.repository, &sig_tag);
-                p.store
-                    .as_ref()
+                dst_store
                     .put(
                         &StorePath::from(dst_sig_link),
                         Bytes::from(sig_digest).into(),
@@ -374,8 +394,7 @@ pub async fn promote(p: PromoteParams<'_>) -> Result<PromoteOutcome, RegistryErr
     // Tag link last (atomicity)
     if !dst.reference.starts_with("sha256:") {
         let tag_p = tag_link_path(&dst.tenant, &dst.project, &dst.repository, &dst.reference);
-        p.store
-            .as_ref()
+        dst_store
             .put(
                 &StorePath::from(tag_p),
                 Bytes::from(src_digest.clone()).into(),
@@ -488,6 +507,7 @@ mod tests {
         };
         let out = promote(PromoteParams {
             store: &store,
+            dest_store: None,
             pool: None,
             actor: "test",
             req: &req,
@@ -511,6 +531,100 @@ mod tests {
         assert!(
             store_exists(
                 store.as_ref(),
+                &blob_path("acme", "prod", "api", &layer_digest)
+            )
+            .await
+            .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn cross_backend_copy_between_two_stores() {
+        let src_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let dst_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let config_blob = br#"{"architecture":"amd64","os":"linux"}"#;
+        let config_digest = sha256_digest(config_blob);
+        let layer = b"cross-layer";
+        let layer_digest = sha256_digest(layer);
+        let manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": {"mediaType": "application/vnd.oci.image.config.v1+json",
+                       "digest": config_digest, "size": config_blob.len()},
+            "layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar",
+                        "digest": layer_digest, "size": layer.len()}],
+        });
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        let man_digest = sha256_digest(&manifest_bytes);
+
+        src_store
+            .put(
+                &StorePath::from(blob_path("acme", "dev", "api", &config_digest)),
+                Bytes::from_static(config_blob).into(),
+            )
+            .await
+            .unwrap();
+        src_store
+            .put(
+                &StorePath::from(blob_path("acme", "dev", "api", &layer_digest)),
+                Bytes::from_static(layer).into(),
+            )
+            .await
+            .unwrap();
+        src_store
+            .put(
+                &StorePath::from(manifest_path("acme", "dev", "api", &man_digest)),
+                Bytes::from(manifest_bytes).into(),
+            )
+            .await
+            .unwrap();
+        src_store
+            .put(
+                &StorePath::from(tag_link_path("acme", "dev", "api", "1.0")),
+                Bytes::from(man_digest.clone()).into(),
+            )
+            .await
+            .unwrap();
+
+        let req = PromoteRequest {
+            source: ImageRef::parse("acme/dev/api:1.0").unwrap(),
+            dest: ImageRef::parse("acme/prod/api:1.0").unwrap(),
+            include_signatures: false,
+            include_attestations: false,
+            mode: PromoteMode::Force,
+        };
+        let out = promote(PromoteParams {
+            store: &src_store,
+            dest_store: Some(&dst_store),
+            pool: None,
+            actor: "test",
+            req: &req,
+        })
+        .await
+        .unwrap();
+        assert_eq!(out.state, "done");
+        assert!(out.bytes_copied > 0);
+
+        // Source store must NOT have dest tag
+        assert!(
+            !store_exists(
+                src_store.as_ref(),
+                &tag_link_path("acme", "prod", "api", "1.0")
+            )
+            .await
+            .unwrap()
+        );
+        // Dest store has tag + blobs
+        let link = store_get(
+            dst_store.as_ref(),
+            &tag_link_path("acme", "prod", "api", "1.0"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(String::from_utf8_lossy(&link).trim(), man_digest);
+        assert!(
+            store_exists(
+                dst_store.as_ref(),
                 &blob_path("acme", "prod", "api", &layer_digest)
             )
             .await
@@ -561,6 +675,7 @@ mod tests {
         };
         let out = promote(PromoteParams {
             store: &store,
+            dest_store: None,
             pool: None,
             actor: "t",
             req: &req,

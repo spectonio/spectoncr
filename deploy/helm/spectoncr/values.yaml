@@ -640,14 +640,26 @@ rebuild:
 
 ## -- Atomic promotion (design 006) --
 ## Kill-switch OFF by default. Enables POST /v2/_promote.
+## Optional destStorage enables true cross-backend promote (second object store).
 promotion:
   enabled: false
+  # destStorage:
+  #   backend: filesystem
+  #   root: /var/lib/spectoncr/data-prod
 
 ## -- Pull-time admission gate (design 002) --
 ## Kill-switch OFF by default. When enabled, AdmissionPolicy CRDs gate pulls.
 admission:
   enabled: false
   cacheTtlSecs: 30
+
+## -- AI agent HTTP chat (design 019) --
+## Kill-switch OFF by default. Enables /v2/_pilot/chat + dashboard sidebar.
+pilot:
+  enabled: false
+  backend: echo   # echo | anthropic | openai | ollama
+  model: echo
+  tokensPerDay: 500000
 
 ## -- Scanner (CVE scanning — runs in-process inside the registry) --
 ## When enabled, every manifest push enqueues a scan; workers materialize

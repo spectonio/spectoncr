@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getApiKey, searchCves, setApiKey, CveHit } from './api';
+import { PilotSidebar } from './PilotSidebar';
 import { Header, SevBadge, SearchIcon, CopyButton } from './ui';
 
 // Common starting points so the empty state invites action instead of
@@ -61,6 +62,7 @@ export function App() {
   return (
     <div className="shell">
       <Header right={conn} />
+      <PilotSidebar />
 
       <main className="page">
         <div className="page-head">

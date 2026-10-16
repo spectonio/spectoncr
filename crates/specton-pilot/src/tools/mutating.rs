@@ -1,4 +1,4 @@
-//! Mutating pilot tools (P2): rebuild, promote, scan trigger.
+//! Mutating pilot tools (P2+): rebuild, promote, scan, GC, suppress.
 
 use std::sync::Arc;
 
@@ -248,6 +248,269 @@ impl Tool for EvaluateAdmissionTool {
         let data = self
             .client
             .post_json("/v2/_admit/test", &body)
+            .await
+            .map_err(ToolError::Internal)?;
+        Ok(ToolOutput::allow(data))
+    }
+}
+
+pub struct SuppressFindingTool {
+    pub client: Arc<RegistryClient>,
+}
+
+#[async_trait]
+impl Tool for SuppressFindingTool {
+    fn name(&self) -> &'static str {
+        "suppress_finding"
+    }
+    fn description(&self) -> &'static str {
+        "Create a CVE suppression (POST /v2/cve/suppress)."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "cve_id": { "type": "string" },
+                "reason": { "type": "string" },
+                "scope_tenant": { "type": "string" },
+                "scope_project": { "type": "string" },
+                "scope_repository": { "type": "string" },
+                "scope_package": { "type": "string" },
+                "expires_at": { "type": "string", "description": "RFC3339 timestamp" }
+            },
+            "required": ["cve_id", "reason"]
+        })
+    }
+    fn permission(&self) -> ToolPermission {
+        ToolPermission("tenant:write".into())
+    }
+    fn destructiveness(&self) -> Destructiveness {
+        Destructiveness::Mutating
+    }
+    async fn invoke(
+        &self,
+        ctx: &ToolCtx,
+        input: serde_json::Value,
+    ) -> Result<ToolOutput, ToolError> {
+        let cve_id = input
+            .get("cve_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::InvalidInput("missing cve_id".into()))?;
+        let reason = input
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::InvalidInput("missing reason".into()))?;
+        if ctx.dry_run {
+            return Ok(ToolOutput::allow(serde_json::json!({
+                "dry_run": true,
+                "would_call": "/v2/cve/suppress",
+                "cve_id": cve_id,
+                "reason": reason,
+            })));
+        }
+        let body = serde_json::json!({
+            "cve_id": cve_id,
+            "reason": reason,
+            "scope_tenant": input.get("scope_tenant").and_then(|v| v.as_str())
+                .or(Some(ctx.tenant.as_str())),
+            "scope_project": input.get("scope_project"),
+            "scope_repository": input.get("scope_repository"),
+            "scope_package": input.get("scope_package"),
+            "expires_at": input.get("expires_at"),
+        });
+        let data = self
+            .client
+            .post_json("/v2/cve/suppress", &body)
+            .await
+            .map_err(ToolError::Internal)?;
+        Ok(ToolOutput::allow(data))
+    }
+}
+
+pub struct UnsuppressFindingTool {
+    pub client: Arc<RegistryClient>,
+}
+
+#[async_trait]
+impl Tool for UnsuppressFindingTool {
+    fn name(&self) -> &'static str {
+        "unsuppress_finding"
+    }
+    fn description(&self) -> &'static str {
+        "Revoke a CVE suppression (DELETE /v2/cve/suppress/{id})."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Suppression UUID" }
+            },
+            "required": ["id"]
+        })
+    }
+    fn permission(&self) -> ToolPermission {
+        ToolPermission("tenant:write".into())
+    }
+    fn destructiveness(&self) -> Destructiveness {
+        Destructiveness::Mutating
+    }
+    async fn invoke(
+        &self,
+        ctx: &ToolCtx,
+        input: serde_json::Value,
+    ) -> Result<ToolOutput, ToolError> {
+        let id = input
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::InvalidInput("missing id".into()))?;
+        if ctx.dry_run {
+            return Ok(ToolOutput::allow(serde_json::json!({
+                "dry_run": true,
+                "would_call": format!("/v2/cve/suppress/{id}"),
+            })));
+        }
+        let path = format!("/v2/cve/suppress/{id}");
+        let data = self
+            .client
+            .delete_json(&path)
+            .await
+            .map_err(ToolError::Internal)?;
+        Ok(ToolOutput::allow(data))
+    }
+}
+
+pub struct RunGcReconcileTool {
+    pub client: Arc<RegistryClient>,
+}
+
+#[async_trait]
+impl Tool for RunGcReconcileTool {
+    fn name(&self) -> &'static str {
+        "run_gc_reconcile"
+    }
+    fn description(&self) -> &'static str {
+        "Run online-GC reconcile (POST /v2/_gc/reconcile)."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "apply": { "type": "boolean", "default": false },
+                "max": { "type": "integer" }
+            }
+        })
+    }
+    fn permission(&self) -> ToolPermission {
+        ToolPermission("tenant:admin".into())
+    }
+    fn destructiveness(&self) -> Destructiveness {
+        Destructiveness::Mutating
+    }
+    async fn invoke(
+        &self,
+        ctx: &ToolCtx,
+        input: serde_json::Value,
+    ) -> Result<ToolOutput, ToolError> {
+        let apply = input
+            .get("apply")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if ctx.dry_run {
+            return Ok(ToolOutput::allow(serde_json::json!({
+                "dry_run": true,
+                "would_call": "/v2/_gc/reconcile",
+                "apply": apply,
+            })));
+        }
+        let body = serde_json::json!({
+            "apply": apply,
+            "max": input.get("max"),
+        });
+        let data = self
+            .client
+            .post_json("/v2/_gc/reconcile", &body)
+            .await
+            .map_err(ToolError::Internal)?;
+        Ok(ToolOutput::allow(data))
+    }
+}
+
+pub struct PauseGcTool {
+    pub client: Arc<RegistryClient>,
+}
+
+#[async_trait]
+impl Tool for PauseGcTool {
+    fn name(&self) -> &'static str {
+        "pause_gc"
+    }
+    fn description(&self) -> &'static str {
+        "Pause the online-GC reaper (POST /v2/_gc/pause)."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({ "type": "object", "properties": {} })
+    }
+    fn permission(&self) -> ToolPermission {
+        ToolPermission("tenant:admin".into())
+    }
+    fn destructiveness(&self) -> Destructiveness {
+        Destructiveness::Mutating
+    }
+    async fn invoke(
+        &self,
+        ctx: &ToolCtx,
+        _input: serde_json::Value,
+    ) -> Result<ToolOutput, ToolError> {
+        if ctx.dry_run {
+            return Ok(ToolOutput::allow(serde_json::json!({
+                "dry_run": true,
+                "would_call": "/v2/_gc/pause",
+            })));
+        }
+        let data = self
+            .client
+            .post_json("/v2/_gc/pause", &serde_json::json!({}))
+            .await
+            .map_err(ToolError::Internal)?;
+        Ok(ToolOutput::allow(data))
+    }
+}
+
+pub struct ResumeGcTool {
+    pub client: Arc<RegistryClient>,
+}
+
+#[async_trait]
+impl Tool for ResumeGcTool {
+    fn name(&self) -> &'static str {
+        "resume_gc"
+    }
+    fn description(&self) -> &'static str {
+        "Resume the online-GC reaper (POST /v2/_gc/resume)."
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({ "type": "object", "properties": {} })
+    }
+    fn permission(&self) -> ToolPermission {
+        ToolPermission("tenant:admin".into())
+    }
+    fn destructiveness(&self) -> Destructiveness {
+        Destructiveness::Mutating
+    }
+    async fn invoke(
+        &self,
+        ctx: &ToolCtx,
+        _input: serde_json::Value,
+    ) -> Result<ToolOutput, ToolError> {
+        if ctx.dry_run {
+            return Ok(ToolOutput::allow(serde_json::json!({
+                "dry_run": true,
+                "would_call": "/v2/_gc/resume",
+            })));
+        }
+        let data = self
+            .client
+            .post_json("/v2/_gc/resume", &serde_json::json!({}))
             .await
             .map_err(ToolError::Internal)?;
         Ok(ToolOutput::allow(data))
