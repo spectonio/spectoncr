@@ -413,6 +413,12 @@ spectoncrDashboards:
 grafana:
   enabled: false
   fullnameOverride: ""
+  ## helm-test hook resources (the <release>-grafana-test pod + ConfigMap)
+  ## have no owner and can be orphaned by hook cleanup on upgrades — the
+  ## acc ring had one stuck in ContainerCreating for days. We never run
+  ## `helm test` against grafana, so don't ship the hooks at all.
+  testFramework:
+    enabled: false
   ## NOTE: per the upstream chart, set credentials via either
   ## adminUser/adminPassword inline OR a secret keyRef. The default
   ## here is the chart's standard "admin/strongpassword" pattern;
