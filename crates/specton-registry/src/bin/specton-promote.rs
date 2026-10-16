@@ -33,7 +33,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let dry_run = flag_bool(&args, "--dry-run");
     let no_sigs = flag_bool(&args, "--no-signatures");
     args.retain(|a| {
-        a != "--dry-run" && a != "--no-signatures" && !a.starts_with("--registry") && !a.starts_with("--token")
+        a != "--dry-run"
+            && a != "--no-signatures"
+            && !a.starts_with("--registry")
+            && !a.starts_with("--token")
     });
 
     if args.len() != 2 {

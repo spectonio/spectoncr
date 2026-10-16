@@ -67,7 +67,10 @@ pub(crate) struct EventInfo<'a> {
     event_type: &'a str,
 }
 
-pub(crate) async fn publish_event(client: &Client, info: &EventInfo<'_>) -> Result<(), ControllerError> {
+pub(crate) async fn publish_event(
+    client: &Client,
+    info: &EventInfo<'_>,
+) -> Result<(), ControllerError> {
     let events: Api<k8s_openapi::api::events::v1::Event> = match info.namespace {
         Some(ns) => Api::namespaced(client.clone(), ns),
         None => Api::default_namespaced(client.clone()),

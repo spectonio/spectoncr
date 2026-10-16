@@ -5,8 +5,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::emitter::{
-    EmitError, GenericWebhookEmitter, GitHubDispatchEmitter, GitLabPipelineEmitter,
-    RebuildEmitter, RebuildEvent, TektonEventListenerEmitter, TriggerCause,
+    EmitError, GenericWebhookEmitter, GitHubDispatchEmitter, GitLabPipelineEmitter, RebuildEmitter,
+    RebuildEvent, TektonEventListenerEmitter, TriggerCause,
 };
 use crate::rate_limit::RateLimit;
 use crate::subscription::{EmitterSpec, RebuildSubscription};
@@ -56,9 +56,7 @@ impl RebuildService {
         let cap = sub.spec.rate_limit.per_downstream_per_day;
         let rl = RateLimit::new(self.pool.clone(), cap);
 
-        let allowed = rl
-            .check_and_increment(sub.id, &req.downstream_ref)
-            .await?;
+        let allowed = rl.check_and_increment(sub.id, &req.downstream_ref).await?;
         if !allowed {
             let _ = self
                 .record_event(
@@ -78,14 +76,15 @@ impl RebuildService {
         }
 
         let emitter = build_emitter(&sub.spec.emitter)?;
-        match emitter.emit(&RebuildEvent {
-            trigger: req.trigger,
-            fixed_cves: req.fixed_cves.clone(),
-            upstream_ref: req.upstream_ref.clone(),
-            downstream_ref: req.downstream_ref.clone(),
-            severity_max: req.severity_max.clone(),
-        })
-        .await
+        match emitter
+            .emit(&RebuildEvent {
+                trigger: req.trigger,
+                fixed_cves: req.fixed_cves.clone(),
+                upstream_ref: req.upstream_ref.clone(),
+                downstream_ref: req.downstream_ref.clone(),
+                severity_max: req.severity_max.clone(),
+            })
+            .await
         {
             Ok(resp) => {
                 self.record_event(sub.id, &req, "sent", Some(resp.clone()))
@@ -104,9 +103,7 @@ impl RebuildService {
                 })
             }
             Err(e) => {
-                let _ = rl
-                    .decrement_on_failure(sub.id, &req.downstream_ref)
-                    .await;
+                let _ = rl.decrement_on_failure(sub.id, &req.downstream_ref).await;
                 let msg = e.to_string();
                 let _ = self
                     .record_event(sub.id, &req, "failed", Some(msg.clone()))
@@ -261,9 +258,7 @@ fn build_emitter(spec: &EmitterSpec) -> Result<Box<dyn RebuildEmitter>, FireErro
                 .clone()
                 .or_else(|| std::env::var("REBUILD_WEBHOOK_HMAC").ok())
                 .ok_or_else(|| {
-                    FireError::Config(
-                        "webhook requires hmac_secret or REBUILD_WEBHOOK_HMAC".into(),
-                    )
+                    FireError::Config("webhook requires hmac_secret or REBUILD_WEBHOOK_HMAC".into())
                 })?;
             let mut e = GenericWebhookEmitter::new(url, secret);
             if let Some(name) = header_name {

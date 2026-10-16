@@ -20,8 +20,8 @@ pub struct PolicyScope {
 impl PolicyScope {
     /// `*` or empty list matches everything.
     pub fn matches(&self, project: &str, repository: &str) -> bool {
-        let project_ok = self.projects.is_empty()
-            || self.projects.iter().any(|p| p == "*" || p == project);
+        let project_ok =
+            self.projects.is_empty() || self.projects.iter().any(|p| p == "*" || p == project);
         let repo_ok = self.repositories.is_empty()
             || self
                 .repositories
@@ -158,16 +158,23 @@ impl PolicyStore for PgPolicyStore {
         tenant: &str,
         name: &str,
     ) -> Result<Option<StoredVerificationPolicy>, PolicyStoreError> {
-        let row: Option<(Uuid, String, String, serde_json::Value, bool, String, DateTime<Utc>)> =
-            sqlx::query_as(
-                "SELECT id, name, tenant, spec, enabled, on_violation, updated_at
+        let row: Option<(
+            Uuid,
+            String,
+            String,
+            serde_json::Value,
+            bool,
+            String,
+            DateTime<Utc>,
+        )> = sqlx::query_as(
+            "SELECT id, name, tenant, spec, enabled, on_violation, updated_at
                  FROM verification_policies
                  WHERE tenant = $1 AND name = $2",
-            )
-            .bind(tenant)
-            .bind(name)
-            .fetch_optional(&self.pool)
-            .await?;
+        )
+        .bind(tenant)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.map(row_to_policy).transpose()?)
     }
 
@@ -175,16 +182,23 @@ impl PolicyStore for PgPolicyStore {
         &self,
         tenant: &str,
     ) -> Result<Vec<StoredVerificationPolicy>, PolicyStoreError> {
-        let rows: Vec<(Uuid, String, String, serde_json::Value, bool, String, DateTime<Utc>)> =
-            sqlx::query_as(
-                "SELECT id, name, tenant, spec, enabled, on_violation, updated_at
+        let rows: Vec<(
+            Uuid,
+            String,
+            String,
+            serde_json::Value,
+            bool,
+            String,
+            DateTime<Utc>,
+        )> = sqlx::query_as(
+            "SELECT id, name, tenant, spec, enabled, on_violation, updated_at
                  FROM verification_policies
                  WHERE tenant = $1
                  ORDER BY name",
-            )
-            .bind(tenant)
-            .fetch_all(&self.pool)
-            .await?;
+        )
+        .bind(tenant)
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter().map(row_to_policy).collect()
     }
 

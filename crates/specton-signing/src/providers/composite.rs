@@ -58,8 +58,7 @@ impl KeyProvider for CompositeKeyProvider {
     async fn resolve(&self, key_ref: &str) -> Result<KeyMaterial, KeyProviderError> {
         if key_ref.starts_with("vault://transit/") {
             return Err(KeyProviderError::Unavailable(
-                "vault://transit/ refs require VaultTransitSigner, not KeyProvider::resolve"
-                    .into(),
+                "vault://transit/ refs require VaultTransitSigner, not KeyProvider::resolve".into(),
             ));
         }
         if key_ref.starts_with("vault://") {

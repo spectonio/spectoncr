@@ -177,7 +177,9 @@ pub fn maybe_compress(jsonl: &[u8], compress: bool) -> Result<(Vec<u8>, bool), E
     if !compress {
         return Ok((jsonl.to_vec(), false));
     }
-    zstd::encode_all(jsonl, 3).map(|b| (b, true)).map_err(|e| ExportError::Zstd(e.to_string()))
+    zstd::encode_all(jsonl, 3)
+        .map(|b| (b, true))
+        .map_err(|e| ExportError::Zstd(e.to_string()))
 }
 
 /// Merkle root over the rows' `row_hash` values (ascending id order).

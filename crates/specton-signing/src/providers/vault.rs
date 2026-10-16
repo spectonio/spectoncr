@@ -25,9 +25,10 @@ pub struct VaultKvConfig {
 
 impl VaultKvConfig {
     pub fn from_env() -> Option<Self> {
-        let token = std::env::var("VAULT_TOKEN").ok().filter(|t| !t.is_empty())?;
-        let addr =
-            std::env::var("VAULT_ADDR").unwrap_or_else(|_| "http://127.0.0.1:8200".into());
+        let token = std::env::var("VAULT_TOKEN")
+            .ok()
+            .filter(|t| !t.is_empty())?;
+        let addr = std::env::var("VAULT_ADDR").unwrap_or_else(|_| "http://127.0.0.1:8200".into());
         Some(Self {
             addr,
             token,
@@ -119,14 +120,9 @@ impl KeyProvider for VaultKvKeyProvider {
             .json()
             .await
             .map_err(|e| KeyProviderError::Unavailable(e.to_string()))?;
-        let private_pem = body
-            .data
-            .data
-            .get("private_key")
-            .cloned()
-            .ok_or_else(|| {
-                KeyProviderError::InvalidPem("'private_key' missing in Vault secret".into())
-            })?;
+        let private_pem = body.data.data.get("private_key").cloned().ok_or_else(|| {
+            KeyProviderError::InvalidPem("'private_key' missing in Vault secret".into())
+        })?;
         let public_pem = body.data.data.get("public_key").cloned();
         Ok(KeyMaterial {
             key_ref: key_ref.to_string(),
@@ -144,16 +140,15 @@ mod tests {
 
     #[test]
     fn parse_kv_ref() {
-        let (m, p) = VaultKvKeyProvider::parse_ref("vault://kv/secret/spectoncr/cosign", "secret")
-            .unwrap();
+        let (m, p) =
+            VaultKvKeyProvider::parse_ref("vault://kv/secret/spectoncr/cosign", "secret").unwrap();
         assert_eq!(m, "secret");
         assert_eq!(p, "spectoncr/cosign");
     }
 
     #[test]
     fn parse_secret_shorthand() {
-        let (m, p) =
-            VaultKvKeyProvider::parse_ref("vault://secret/team/key", "secret").unwrap();
+        let (m, p) = VaultKvKeyProvider::parse_ref("vault://secret/team/key", "secret").unwrap();
         assert_eq!(m, "secret");
         assert_eq!(p, "team/key");
     }

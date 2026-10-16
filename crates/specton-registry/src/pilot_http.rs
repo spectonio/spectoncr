@@ -4,12 +4,7 @@
 
 use std::sync::Arc;
 
-use axum::{
-    Json,
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use specton_common::errors::RegistryError;
 use specton_pilot::llm::echo::EchoClient;
@@ -46,18 +41,14 @@ fn build_llm(backend: &str, model: &str) -> Result<Arc<dyn LlmClient>, RegistryE
     match backend {
         "echo" | "" => Ok(Arc::new(EchoClient) as Arc<dyn LlmClient>),
         "anthropic" => {
-            let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-                RegistryError::Forbidden {
-                    reason: "ANTHROPIC_API_KEY required for pilot backend=anthropic".into(),
-                }
+            let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| RegistryError::Forbidden {
+                reason: "ANTHROPIC_API_KEY required for pilot backend=anthropic".into(),
             })?;
             Ok(Arc::new(AnthropicClient::new(model.to_string(), key)) as Arc<dyn LlmClient>)
         }
         "openai" => {
-            let key = std::env::var("OPENAI_API_KEY").map_err(|_| {
-                RegistryError::Forbidden {
-                    reason: "OPENAI_API_KEY required for pilot backend=openai".into(),
-                }
+            let key = std::env::var("OPENAI_API_KEY").map_err(|_| RegistryError::Forbidden {
+                reason: "OPENAI_API_KEY required for pilot backend=openai".into(),
             })?;
             Ok(Arc::new(OpenAiClient::new(model.to_string(), key)) as Arc<dyn LlmClient>)
         }

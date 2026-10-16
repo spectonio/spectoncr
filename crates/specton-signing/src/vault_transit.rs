@@ -9,9 +9,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use serde::Deserialize;
 
 use crate::artifact::SignatureArtifact;
-use crate::cosign_payload::{
-    CosignEnvelope, CosignSimpleSigning, MEDIA_TYPE_COSIGN_ENVELOPE_V1,
-};
+use crate::cosign_payload::{CosignEnvelope, CosignSimpleSigning, MEDIA_TYPE_COSIGN_ENVELOPE_V1};
 use crate::error::SignError;
 use crate::identity::SigningIdentity;
 use crate::signer::Signer;
@@ -26,9 +24,10 @@ pub struct VaultTransitConfig {
 
 impl VaultTransitConfig {
     pub fn from_env() -> Option<Self> {
-        let token = std::env::var("VAULT_TOKEN").ok().filter(|t| !t.is_empty())?;
-        let addr =
-            std::env::var("VAULT_ADDR").unwrap_or_else(|_| "http://127.0.0.1:8200".into());
+        let token = std::env::var("VAULT_TOKEN")
+            .ok()
+            .filter(|t| !t.is_empty())?;
+        let addr = std::env::var("VAULT_ADDR").unwrap_or_else(|_| "http://127.0.0.1:8200".into());
         Some(Self {
             addr,
             token,

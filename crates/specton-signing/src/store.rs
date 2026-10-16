@@ -234,10 +234,7 @@ mod tests {
             d,
             "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
         );
-        assert!(is_cosign_sig_tag(&format!(
-            "{}.sig",
-            d.replace(':', "-")
-        )));
+        assert!(is_cosign_sig_tag(&format!("{}.sig", d.replace(':', "-"))));
         assert!(!is_cosign_sig_tag("latest"));
     }
 }

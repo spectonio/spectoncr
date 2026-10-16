@@ -135,6 +135,7 @@ pub enum AdmissionVerdict {
 }
 
 impl AdmissionVerdict {
+    #[allow(dead_code)] // used by future dashboard / audit callers
     pub fn is_block(&self) -> bool {
         matches!(self, Self::Block { .. })
     }
@@ -192,6 +193,8 @@ pub struct EvaluateInput<'a> {
     pub project: &'a str,
     pub repository: &'a str,
     pub digest: &'a str,
+    /// Actor subject; reserved for audit attribution on the hot path.
+    #[allow(dead_code)]
     pub subject: &'a str,
     pub bypass: bool,
     pub signature_ok: Option<bool>,
@@ -209,7 +212,11 @@ pub async fn evaluate(
 
     let applicable: Vec<_> = policies
         .iter()
-        .filter(|p| p.enabled && p.tenant == input.tenant && p.matches_scope(input.project, input.repository))
+        .filter(|p| {
+            p.enabled
+                && p.tenant == input.tenant
+                && p.matches_scope(input.project, input.repository)
+        })
         .collect();
 
     if applicable.is_empty() {
@@ -251,7 +258,10 @@ fn evaluate_one(
             Some(true) => {}
             Some(false) => {
                 return AdmissionVerdict::Block {
-                    reason: format!("policy {}: signature required but missing/invalid", policy.name),
+                    reason: format!(
+                        "policy {}: signature required but missing/invalid",
+                        policy.name
+                    ),
                     code: "MANIFEST_UNVERIFIED".into(),
                 };
             }
@@ -290,7 +300,9 @@ fn evaluate_one(
             reason: format!(
                 "policy {}: {}",
                 policy.name,
-                block_eval.reason.unwrap_or_else(|| "severity threshold exceeded".into())
+                block_eval
+                    .reason
+                    .unwrap_or_else(|| "severity threshold exceeded".into())
             ),
             code: "MANIFEST_UNVERIFIED".into(),
         };
@@ -305,7 +317,9 @@ fn evaluate_one(
             reason: format!(
                 "policy {}: {}",
                 policy.name,
-                warn_eval.reason.unwrap_or_else(|| "warn threshold exceeded".into())
+                warn_eval
+                    .reason
+                    .unwrap_or_else(|| "warn threshold exceeded".into())
             ),
         };
     }
@@ -363,9 +377,8 @@ impl PgAdmissionStore {
         let mut out = Vec::new();
         for r in rows {
             let spec: serde_json::Value = r.get("spec");
-            let spec: AdmissionPolicySpec = serde_json::from_value(spec).map_err(|e| {
-                RegistryError::Internal(format!("admission policy spec: {e}"))
-            })?;
+            let spec: AdmissionPolicySpec = serde_json::from_value(spec)
+                .map_err(|e| RegistryError::Internal(format!("admission policy spec: {e}")))?;
             out.push(AdmissionPolicy {
                 id: r.get("id"),
                 name: r.get("name"),
@@ -378,6 +391,7 @@ impl PgAdmissionStore {
         Ok(out)
     }
 
+    #[allow(dead_code)] // controller / admin list path
     pub async fn list_all_enabled(&self) -> Result<Vec<AdmissionPolicy>, RegistryError> {
         let rows = sqlx::query(
             "SELECT id, name, tenant, spec, enabled, updated_at
@@ -390,8 +404,7 @@ impl PgAdmissionStore {
         let mut out = Vec::new();
         for r in rows {
             let spec: serde_json::Value = r.get("spec");
-            let spec: AdmissionPolicySpec =
-                serde_json::from_value(spec).unwrap_or_default();
+            let spec: AdmissionPolicySpec = serde_json::from_value(spec).unwrap_or_default();
             out.push(AdmissionPolicy {
                 id: r.get("id"),
                 name: r.get("name"),

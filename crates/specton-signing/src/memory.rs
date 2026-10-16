@@ -27,7 +27,9 @@ pub fn signing_payload(subject_digest: &str) -> Vec<u8> {
 }
 
 /// Generate a fresh ed25519 keypair registered under `key_ref`.
-pub fn generate_ed25519(key_ref: impl Into<String>) -> (Arc<MemoryKeyProvider>, [u8; 32], [u8; 32]) {
+pub fn generate_ed25519(
+    key_ref: impl Into<String>,
+) -> (Arc<MemoryKeyProvider>, [u8; 32], [u8; 32]) {
     let signing = SigningKey::generate(&mut OsRng);
     let verifying = signing.verifying_key();
     let seed = signing.to_bytes();

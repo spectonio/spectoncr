@@ -80,7 +80,9 @@ pub enum PromoteMode {
     Force,
     DryRun,
     #[serde(rename = "on_policy_pass")]
-    OnPolicyPass { policy: String },
+    OnPolicyPass {
+        policy: String,
+    },
 }
 
 impl Default for PromoteMode {
@@ -121,10 +123,7 @@ pub struct PromoteOutcome {
 /// Collect digests referenced by an OCI image manifest or index.
 pub fn collect_referenced_digests(manifest: &serde_json::Value) -> Vec<String> {
     let mut out = Vec::new();
-    if let Some(d) = manifest
-        .pointer("/config/digest")
-        .and_then(|v| v.as_str())
-    {
+    if let Some(d) = manifest.pointer("/config/digest").and_then(|v| v.as_str()) {
         out.push(d.to_string());
     }
     if let Some(layers) = manifest.get("layers").and_then(|l| l.as_array()) {
@@ -144,10 +143,7 @@ pub fn collect_referenced_digests(manifest: &serde_json::Value) -> Vec<String> {
     out
 }
 
-async fn store_get(
-    store: &dyn ObjectStore,
-    path: &str,
-) -> Result<Bytes, RegistryError> {
+async fn store_get(store: &dyn ObjectStore, path: &str) -> Result<Bytes, RegistryError> {
     let r = store
         .get(&StorePath::from(path))
         .await
@@ -193,10 +189,7 @@ async fn copy_object(
     }
     // Same-backend: prefer native copy; cross-backend or fallback: get+put.
     if same_store {
-        match src
-            .copy(&StorePath::from(from), &StorePath::from(to))
-            .await
-        {
+        match src.copy(&StorePath::from(from), &StorePath::from(to)).await {
             Ok(()) => {
                 let meta = dst
                     .head(&StorePath::from(to))
@@ -223,19 +216,19 @@ async fn resolve_digest(
         r.reference.clone()
     } else {
         let tag_p = tag_link_path(&r.tenant, &r.project, &r.repository, &r.reference);
-        let bytes = store_get(store, &tag_p).await.map_err(|_| {
-            RegistryError::TagUnknown {
+        let bytes = store_get(store, &tag_p)
+            .await
+            .map_err(|_| RegistryError::TagUnknown {
                 tag: r.reference.clone(),
-            }
-        })?;
+            })?;
         String::from_utf8_lossy(&bytes).trim().to_string()
     };
     let m_path = manifest_path(&r.tenant, &r.project, &r.repository, &digest);
-    let bytes = store_get(store, &m_path).await.map_err(|_| {
-        RegistryError::ManifestUnknown {
+    let bytes = store_get(store, &m_path)
+        .await
+        .map_err(|_| RegistryError::ManifestUnknown {
             reference: digest.clone(),
-        }
-    })?;
+        })?;
     // Sanity: digest of bytes should match when we loaded by digest path.
     let computed = sha256_digest(&bytes);
     if computed != digest && r.reference.starts_with("sha256:") {
@@ -271,11 +264,10 @@ pub async fn promote(p: PromoteParams<'_>) -> Result<PromoteOutcome, RegistryErr
         );
 
     let (src_digest, manifest_bytes) = resolve_digest(src_store, &p.req.source).await?;
-    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).map_err(|e| {
-        RegistryError::ManifestInvalid {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&manifest_bytes).map_err(|e| RegistryError::ManifestInvalid {
             reason: e.to_string(),
-        }
-    })?;
+        })?;
     let blob_digests = collect_referenced_digests(&manifest);
 
     if dry {
@@ -343,25 +335,28 @@ pub async fn promote(p: PromoteParams<'_>) -> Result<PromoteOutcome, RegistryErr
     // Manifest by digest at dest
     let dst_manifest = manifest_path(&dst.tenant, &dst.project, &dst.repository, &src_digest);
     let src_manifest = manifest_path(&src.tenant, &src.project, &src.repository, &src_digest);
-    bytes_copied +=
-        copy_object(src_store, dst_store, &src_manifest, &dst_manifest, same_store).await?;
+    bytes_copied += copy_object(
+        src_store,
+        dst_store,
+        &src_manifest,
+        &dst_manifest,
+        same_store,
+    )
+    .await?;
 
     let mut signatures_copied: u32 = 0;
     if p.req.include_signatures {
         // Cosign convention: tag sha256-<hex>.sig
         let hex = src_digest.strip_prefix("sha256:").unwrap_or(&src_digest);
         let sig_tag = format!("sha256-{hex}.sig");
-        let src_sig_link =
-            tag_link_path(&src.tenant, &src.project, &src.repository, &sig_tag);
+        let src_sig_link = tag_link_path(&src.tenant, &src.project, &src.repository, &sig_tag);
         if store_exists(src_store, &src_sig_link).await? {
             let sig_digest_bytes = store_get(src_store, &src_sig_link).await?;
             let sig_digest = String::from_utf8_lossy(&sig_digest_bytes)
                 .trim()
                 .to_string();
-            let src_sig_m =
-                manifest_path(&src.tenant, &src.project, &src.repository, &sig_digest);
-            let dst_sig_m =
-                manifest_path(&dst.tenant, &dst.project, &dst.repository, &sig_digest);
+            let src_sig_m = manifest_path(&src.tenant, &src.project, &src.repository, &sig_digest);
+            let dst_sig_m = manifest_path(&dst.tenant, &dst.project, &dst.repository, &sig_digest);
             if store_exists(src_store, &src_sig_m).await? {
                 let sig_bytes = store_get(src_store, &src_sig_m).await?;
                 // Copy any blobs the sig manifest references
@@ -519,12 +514,9 @@ mod tests {
         assert!(out.blob_count >= 2);
 
         // Dest tag points at same digest
-        let link = store_get(
-            store.as_ref(),
-            &tag_link_path("acme", "prod", "api", "1.0"),
-        )
-        .await
-        .unwrap();
+        let link = store_get(store.as_ref(), &tag_link_path("acme", "prod", "api", "1.0"))
+            .await
+            .unwrap();
         assert_eq!(String::from_utf8_lossy(&link).trim(), man_digest);
 
         // Dest blobs exist
@@ -683,8 +675,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(out.state, "dry_run");
-        assert!(!store_exists(store.as_ref(), &tag_link_path("t", "p2", "r", "v1"))
-            .await
-            .unwrap());
+        assert!(
+            !store_exists(store.as_ref(), &tag_link_path("t", "p2", "r", "v1"))
+                .await
+                .unwrap()
+        );
     }
 }

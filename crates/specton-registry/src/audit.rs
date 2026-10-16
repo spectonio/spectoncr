@@ -11,9 +11,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use serde::Serialize;
-use specton_audit::{
-    Actor, AuditEvent, AuditSink, Category, Outcome, Subject,
-};
+use specton_audit::{Actor, AuditEvent, AuditSink, Category, Outcome, Subject};
 use tokio::sync::RwLock;
 use tracing::warn;
 
@@ -126,7 +124,11 @@ pub struct RegistryAuditLog {
 
 impl RegistryAuditLog {
     pub fn new() -> Self {
-        Self::with_sink(Arc::new(specton_audit::InMemoryAudit::for_tests()), 0.0, false)
+        Self::with_sink(
+            Arc::new(specton_audit::InMemoryAudit::for_tests()),
+            0.0,
+            false,
+        )
     }
 
     pub fn with_sink(

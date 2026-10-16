@@ -5,8 +5,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use serde::{Deserialize, Serialize};
 
 /// Media type for cosign simple-signing JSON (unsigned payload).
-pub const MEDIA_TYPE_COSIGN_SIMPLE: &str =
-    "application/vnd.dev.cosign.simplesigning.v1+json";
+pub const MEDIA_TYPE_COSIGN_SIMPLE: &str = "application/vnd.dev.cosign.simplesigning.v1+json";
 
 /// SpectonCR envelope wrapping payload + signature for B2 storage.
 pub const MEDIA_TYPE_COSIGN_ENVELOPE_V1: &str =

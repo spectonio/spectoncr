@@ -111,7 +111,11 @@ impl Tool for PromoteTagTool {
             .get("dest")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidInput("missing dest".into()))?;
-        let dry = ctx.dry_run || input.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+        let dry = ctx.dry_run
+            || input
+                .get("dry_run")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
         let on_policy = input
             .get("on_policy_pass")
             .and_then(|v| v.as_bool())

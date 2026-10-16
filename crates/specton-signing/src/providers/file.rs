@@ -26,9 +26,7 @@ impl FilePemKeyProvider {
     }
 
     fn path_from_ref(&self, key_ref: &str) -> Result<PathBuf, KeyProviderError> {
-        let raw = key_ref
-            .strip_prefix("file://")
-            .unwrap_or(key_ref);
+        let raw = key_ref.strip_prefix("file://").unwrap_or(key_ref);
         let path = PathBuf::from(raw);
         if path.is_absolute() {
             return Ok(path);

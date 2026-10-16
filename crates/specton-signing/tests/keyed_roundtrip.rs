@@ -51,7 +51,12 @@ async fn tampered_signature_rejected() {
         .verify(DIGEST, &[artifact], &policy)
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("no trusted") || err.to_string().contains("denied") || err.to_string().contains("malformed") || matches!(err, specton_signing::VerifyError::PolicyDenied(_)));
+    assert!(
+        err.to_string().contains("no trusted")
+            || err.to_string().contains("denied")
+            || err.to_string().contains("malformed")
+            || matches!(err, specton_signing::VerifyError::PolicyDenied(_))
+    );
 }
 
 #[tokio::test]
@@ -93,5 +98,8 @@ async fn keyless_identity_rejected_by_memory_signer() {
         },
     };
     let err = signer.sign(DIGEST, &id).await.unwrap_err();
-    assert!(matches!(err, specton_signing::SignError::InvalidIdentity(_)));
+    assert!(matches!(
+        err,
+        specton_signing::SignError::InvalidIdentity(_)
+    ));
 }

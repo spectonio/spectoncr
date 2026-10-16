@@ -3,9 +3,7 @@
 
 use async_trait::async_trait;
 
-use super::{
-    ChatMessage, ChatRole, LlmClient, LlmError, LlmProvider, LlmStep, ToolDescriptor,
-};
+use super::{ChatMessage, ChatRole, LlmClient, LlmError, LlmProvider, LlmStep, ToolDescriptor};
 
 /// Returns a short text reply summarising available tools + last user message.
 pub struct EchoClient;

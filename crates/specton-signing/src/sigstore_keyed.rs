@@ -9,9 +9,7 @@ use sigstore::crypto::signing_key::SigStoreKeyPair;
 use sigstore::crypto::{Signature, SigningScheme, verification_key::CosignVerificationKey};
 
 use crate::artifact::SignatureArtifact;
-use crate::cosign_payload::{
-    CosignEnvelope, CosignSimpleSigning, MEDIA_TYPE_COSIGN_ENVELOPE_V1,
-};
+use crate::cosign_payload::{CosignEnvelope, CosignSimpleSigning, MEDIA_TYPE_COSIGN_ENVELOPE_V1};
 use crate::error::{SignError, VerifyError};
 use crate::identity::SigningIdentity;
 use crate::key_provider::KeyProvider;
@@ -222,10 +220,7 @@ impl Verifier for SigstoreVerifier {
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            if vk
-                .verify_signature(Signature::Raw(&sig), &payload)
-                .is_ok()
-            {
+            if vk.verify_signature(Signature::Raw(&sig), &payload).is_ok() {
                 matched.push(envelope.key_ref.clone());
             }
         }
@@ -253,9 +248,7 @@ impl Verifier for SigstoreVerifier {
 }
 
 /// Write a freshly generated keypair to PEM files (for tests / CLI `keygen`).
-pub fn generate_pem_keypair(
-    scheme: SigningScheme,
-) -> Result<(String, String), SignError> {
+pub fn generate_pem_keypair(scheme: SigningScheme) -> Result<(String, String), SignError> {
     let signer = scheme
         .create_signer()
         .map_err(|e| SignError::Crypto(e.to_string()))?;
@@ -275,8 +268,8 @@ pub fn generate_pem_keypair(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::file::FilePemKeyProvider;
     use crate::providers::CompositeKeyProvider;
+    use crate::providers::file::FilePemKeyProvider;
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -298,8 +291,7 @@ mod tests {
         );
         let signer = SigstoreSigner::new(keys.clone());
         let verifier = SigstoreVerifier::new(keys);
-        let digest =
-            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
         let art = signer
             .sign(digest, &SigningIdentity::keyed(&key_ref))

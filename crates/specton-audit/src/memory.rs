@@ -48,18 +48,13 @@ impl InMemoryAudit {
     ) {
         let new_id = new_id.into();
         let new_key = new_key.into();
-        self.keys
-            .get_mut()
-            .insert(new_id.clone(), new_key.clone());
+        self.keys.get_mut().insert(new_id.clone(), new_key.clone());
         self.hmac_key = new_key;
         self.hmac_key_id = new_id;
     }
 
     fn tenant_of(event: &AuditEvent) -> Option<String> {
-        event
-            .subject
-            .as_ref()
-            .and_then(|s| s.tenant.clone())
+        event.subject.as_ref().and_then(|s| s.tenant.clone())
     }
 
     async fn resolve_key(&self, key_id: &str) -> Result<Vec<u8>, AuditError> {
@@ -153,10 +148,7 @@ impl AuditSink for InMemoryAudit {
 
     async fn verify_chain(&self, from: EventId, to: EventId) -> Result<ChainVerdict, AuditError> {
         let rows = self.rows.read().await;
-        let slice: Vec<&AuditRow> = rows
-            .iter()
-            .filter(|r| r.id >= from && r.id <= to)
-            .collect();
+        let slice: Vec<&AuditRow> = rows.iter().filter(|r| r.id >= from && r.id <= to).collect();
 
         let mut checked = 0u64;
         let mut expected_prev = GENESIS_PREV.to_vec();

@@ -109,7 +109,11 @@ fn build_object_store(
             }
             Arc::new(builder.build()?)
         }
-        "gcs" => Arc::new(GoogleCloudStorageBuilder::new().with_bucket_name(root).build()?),
+        "gcs" => Arc::new(
+            GoogleCloudStorageBuilder::new()
+                .with_bucket_name(root)
+                .build()?,
+        ),
         "azure" => {
             let mut builder = MicrosoftAzureBuilder::new().with_container_name(root);
             if let Some(ref access_key) = cfg.access_key {
@@ -1014,9 +1018,7 @@ async fn get_manifest(
     let media_type = detect_manifest_media_type(&data);
 
     // Verify-on-pull (001 B4). Skip cosign `.sig` artifacts themselves.
-    if state.config.signing.enabled
-        && !specton_signing::is_cosign_sig_tag(&params.reference)
-    {
+    if state.config.signing.enabled && !specton_signing::is_cosign_sig_tag(&params.reference) {
         enforce_pull_signature_policy(
             &state,
             &claims.sub,
@@ -1029,9 +1031,7 @@ async fn get_manifest(
     }
 
     // Admission gate (002). Skip cosign `.sig` tags.
-    if state.config.admission.enabled
-        && !specton_signing::is_cosign_sig_tag(&params.reference)
-    {
+    if state.config.admission.enabled && !specton_signing::is_cosign_sig_tag(&params.reference) {
         enforce_admission(
             &state,
             &claims,
@@ -1440,30 +1440,28 @@ async fn put_manifest(
     // referrer + Sign audit without failing the OCI put.
     if state.config.signing.enabled {
         if let Some(subject) = specton_signing::subject_digest_from_sig_tag(&params.reference) {
-            let (signer_identity, signature_type, media_type) =
-                if let Ok(art) =
-                    serde_json::from_slice::<specton_signing::SignatureArtifact>(&body)
-                {
-                    (
-                        Some(art.signer_identity),
-                        art.signature_type,
-                        art.media_type,
-                    )
-                } else if let Ok(env) =
-                    serde_json::from_slice::<specton_signing::CosignEnvelope>(&body)
-                {
-                    (
-                        Some(env.key_ref),
-                        "cosign-key".to_string(),
-                        specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.to_string(),
-                    )
-                } else {
-                    (
-                        None,
-                        "cosign-key".to_string(),
-                        detect_manifest_media_type(&body),
-                    )
-                };
+            let (signer_identity, signature_type, media_type) = if let Ok(art) =
+                serde_json::from_slice::<specton_signing::SignatureArtifact>(&body)
+            {
+                (
+                    Some(art.signer_identity),
+                    art.signature_type,
+                    art.media_type,
+                )
+            } else if let Ok(env) = serde_json::from_slice::<specton_signing::CosignEnvelope>(&body)
+            {
+                (
+                    Some(env.key_ref),
+                    "cosign-key".to_string(),
+                    specton_signing::MEDIA_TYPE_COSIGN_ENVELOPE_V1.to_string(),
+                )
+            } else {
+                (
+                    None,
+                    "cosign-key".to_string(),
+                    detect_manifest_media_type(&body),
+                )
+            };
             if let Err(e) = register_signature_metadata(
                 &state,
                 &claims.sub,
@@ -2389,7 +2387,11 @@ async fn audit_query(
         .query(q)
         .await
         .map_err(|e| RegistryError::Internal(e.to_string()))?;
-    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "events": rows }))).into_response())
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "events": rows })),
+    )
+        .into_response())
 }
 
 /// GET /v2/_audit/{id} — single chained row.
@@ -2400,17 +2402,12 @@ async fn audit_get(
     Path(id): Path<i64>,
 ) -> Result<Response, RegistryError> {
     audit_admin_authorize(&claims)?;
-    let row = state
-        .audit_log
-        .sink()
-        .get(id)
-        .await
-        .map_err(|e| match e {
-            specton_audit::AuditError::NotFound(id) => RegistryError::Internal(format!(
-                "audit event {id} not found"
-            )),
-            other => RegistryError::Internal(other.to_string()),
-        })?;
+    let row = state.audit_log.sink().get(id).await.map_err(|e| match e {
+        specton_audit::AuditError::NotFound(id) => {
+            RegistryError::Internal(format!("audit event {id} not found"))
+        }
+        other => RegistryError::Internal(other.to_string()),
+    })?;
     Ok((StatusCode::OK, axum::Json(row)).into_response())
 }
 
@@ -2469,17 +2466,17 @@ async fn audit_export_handler(
 
     let result = match (body.from, body.to) {
         (Some(from), Some(to)) => {
-            let (result, root, _) = specton_audit::export_range(
-                sink.as_ref(),
-                rt.dest.as_ref(),
-                from,
-                to,
-                compress,
-            )
-            .await
-            .map_err(|e| RegistryError::Internal(e.to_string()))?;
+            let (result, root, _) =
+                specton_audit::export_range(sink.as_ref(), rt.dest.as_ref(), from, to, compress)
+                    .await
+                    .map_err(|e| RegistryError::Internal(e.to_string()))?;
             rt.checkpoints
-                .insert(result.range_from, result.range_to, &root, &result.exported_to)
+                .insert(
+                    result.range_from,
+                    result.range_to,
+                    &root,
+                    &result.exported_to,
+                )
                 .await
                 .map_err(|e| RegistryError::Internal(e.to_string()))?;
             result
@@ -3074,15 +3071,13 @@ async fn enforce_pull_signature_policy(
 
     let policy = match stored {
         Some(p) => p.as_verification_policy(),
-        None if state.config.signing.require_for_pull => {
-            specton_signing::VerificationPolicy {
-                id: Uuid::nil(),
-                name: "require_for_pull".into(),
-                required: true,
-                trusted_signers: vec![],
-                on_violation: specton_signing::OnViolation::Block,
-            }
-        }
+        None if state.config.signing.require_for_pull => specton_signing::VerificationPolicy {
+            id: Uuid::nil(),
+            name: "require_for_pull".into(),
+            required: true,
+            trusted_signers: vec![],
+            on_violation: specton_signing::OnViolation::Block,
+        },
         None => return Ok(()),
     };
 
@@ -3143,14 +3138,8 @@ async fn enforce_pull_signature_policy(
         );
         let verifier = specton_signing::SigstoreVerifier::new(keys);
         use specton_signing::Verifier as _;
-        match verifier
-            .verify(subject_digest, &artifacts, &policy)
-            .await
-        {
-            Ok(outcome) => (
-                outcome.trusted,
-                outcome.reason.unwrap_or_default(),
-            ),
+        match verifier.verify(subject_digest, &artifacts, &policy).await {
+            Ok(outcome) => (outcome.trusted, outcome.reason.unwrap_or_default()),
             Err(e) => (false, e.to_string()),
         }
     };
@@ -3368,9 +3357,11 @@ async fn persist_signature(
         .await
         .map_err(|e| RegistryError::Storage(e.to_string()))?;
 
-    let tag = specton_signing::SignatureArtifact::cosign_sig_tag(subject_digest)
-        .ok_or_else(|| RegistryError::ManifestInvalid {
-            reason: "subject digest must be sha256:...".into(),
+    let tag =
+        specton_signing::SignatureArtifact::cosign_sig_tag(subject_digest).ok_or_else(|| {
+            RegistryError::ManifestInvalid {
+                reason: "subject digest must be sha256:...".into(),
+            }
         })?;
     let tag_p = tag_link_path(tenant, project, repo, &tag);
     state
@@ -3511,7 +3502,11 @@ async fn list_signatures(
         .await
         .map_err(|e| RegistryError::Internal(e.to_string()))?;
 
-    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "signatures": rows }))).into_response())
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "signatures": rows })),
+    )
+        .into_response())
 }
 
 #[instrument(name = "verify_image", skip(state, claims))]
@@ -3535,12 +3530,7 @@ async fn verify_image(
 
     use specton_signing::SignatureStore as _;
     let records = specton_signing::PgSignatureStore::new(pool)
-        .list_for_subject(
-            &body.tenant,
-            &body.project,
-            &body.repository,
-            &body.digest,
-        )
+        .list_for_subject(&body.tenant, &body.project, &body.repository, &body.digest)
         .await
         .map_err(|e| RegistryError::Internal(e.to_string()))?;
 
@@ -3670,9 +3660,7 @@ async fn upsert_verification_policy(
         .clone()
         .ok_or_else(|| RegistryError::Internal("policy store not configured".into()))?;
 
-    let on_violation = body
-        .on_violation
-        .unwrap_or(body.spec.on_violation);
+    let on_violation = body.on_violation.unwrap_or(body.spec.on_violation);
     let policy = specton_signing::StoredVerificationPolicy {
         id: body.id.unwrap_or_else(Uuid::new_v4),
         name: path.name.clone(),
@@ -3710,9 +3698,7 @@ async fn get_verification_policy(
         .map_err(|e| RegistryError::Internal(e.to_string()))?;
     match found {
         Some(p) => Ok((StatusCode::OK, axum::Json(p)).into_response()),
-        None => Err(RegistryError::NameUnknown {
-            name: path.name,
-        }),
+        None => Err(RegistryError::NameUnknown { name: path.name }),
     }
 }
 
@@ -3736,9 +3722,7 @@ async fn delete_verification_policy(
     if deleted {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {
-        Err(RegistryError::NameUnknown {
-            name: path.name,
-        })
+        Err(RegistryError::NameUnknown { name: path.name })
     }
 }
 
@@ -3801,9 +3785,10 @@ struct RebuildSubUpsert {
 fn claims_bypass_admission(claims: &TokenClaims) -> bool {
     claims.sub.contains("bypass-admission")
         || (claims.role == Role::Admin
-            && claims.scopes.iter().any(|s| {
-                s.repository == "*" || s.actions.contains(&Action::Manage)
-            }))
+            && claims
+                .scopes
+                .iter()
+                .any(|s| s.repository == "*" || s.actions.contains(&Action::Manage)))
 }
 
 async fn enforce_admission(
@@ -3829,9 +3814,16 @@ async fn enforce_admission(
         // Reuse signing policy path when signing enabled; else treat as missing.
         if state.config.signing.enabled {
             Some(
-                enforce_pull_signature_policy(state, &claims.sub, tenant, project, repository, digest)
-                    .await
-                    .is_ok(),
+                enforce_pull_signature_policy(
+                    state,
+                    &claims.sub,
+                    tenant,
+                    project,
+                    repository,
+                    digest,
+                )
+                .await
+                .is_ok(),
             )
         } else {
             Some(false)
@@ -3858,7 +3850,12 @@ async fn enforce_admission(
     .await;
 
     let _ = store
-        .record_decision(digest, policies.first().map(|p| p.id), &verdict, &claims.sub)
+        .record_decision(
+            digest,
+            policies.first().map(|p| p.id),
+            &verdict,
+            &claims.sub,
+        )
         .await;
 
     match verdict {
@@ -4055,7 +4052,11 @@ async fn list_admission_policies(
     let rows = admission::PgAdmissionStore::new(pool)
         .list_tenant(&tenant)
         .await?;
-    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "items": rows }))).into_response())
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "items": rows })),
+    )
+        .into_response())
 }
 
 // ── Promotion (006) ──────────────────────────────────────────────────────────
@@ -4240,9 +4241,12 @@ async fn promote_history(
 ) -> Result<Response, RegistryError> {
     promotion_enabled(&state)?;
     if claims.role != Role::Admin {
-        let project = q.project.as_deref().ok_or_else(|| RegistryError::Forbidden {
-            reason: "project query required for non-admin promote history".into(),
-        })?;
+        let project = q
+            .project
+            .as_deref()
+            .ok_or_else(|| RegistryError::Forbidden {
+                reason: "project query required for non-admin promote history".into(),
+            })?;
         let repo = q.repository.as_deref().unwrap_or("*");
         authorize(&claims, &q.tenant, project, repo, Action::Pull)?;
     }
@@ -4300,7 +4304,11 @@ async fn promote_history(
         })
         .collect();
 
-    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "items": items }))).into_response())
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "items": items })),
+    )
+        .into_response())
 }
 
 /// GET /v2/_promote/{id}
@@ -4458,7 +4466,11 @@ async fn list_rebuild_subscriptions(
         .await
         .map_err(|e| RegistryError::Internal(e.to_string()))?;
     let _ = &claims;
-    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "subscriptions": rows }))).into_response())
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "subscriptions": rows })),
+    )
+        .into_response())
 }
 
 /// PUT /v2/_rebuild/subscriptions/{tenant}/{name}
@@ -4514,7 +4526,11 @@ async fn list_rebuild_events(
         .list_events(&tenant, limit)
         .await
         .map_err(|e| RegistryError::Internal(e.to_string()))?;
-    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "events": events }))).into_response())
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "events": events })),
+    )
+        .into_response())
 }
 
 /// GET /v2/_lineage/{digest}
@@ -6402,7 +6418,10 @@ async fn main() -> anyhow::Result<()> {
         )
         // Auto-rebuild (018 R2)
         .route("/v2/_rebuild/trigger", post(rebuild_trigger))
-        .route("/v2/_rebuild/subscriptions", get(list_rebuild_subscriptions))
+        .route(
+            "/v2/_rebuild/subscriptions",
+            get(list_rebuild_subscriptions),
+        )
         .route(
             "/v2/_rebuild/subscriptions/{tenant}/{name}",
             put(upsert_rebuild_subscription),

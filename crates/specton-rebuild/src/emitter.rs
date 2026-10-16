@@ -458,8 +458,8 @@ mod tests {
     /// Mock GitHub API: one successful `repository_dispatch` per call.
     #[tokio::test]
     async fn github_dispatch_hits_mock_once() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         let hits = Arc::new(AtomicUsize::new(0));
         let hits2 = hits.clone();

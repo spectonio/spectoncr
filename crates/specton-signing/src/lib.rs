@@ -32,17 +32,13 @@ pub use cosign_payload::{
 pub use error::{KeyProviderError, SignError, VerifyError};
 pub use identity::{FulcioConfig, OidcToken, SigningIdentity};
 pub use key_provider::{KeyMaterial, KeyProvider, MemoryKeyProvider};
-pub use memory::{
-    MemoryKeyedSigner, MemoryKeyedVerifier, generate_ed25519, signing_payload,
-};
+pub use memory::{MemoryKeyedSigner, MemoryKeyedVerifier, generate_ed25519, signing_payload};
 pub use notation::NotationStub;
 pub use policy::{OnViolation, TrustedSigner, VerificationOutcome, VerificationPolicy};
 pub use policy_store::{
     PgPolicyStore, PolicyScope, PolicySpec, PolicyStore, PolicyStoreError, StoredVerificationPolicy,
 };
-pub use providers::{
-    CompositeKeyProvider, FilePemKeyProvider, VaultKvConfig, VaultKvKeyProvider,
-};
+pub use providers::{CompositeKeyProvider, FilePemKeyProvider, VaultKvConfig, VaultKvKeyProvider};
 pub use signer::Signer;
 pub use sigstore_keyed::{SigstoreSigner, SigstoreVerifier, generate_pem_keypair};
 pub use store::{

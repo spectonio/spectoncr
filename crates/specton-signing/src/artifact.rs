@@ -41,7 +41,10 @@ pub struct Ed25519Envelope {
 }
 
 impl Ed25519Envelope {
-    pub fn to_artifact(&self, signer_identity: impl Into<String>) -> Result<SignatureArtifact, serde_json::Error> {
+    pub fn to_artifact(
+        &self,
+        signer_identity: impl Into<String>,
+    ) -> Result<SignatureArtifact, serde_json::Error> {
         Ok(SignatureArtifact {
             media_type: MEDIA_TYPE_ED25519_V1.into(),
             body: serde_json::to_vec(self)?,
@@ -52,10 +55,7 @@ impl Ed25519Envelope {
 
     pub fn from_artifact(artifact: &SignatureArtifact) -> Result<Self, String> {
         if artifact.media_type != MEDIA_TYPE_ED25519_V1 {
-            return Err(format!(
-                "unsupported media type: {}",
-                artifact.media_type
-            ));
+            return Err(format!("unsupported media type: {}", artifact.media_type));
         }
         serde_json::from_slice(&artifact.body).map_err(|e| e.to_string())
     }

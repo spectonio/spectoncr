@@ -414,10 +414,7 @@ pub(crate) async fn reconcile_image_verification_policy(
         if let Err(e) = sync_to_registry(
             &ctx.http,
             registry_url,
-            &format!(
-                "/v2/_signing/policies/{}/{}",
-                policy.spec.tenant_ref, name
-            ),
+            &format!("/v2/_signing/policies/{}/{}", policy.spec.tenant_ref, name),
             &body,
             ctx.registry_admin_token.as_deref(),
         )
@@ -530,8 +527,7 @@ async fn build_rebuild_emitter_json(
                 .ok_or_else(|| ControllerError::Validation("emitter.project required".into()))?;
             let mut trigger_token: Option<String> = None;
             if let Some(ref secret_name) = emitter.trigger_token_secret_ref {
-                trigger_token =
-                    Some(read_secret_key(&ctx.client, ns, secret_name, "token").await?);
+                trigger_token = Some(read_secret_key(&ctx.client, ns, secret_name, "token").await?);
             }
             Ok(serde_json::json!({
                 "type": "gitlab-trigger",
@@ -548,8 +544,7 @@ async fn build_rebuild_emitter_json(
                 .ok_or_else(|| ControllerError::Validation("emitter.url required".into()))?;
             let mut hmac_secret: Option<String> = None;
             if let Some(ref secret_name) = emitter.hmac_secret_ref {
-                hmac_secret =
-                    Some(read_secret_key(&ctx.client, ns, secret_name, "secret").await?);
+                hmac_secret = Some(read_secret_key(&ctx.client, ns, secret_name, "secret").await?);
             }
             Ok(serde_json::json!({
                 "type": "webhook",
@@ -681,10 +676,7 @@ pub(crate) async fn reconcile_admission_policy(
             policy.spec.tenant_ref
         )));
     }
-    if !matches!(
-        policy.spec.on_unknown.as_str(),
-        "block" | "scan" | "allow"
-    ) {
+    if !matches!(policy.spec.on_unknown.as_str(), "block" | "scan" | "allow") {
         return Err(ControllerError::Validation(format!(
             "onUnknown must be block|scan|allow, got '{}'",
             policy.spec.on_unknown
@@ -731,10 +723,7 @@ pub(crate) async fn reconcile_admission_policy(
         if let Err(e) = sync_to_registry(
             &ctx.http,
             registry_url,
-            &format!(
-                "/v2/_admit/policies/{}/{}",
-                policy.spec.tenant_ref, name
-            ),
+            &format!("/v2/_admit/policies/{}/{}", policy.spec.tenant_ref, name),
             &body,
             ctx.registry_admin_token.as_deref(),
         )

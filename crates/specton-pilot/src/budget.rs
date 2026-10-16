@@ -83,7 +83,9 @@ mod tests {
 
     #[test]
     fn enforces_cap() {
-        let t = BudgetTracker::new(SpendCap { tokens_per_day: 100 });
+        let t = BudgetTracker::new(SpendCap {
+            tokens_per_day: 100,
+        });
         assert!(t.check_and_add("acme", 60).is_ok());
         assert!(t.check_and_add("acme", 50).is_err());
         assert_eq!(t.used_today("acme"), 60);

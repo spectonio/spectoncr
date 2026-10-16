@@ -32,7 +32,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let registry = env::var("SPECTONCR_REGISTRY").unwrap_or_else(|_| "http://127.0.0.1:5000".into());
+    let registry =
+        env::var("SPECTONCR_REGISTRY").unwrap_or_else(|_| "http://127.0.0.1:5000".into());
     let token = env::var("SPECTONCR_TOKEN").unwrap_or_default();
     let tenant = env::var("SPECTONCR_TENANT").unwrap_or_else(|_| "acme".into());
     let client = Arc::new(RegistryClient::new(registry, token));

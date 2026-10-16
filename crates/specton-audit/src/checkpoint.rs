@@ -80,25 +80,24 @@ impl PgCheckpointStore {
 #[async_trait]
 impl CheckpointStore for PgCheckpointStore {
     async fn last(&self) -> Result<Option<Checkpoint>, ExportError> {
-        let row: Option<(i64, i64, i64, Vec<u8>, Option<String>, DateTime<Utc>)> =
-            sqlx::query_as(
-                "SELECT id, range_from, range_to, merkle_root, exported_to, at
+        let row: Option<(i64, i64, i64, Vec<u8>, Option<String>, DateTime<Utc>)> = sqlx::query_as(
+            "SELECT id, range_from, range_to, merkle_root, exported_to, at
                  FROM registry_audit_checkpoints
                  ORDER BY id DESC LIMIT 1",
-            )
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| ExportError::Audit(e.into()))?;
-        Ok(row.map(|(id, range_from, range_to, merkle_root, exported_to, at)| {
-            Checkpoint {
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ExportError::Audit(e.into()))?;
+        Ok(row.map(
+            |(id, range_from, range_to, merkle_root, exported_to, at)| Checkpoint {
                 id,
                 range_from,
                 range_to,
                 merkle_root,
                 exported_to,
                 at,
-            }
-        }))
+            },
+        ))
     }
 
     async fn insert(
@@ -202,13 +201,9 @@ mod tests {
             Err(ExportError::Empty)
         ));
 
-        sink.append(AuditEvent::success(
-            Category::Push,
-            "p3",
-            Actor::system(),
-        ))
-        .await
-        .unwrap();
+        sink.append(AuditEvent::success(Category::Push, "p3", Actor::system()))
+            .await
+            .unwrap();
         let r2 = export_pending(&sink, &cps, &dest, false).await.unwrap();
         assert_eq!(r2.range_from, 4);
         assert_eq!(r2.row_count, 1);

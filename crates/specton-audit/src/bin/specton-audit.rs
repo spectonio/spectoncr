@@ -111,9 +111,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let to_id = flag_i64(&args, "--range-to");
             let dest = FilesystemDestination::new(&to);
             let result = if let (Some(f), Some(t)) = (from, to_id) {
-                export_range(sink.as_ref(), &dest, f, t, compress)
-                    .await?
-                    .0
+                export_range(sink.as_ref(), &dest, f, t, compress).await?.0
             } else {
                 export_pending(sink.as_ref(), backend.checkpoints(), &dest, compress).await?
             };
@@ -167,9 +165,7 @@ async fn build_backend() -> Result<Backend, Box<dyn std::error::Error>> {
 }
 
 fn flag_str(args: &[String], name: &str) -> Option<String> {
-    args.windows(2)
-        .find(|w| w[0] == name)
-        .map(|w| w[1].clone())
+    args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone())
 }
 
 fn flag_i64(args: &[String], name: &str) -> Option<i64> {

@@ -14,8 +14,8 @@ use std::sync::Arc;
 use sigstore::crypto::SigningScheme;
 use specton_signing::{
     CompositeKeyProvider, FilePemKeyProvider, Signer, SigningIdentity, SigstoreSigner,
-    SigstoreVerifier, VerificationPolicy, Verifier, VaultKvConfig, VaultKvKeyProvider,
-    VaultTransitConfig, VaultTransitSigner, generate_pem_keypair,
+    SigstoreVerifier, VaultKvConfig, VaultKvKeyProvider, VaultTransitConfig, VaultTransitSigner,
+    VerificationPolicy, Verifier, generate_pem_keypair,
 };
 
 #[tokio::main]
@@ -88,15 +88,11 @@ async fn cmd_sign(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         let cfg = VaultTransitConfig::from_env()
             .ok_or("VAULT_TOKEN (+ VAULT_ADDR) required for transit sign")?;
         let signer = VaultTransitSigner::new(cfg);
-        signer
-            .sign(&digest, &SigningIdentity::keyed(&key))
-            .await?
+        signer.sign(&digest, &SigningIdentity::keyed(&key)).await?
     } else {
         let keys = build_provider(&key)?;
         let signer = SigstoreSigner::new(keys);
-        signer
-            .sign(&digest, &SigningIdentity::keyed(&key))
-            .await?
+        signer.sign(&digest, &SigningIdentity::keyed(&key)).await?
     };
 
     let json = serde_json::to_string_pretty(&artifact)?;
@@ -131,7 +127,9 @@ async fn cmd_verify(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn build_provider(key_ref: &str) -> Result<Arc<dyn specton_signing::KeyProvider>, Box<dyn std::error::Error>> {
+fn build_provider(
+    key_ref: &str,
+) -> Result<Arc<dyn specton_signing::KeyProvider>, Box<dyn std::error::Error>> {
     let mut b = CompositeKeyProvider::builder().file(Arc::new(FilePemKeyProvider::new()));
     if key_ref.starts_with("vault://")
         && let Some(cfg) = VaultKvConfig::from_env()
@@ -144,7 +142,5 @@ fn build_provider(key_ref: &str) -> Result<Arc<dyn specton_signing::KeyProvider>
 }
 
 fn flag_str(args: &[String], name: &str) -> Option<String> {
-    args.windows(2)
-        .find(|w| w[0] == name)
-        .map(|w| w[1].clone())
+    args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone())
 }

@@ -11,7 +11,10 @@ type HmacSha256 = Hmac<Sha256>;
 pub const GENESIS_PREV: [u8; 32] = [0u8; 32];
 
 /// Build the canonical JSON bytes for an event under a given key id.
-pub fn canonical_bytes(event: &AuditEvent, hmac_key_id: &str) -> Result<Vec<u8>, serde_json::Error> {
+pub fn canonical_bytes(
+    event: &AuditEvent,
+    hmac_key_id: &str,
+) -> Result<Vec<u8>, serde_json::Error> {
     let payload = CanonicalPayload {
         at: &event.at,
         category: event.category.as_str(),
