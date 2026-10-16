@@ -3,6 +3,7 @@
 //! Implements the Docker Registry HTTP API V2 / OCI Distribution Specification
 //! with multi-tenant isolation, JWT authentication, and filesystem-backed storage.
 
+mod admission;
 mod audit;
 mod dashboard;
 mod promote;
@@ -116,6 +117,10 @@ struct AppState {
     audit_log: Arc<audit::RegistryAuditLog>,
     /// Optional JSONL export + Merkle checkpoint handles (005 A3).
     audit_export: Option<Arc<AuditExportRuntime>>,
+    /// Scanner Redis result store for admission (002). None when scanner off.
+    scan_store: Option<Arc<dyn specton_scanner::EphemeralStore>>,
+    /// Admission decision cache (002).
+    admission_cache: Arc<admission::DecisionCache>,
     /// Process start time for uptime tracking.
     #[allow(dead_code)]
     start_time: Instant,
@@ -949,6 +954,21 @@ async fn get_manifest(
         enforce_pull_signature_policy(
             &state,
             &claims.sub,
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &digest,
+        )
+        .await?;
+    }
+
+    // Admission gate (002). Skip cosign `.sig` tags.
+    if state.config.admission.enabled
+        && !specton_signing::is_cosign_sig_tag(&params.reference)
+    {
+        enforce_admission(
+            &state,
+            &claims,
             &params.tenant,
             &params.project,
             &params.name,
@@ -3710,6 +3730,268 @@ struct RebuildSubUpsert {
     spec: specton_rebuild::SubscriptionSpec,
 }
 
+// ── Admission (002) ──────────────────────────────────────────────────────────
+
+fn claims_bypass_admission(claims: &TokenClaims) -> bool {
+    claims.sub.contains("bypass-admission")
+        || (claims.role == Role::Admin
+            && claims.scopes.iter().any(|s| {
+                s.repository == "*" || s.actions.contains(&Action::Manage)
+            }))
+}
+
+async fn enforce_admission(
+    state: &AppState,
+    claims: &TokenClaims,
+    tenant: &str,
+    project: &str,
+    repository: &str,
+    digest: &str,
+) -> Result<(), RegistryError> {
+    let pool = match state.gc_pool.as_ref() {
+        Some(p) => p,
+        None => return Ok(()), // no PG → no policies loaded
+    };
+    let store = admission::PgAdmissionStore::new(pool.clone());
+    let policies = store.list_tenant(tenant).await.unwrap_or_default();
+    if policies.is_empty() {
+        return Ok(());
+    }
+
+    let scan = admission::fetch_scan(state.scan_store.as_ref(), digest).await;
+    let signature_ok = if policies.iter().any(|p| p.spec.signature_required) {
+        // Reuse signing policy path when signing enabled; else treat as missing.
+        if state.config.signing.enabled {
+            Some(
+                enforce_pull_signature_policy(state, &claims.sub, tenant, project, repository, digest)
+                    .await
+                    .is_ok(),
+            )
+        } else {
+            Some(false)
+        }
+    } else {
+        Some(true)
+    };
+
+    let bypass = claims_bypass_admission(claims);
+    let verdict = admission::evaluate(
+        &policies,
+        scan.as_ref(),
+        &state.admission_cache,
+        admission::EvaluateInput {
+            tenant,
+            project,
+            repository,
+            digest,
+            subject: &claims.sub,
+            bypass,
+            signature_ok,
+        },
+    )
+    .await;
+
+    let _ = store
+        .record_decision(digest, policies.first().map(|p| p.id), &verdict, &claims.sub)
+        .await;
+
+    match verdict {
+        admission::AdmissionVerdict::Allow => Ok(()),
+        admission::AdmissionVerdict::Warn { reason } => {
+            warn!(%digest, %reason, "admission warn");
+            let _ = state
+                .audit_log
+                .record(audit::RegistryAuditEvent {
+                    timestamp: chrono::Utc::now(),
+                    event_type: "admission.warn".into(),
+                    subject: claims.sub.clone(),
+                    tenant: tenant.into(),
+                    project: project.into(),
+                    repository: repository.into(),
+                    reference: digest.into(),
+                    digest: digest.into(),
+                    size_bytes: 0,
+                    status_code: 200,
+                    duration_ms: 0,
+                })
+                .await;
+            Ok(())
+        }
+        admission::AdmissionVerdict::Block { reason, .. } => {
+            let _ = state
+                .audit_log
+                .record(audit::RegistryAuditEvent {
+                    timestamp: chrono::Utc::now(),
+                    event_type: "admission.block".into(),
+                    subject: claims.sub.clone(),
+                    tenant: tenant.into(),
+                    project: project.into(),
+                    repository: repository.into(),
+                    reference: digest.into(),
+                    digest: digest.into(),
+                    size_bytes: 0,
+                    status_code: 403,
+                    duration_ms: 0,
+                })
+                .await;
+            Err(RegistryError::ManifestUnverified { reason })
+        }
+    }
+}
+
+fn admission_enabled(state: &AppState) -> Result<(), RegistryError> {
+    if state.config.admission.enabled {
+        Ok(())
+    } else {
+        Err(RegistryError::Forbidden {
+            reason: "admission disabled ([admission] enabled=false)".into(),
+        })
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AdmitTestBody {
+    #[serde(rename = "ref")]
+    image_ref: String,
+    #[serde(default)]
+    policy_name: Option<String>,
+}
+
+/// POST /v2/_admit/test — dry-run evaluator.
+#[instrument(name = "admit_test", skip(state, claims))]
+async fn admit_test(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    axum::Json(body): axum::Json<AdmitTestBody>,
+) -> Result<Response, RegistryError> {
+    admission_enabled(&state)?;
+    let parsed = promote::ImageRef::parse(&body.image_ref)?;
+    authorize(
+        &claims,
+        &parsed.tenant,
+        &parsed.project,
+        &parsed.repository,
+        Action::Manage,
+    )?;
+    let (_, bytes) = {
+        // Resolve digest via promote helper paths
+        let store = &state.store;
+        let digest = if parsed.reference.starts_with("sha256:") {
+            parsed.reference.clone()
+        } else {
+            read_tag_link(
+                store,
+                &parsed.tenant,
+                &parsed.project,
+                &parsed.repository,
+                &parsed.reference,
+            )
+            .await?
+            .ok_or_else(|| RegistryError::TagUnknown {
+                tag: parsed.reference.clone(),
+            })?
+        };
+        (digest.clone(), digest)
+    };
+    let digest = bytes;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("admission requires Postgres".into()))?;
+    let store = admission::PgAdmissionStore::new(pool);
+    let mut policies = store.list_tenant(&parsed.tenant).await?;
+    if let Some(name) = &body.policy_name {
+        policies.retain(|p| &p.name == name);
+    }
+    let scan = admission::fetch_scan(state.scan_store.as_ref(), &digest).await;
+    let verdict = admission::evaluate(
+        &policies,
+        scan.as_ref(),
+        &state.admission_cache,
+        admission::EvaluateInput {
+            tenant: &parsed.tenant,
+            project: &parsed.project,
+            repository: &parsed.repository,
+            digest: &digest,
+            subject: &claims.sub,
+            bypass: false,
+            signature_ok: Some(true),
+        },
+    )
+    .await;
+    Ok((StatusCode::OK, axum::Json(verdict)).into_response())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AdmissionPolicyBody {
+    #[serde(default)]
+    id: Option<Uuid>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    spec: admission::AdmissionPolicySpec,
+}
+
+/// PUT /v2/_admit/policies/{tenant}/{name}
+#[instrument(name = "upsert_admission_policy", skip(state, claims))]
+async fn upsert_admission_policy(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path((tenant, name)): Path<(String, String)>,
+    axum::Json(body): axum::Json<AdmissionPolicyBody>,
+) -> Result<Response, RegistryError> {
+    admission_enabled(&state)?;
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "admin required to upsert AdmissionPolicy".into(),
+        });
+    }
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("admission requires Postgres".into()))?;
+    let policy = admission::AdmissionPolicy {
+        id: body.id.unwrap_or_else(Uuid::new_v4),
+        name,
+        tenant,
+        spec: body.spec,
+        enabled: body.enabled.unwrap_or(true),
+        updated_at: chrono::Utc::now(),
+    };
+    admission::PgAdmissionStore::new(pool)
+        .upsert(&policy)
+        .await?;
+    Ok((StatusCode::OK, axum::Json(&policy)).into_response())
+}
+
+/// GET /v2/_admit/policies?tenant=
+#[instrument(name = "list_admission_policies", skip(state, claims))]
+async fn list_admission_policies(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, RegistryError> {
+    admission_enabled(&state)?;
+    let tenant = q
+        .get("tenant")
+        .cloned()
+        .ok_or_else(|| RegistryError::ManifestInvalid {
+            reason: "tenant query required".into(),
+        })?;
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "admin required to list admission policies".into(),
+        });
+    }
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("admission requires Postgres".into()))?;
+    let rows = admission::PgAdmissionStore::new(pool)
+        .list_tenant(&tenant)
+        .await?;
+    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "items": rows }))).into_response())
+}
+
 // ── Promotion (006) ──────────────────────────────────────────────────────────
 
 fn promotion_enabled(state: &AppState) -> Result<(), RegistryError> {
@@ -3768,17 +4050,75 @@ async fn promote_handler(
     let mode = match body.mode.as_deref() {
         Some("dry_run") | Some("dry-run") => promote::PromoteMode::DryRun,
         Some("on_policy_pass") => promote::PromoteMode::OnPolicyPass {
-            policy: body.policy.unwrap_or_default(),
+            policy: body.policy.clone().unwrap_or_default(),
         },
         _ => promote::PromoteMode::Force,
     };
+
+    if let promote::PromoteMode::OnPolicyPass { ref policy } = mode {
+        // C3: evaluate dest-scoped admission against source digest before copy.
+        if state.config.admission.enabled {
+            let (_, man_bytes) = {
+                let dig = if source.reference.starts_with("sha256:") {
+                    source.reference.clone()
+                } else {
+                    read_tag_link(
+                        &state.store,
+                        &source.tenant,
+                        &source.project,
+                        &source.repository,
+                        &source.reference,
+                    )
+                    .await?
+                    .ok_or_else(|| RegistryError::TagUnknown {
+                        tag: source.reference.clone(),
+                    })?
+                };
+                (dig.clone(), dig)
+            };
+            let digest = man_bytes;
+            let pool = state.gc_pool.as_ref().ok_or_else(|| {
+                RegistryError::Internal("on_policy_pass requires Postgres".into())
+            })?;
+            let mut policies = admission::PgAdmissionStore::new(pool.clone())
+                .list_tenant(&dest.tenant)
+                .await?;
+            if !policy.is_empty() {
+                policies.retain(|p| p.name == *policy);
+            }
+            let scan = admission::fetch_scan(state.scan_store.as_ref(), &digest).await;
+            let verdict = admission::evaluate(
+                &policies,
+                scan.as_ref(),
+                &state.admission_cache,
+                admission::EvaluateInput {
+                    tenant: &dest.tenant,
+                    project: &dest.project,
+                    repository: &dest.repository,
+                    digest: &digest,
+                    subject: &claims.sub,
+                    bypass: false,
+                    signature_ok: Some(true),
+                },
+            )
+            .await;
+            if let admission::AdmissionVerdict::Block { reason, .. } = verdict {
+                return Err(RegistryError::ManifestUnverified {
+                    reason: format!("promote on_policy_pass failed: {reason}"),
+                });
+            }
+        }
+    }
 
     let req = promote::PromoteRequest {
         source,
         dest,
         include_signatures: body.include_signatures,
         include_attestations: body.include_attestations,
-        mode,
+        mode: match mode {
+            promote::PromoteMode::OnPolicyPass { .. } => promote::PromoteMode::Force,
+            other => other,
+        },
     };
 
     let outcome = promote::promote(promote::PromoteParams {
@@ -5436,6 +5776,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     let scanner_queue = scanner_runtime.as_ref().map(|rt| rt.queue.clone());
+    let scan_store = scanner_runtime.as_ref().map(|rt| rt.scan_store.clone());
     let scanner_router = scanner_runtime.as_ref().map(|rt| rt.router.clone());
 
     // ── Online-GC refcounter (009 slice 1) ───────────────────────────
@@ -5816,6 +6157,7 @@ async fn main() -> anyhow::Result<()> {
         Some(runtime)
     };
 
+    let admission_ttl = config.admission.cache_ttl_secs;
     let state = AppState {
         store,
         config: Arc::new(config),
@@ -5836,6 +6178,8 @@ async fn main() -> anyhow::Result<()> {
         artifact_registry,
         audit_log: audit_log.clone(),
         audit_export,
+        scan_store,
+        admission_cache: Arc::new(admission::DecisionCache::new(admission_ttl)),
         start_time,
     };
 
@@ -5977,6 +6321,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/v2/_promote", post(promote_handler))
         .route("/v2/_promote/history", get(promote_history))
         .route("/v2/_promote/{id}", get(promote_status))
+        // Admission gate (002)
+        .route("/v2/_admit/test", post(admit_test))
+        .route("/v2/_admit/policies", get(list_admission_policies))
+        .route(
+            "/v2/_admit/policies/{tenant}/{name}",
+            put(upsert_admission_policy),
+        )
         // Catalog
         .route("/v2/_catalog", get(catalog))
         // Online GC control plane (009 slice 2-3)

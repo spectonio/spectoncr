@@ -389,6 +389,77 @@ pub struct RebuildSubscriptionStatus {
 }
 
 // ---------------------------------------------------------------------------
+// AdmissionPolicy CRD (design 002 D2)
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AdmissionSeverityRules {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critical: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub high: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub medium: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AdmissionSeverityThreshold {
+    #[serde(default)]
+    pub block: AdmissionSeverityRules,
+    #[serde(default)]
+    pub warn: AdmissionSeverityRules,
+}
+
+#[derive(CustomResource, Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[kube(
+    group = "spectoncr.io",
+    version = "v1alpha1",
+    kind = "AdmissionPolicy",
+    plural = "admissionpolicies",
+    shortname = "admit",
+    status = "AdmissionPolicyStatus",
+    namespaced
+)]
+#[serde(rename_all = "camelCase")]
+pub struct AdmissionPolicySpec {
+    pub tenant_ref: String,
+    #[serde(default)]
+    pub scope: PolicyScopeSpec,
+    #[serde(default)]
+    pub signature_required: bool,
+    #[serde(default)]
+    pub severity_threshold: AdmissionSeverityThreshold,
+    #[serde(default = "default_on_unknown")]
+    pub on_unknown: String,
+    #[serde(default = "default_on_timeout")]
+    pub on_timeout: String,
+    #[serde(default = "default_scan_wait")]
+    pub scan_wait_secs: u64,
+}
+
+fn default_on_unknown() -> String {
+    "block".into()
+}
+fn default_on_timeout() -> String {
+    "block".into()
+}
+fn default_scan_wait() -> u64 {
+    5
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
+pub struct AdmissionPolicyStatus {
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conditions: Vec<Condition>,
+}
+
+// ---------------------------------------------------------------------------
 // Context shared across reconcilers
 // ---------------------------------------------------------------------------
 
@@ -1285,6 +1356,113 @@ fn rebuild_subscription_error_policy(
     Action::requeue(Duration::from_secs(60))
 }
 
+async fn reconcile_admission_policy(
+    policy: Arc<AdmissionPolicy>,
+    ctx: Arc<Ctx>,
+) -> Result<Action, ControllerError> {
+    let name = policy.name_any();
+    let ns = policy.namespace().unwrap_or_default();
+    info!(%name, %ns, "reconciling AdmissionPolicy");
+
+    let tenants: Api<Tenant> = Api::all(ctx.client.clone());
+    if tenants.get_opt(&policy.spec.tenant_ref).await?.is_none() {
+        return Err(ControllerError::Validation(format!(
+            "referenced Tenant '{}' not found",
+            policy.spec.tenant_ref
+        )));
+    }
+    if !matches!(
+        policy.spec.on_unknown.as_str(),
+        "block" | "scan" | "allow"
+    ) {
+        return Err(ControllerError::Validation(format!(
+            "onUnknown must be block|scan|allow, got '{}'",
+            policy.spec.on_unknown
+        )));
+    }
+    if !matches!(policy.spec.on_timeout.as_str(), "block" | "warn" | "allow") {
+        return Err(ControllerError::Validation(format!(
+            "onTimeout must be block|warn|allow, got '{}'",
+            policy.spec.on_timeout
+        )));
+    }
+
+    let uid = policy.uid().unwrap_or_default();
+    let body = serde_json::json!({
+        "id": uid.to_string(),
+        "enabled": true,
+        "spec": {
+            "scope": {
+                "projects": policy.spec.scope.projects,
+                "repositories": policy.spec.scope.repositories,
+            },
+            "signature_required": policy.spec.signature_required,
+            "severity_threshold": {
+                "block": {
+                    "critical": policy.spec.severity_threshold.block.critical,
+                    "high": policy.spec.severity_threshold.block.high,
+                    "medium": policy.spec.severity_threshold.block.medium,
+                    "low": policy.spec.severity_threshold.block.low,
+                },
+                "warn": {
+                    "critical": policy.spec.severity_threshold.warn.critical,
+                    "high": policy.spec.severity_threshold.warn.high,
+                    "medium": policy.spec.severity_threshold.warn.medium,
+                    "low": policy.spec.severity_threshold.warn.low,
+                },
+            },
+            "on_unknown": policy.spec.on_unknown,
+            "on_timeout": policy.spec.on_timeout,
+            "scan_wait_secs": policy.spec.scan_wait_secs,
+        }
+    });
+
+    if let Some(ref registry_url) = ctx.registry_service_url {
+        if let Err(e) = sync_to_registry(
+            &ctx.http,
+            registry_url,
+            &format!(
+                "/v2/_admit/policies/{}/{}",
+                policy.spec.tenant_ref, name
+            ),
+            &body,
+            ctx.registry_admin_token.as_deref(),
+        )
+        .await
+        {
+            warn!(%name, error = %e, "failed to sync AdmissionPolicy; will retry");
+            return Ok(Action::requeue(Duration::from_secs(30)));
+        }
+    } else {
+        info!(%name, "REGISTRY_SERVICE_URL unset; AdmissionPolicy validated only");
+    }
+
+    let api: Api<AdmissionPolicy> = Api::namespaced(ctx.client.clone(), &ns);
+    let now = Utc::now().to_rfc3339();
+    let status = serde_json::json!({
+        "phase": "Active",
+        "conditions": [{
+            "type": "Ready",
+            "status": "True",
+            "lastTransitionTime": now,
+            "reason": "Reconciled",
+            "message": "AdmissionPolicy reconciled",
+        }]
+    });
+    update_status(&api, &name, status).await?;
+    Ok(Action::requeue(Duration::from_secs(300)))
+}
+
+fn admission_policy_error_policy(
+    policy: Arc<AdmissionPolicy>,
+    error: &ControllerError,
+    _ctx: Arc<Ctx>,
+) -> Action {
+    let name = policy.name_any();
+    error!(%name, %error, "admission-policy reconciliation failed");
+    Action::requeue(Duration::from_secs(60))
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -1421,6 +1599,22 @@ async fn main() -> anyhow::Result<()> {
             }
         });
 
+    // --- AdmissionPolicy controller (002 D2) ---
+    let admits: Api<AdmissionPolicy> = Api::all(client.clone());
+    let admit_ctrl = Controller::new(admits, WatcherConfig::default())
+        .shutdown_on_signal()
+        .run(
+            reconcile_admission_policy,
+            admission_policy_error_policy,
+            ctx.clone(),
+        )
+        .for_each(|res| async move {
+            match res {
+                Ok(o) => info!(resource = ?o, "admission-policy reconciled"),
+                Err(e) => error!(error = %e, "admission-policy reconcile loop error"),
+            }
+        });
+
     // --- SpectonRegistry lifecycle operator ---
     // Owned objects are watched too, so a Deployment finishing its rollout
     // (or someone editing it) triggers a reconcile of its SpectonRegistry.
@@ -1489,6 +1683,7 @@ async fn main() -> anyhow::Result<()> {
         () = token_ctrl => info!("token-policy controller exited"),
         () = ivp_ctrl => info!("image-verification-policy controller exited"),
         () = rsub_ctrl => info!("rebuild-subscription controller exited"),
+        () = admit_ctrl => info!("admission-policy controller exited"),
         () = registry_ctrl => info!("spectonregistry operator exited"),
     }
 

@@ -137,14 +137,14 @@ pulls blocked unless policy (scan + signature) passes.
 |----|-------|---------|
 | C1 | Same-backend retag `_promote` + schema + CLI | A2 | ✅ landed locally |
 | C2 | Cross-backend copy + copy signatures | B3, C1 | ✅ landed with C1 (same-store copy + sigs) |
-| C3 | `OnPolicyPass` + history + dashboard | C2, admission slice 1 |
+| C3 | `OnPolicyPass` + history + dashboard | C2, admission slice 1 | ✅ landed locally (history + on_policy_pass) |
 
 ### Admission (002)
 | PR | Title | Depends |
 |----|-------|---------|
-| D1 | Evaluator + Redis cache + block/allow on pull | scanner results |
-| D2 | `AdmissionPolicy` CRD + scan-on-unknown | D1 |
-| D3 | Bypass permission + `_admit/test` + audit | A2, D2; B4 for signatureRequired |
+| D1 | Evaluator + Redis cache + block/allow on pull | scanner results | ✅ landed locally |
+| D2 | `AdmissionPolicy` CRD + scan-on-unknown | D1 | ✅ landed locally |
+| D3 | Bypass permission + `_admit/test` + audit | A2, D2; B4 for signatureRequired | ✅ landed locally |
 
 (Rename PRs in GitHub as `feat(promote):…` / `feat(admission):…` — letters
 here are phase-local.)

@@ -32,6 +32,28 @@ pub struct RegistryConfig {
     /// Atomic promotion API (design 006). Kill-switch OFF by default.
     #[serde(default)]
     pub promotion: PromotionConfig,
+    /// Pull-time admission gate (design 002). Kill-switch OFF by default.
+    #[serde(default)]
+    pub admission: AdmissionConfig,
+}
+
+/// `[admission]` — design 002; kill-switch OFF by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AdmissionConfig {
+    /// Master kill-switch. When false, pulls are never gated.
+    pub enabled: bool,
+    /// Decision cache TTL in seconds (default 30).
+    pub cache_ttl_secs: u64,
+}
+
+impl Default for AdmissionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cache_ttl_secs: 30,
+        }
+    }
 }
 
 /// `[promotion]` — design 006; kill-switch OFF by default.
@@ -803,6 +825,7 @@ impl Default for RegistryConfig {
             signing: SigningConfig::default(),
             rebuild: RebuildConfig::default(),
             promotion: PromotionConfig::default(),
+            admission: AdmissionConfig::default(),
         }
     }
 }

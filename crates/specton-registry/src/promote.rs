@@ -251,11 +251,8 @@ pub struct PromoteParams<'a> {
 pub async fn promote(p: PromoteParams<'_>) -> Result<PromoteOutcome, RegistryError> {
     let id = Uuid::new_v4();
     let dry = matches!(p.req.mode, PromoteMode::DryRun);
-    if matches!(p.req.mode, PromoteMode::OnPolicyPass { .. }) {
-        return Err(RegistryError::Forbidden {
-            reason: "on_policy_pass requires admission (C3); use force or dry_run".into(),
-        });
-    }
+    // OnPolicyPass is evaluated by the HTTP handler before calling promote
+    // (needs admission policies + scan results from AppState).
 
     let (src_digest, manifest_bytes) = resolve_digest(p.store.as_ref(), &p.req.source).await?;
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).map_err(|e| {

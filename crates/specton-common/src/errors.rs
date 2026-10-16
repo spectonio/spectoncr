@@ -67,6 +67,10 @@ pub enum RegistryError {
     /// Durable audit sink unavailable — write ops fail closed (design 005).
     #[error("audit unavailable: {0}")]
     AuditUnavailable(String),
+
+    /// Pull blocked by admission / signature policy (design 002).
+    #[error("manifest unverified: {reason}")]
+    ManifestUnverified { reason: String },
 }
 
 /// OCI error response envelope.
@@ -103,6 +107,7 @@ impl RegistryError {
             Self::UpstreamError(_) => "UPSTREAM_ERROR",
             Self::RetriesExhausted(_) => "RETRIES_EXHAUSTED",
             Self::FailoverError(_) => "FAILOVER_ERROR",
+            Self::ManifestUnverified { .. } => "MANIFEST_UNVERIFIED",
         }
     }
 
@@ -120,7 +125,7 @@ impl RegistryError {
             Self::Unauthorized | Self::TokenExpired | Self::TokenInvalid { .. } => {
                 StatusCode::UNAUTHORIZED
             }
-            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } | Self::ManifestUnverified { .. } => StatusCode::FORBIDDEN,
             Self::RateLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal(_) | Self::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::CircuitBreakerOpen { .. } | Self::AuditUnavailable(_) => {
@@ -152,6 +157,13 @@ impl IntoResponse for RegistryError {
             let header_val = format!("Bearer realm=\"/auth/token\",service=\"{service}\"");
             if let Ok(val) = axum::http::HeaderValue::from_str(&header_val) {
                 response.headers_mut().insert("www-authenticate", val);
+            }
+        }
+        if let Self::ManifestUnverified { reason } = &self {
+            if let Ok(val) = axum::http::HeaderValue::from_str(reason) {
+                response
+                    .headers_mut()
+                    .insert("www-spectoncr-reason", val);
             }
         }
         response

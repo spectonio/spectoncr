@@ -137,6 +137,10 @@ data:
     promotion:
       enabled: {{ .Values.promotion.enabled }}
 
+    admission:
+      enabled: {{ .Values.admission.enabled }}
+      cache_ttl_secs: {{ .Values.admission.cacheTtlSecs }}
+
   auth.yaml: |
     server:
       listen_addr: "0.0.0.0:{{ .Values.auth.port }}"

@@ -643,6 +643,12 @@ rebuild:
 promotion:
   enabled: false
 
+## -- Pull-time admission gate (design 002) --
+## Kill-switch OFF by default. When enabled, AdmissionPolicy CRDs gate pulls.
+admission:
+  enabled: false
+  cacheTtlSecs: 30
+
 ## -- Scanner (CVE scanning — runs in-process inside the registry) --
 ## When enabled, every manifest push enqueues a scan; workers materialize
 ## results to Redis (1h TTL) and Postgres (audit log + suppressions). The

@@ -23,7 +23,7 @@ telemetry, auto-rebuild, AI agent).
 | #   | Feature                          | Doc                                            | Status   | Effort   |
 | --- | -------------------------------- | ---------------------------------------------- | -------- | -------- |
 | 001 | Cosign/Notation image signing    | [001-image-signing.md](./001-image-signing.md) | in-progress (B1–B4) | 4 slices |
-| 002 | Pull-time admission gate         | [002-admission-gate.md](./002-admission-gate.md) | proposed | 3 slices |
+| 002 | Pull-time admission gate         | [002-admission-gate.md](./002-admission-gate.md) | in-progress (D1–D3) | 3 slices |
 | 003 | Tag immutability + quarantine    | [003-tag-immutability-quarantine.md](./003-tag-immutability-quarantine.md) | proposed | 3 slices |
 | 004 | Garbage collection + retention   | [004-gc-retention.md](./004-gc-retention.md)   | proposed | 4 slices |
 | 005 | Append-only signed audit log     | [005-audit-log.md](./005-audit-log.md)         | shipped (A1–A3) | 3 slices |
