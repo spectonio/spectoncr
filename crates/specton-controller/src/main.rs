@@ -3,474 +3,35 @@ use std::time::Duration;
 
 use chrono::Utc;
 use futures::StreamExt;
-use kube::api::{Api, Patch, PatchParams, PostParams};
+use kube::api::{Api, PostParams};
 use kube::runtime::Controller;
-use kube::runtime::controller::Action;
 use kube::runtime::reflector::ObjectRef;
 use kube::runtime::watcher::Config as WatcherConfig;
-use kube::{Client, CustomResource, CustomResourceExt, Resource, ResourceExt};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use tracing::{error, info, warn};
+use kube::{Client, CustomResourceExt, ResourceExt};
+use tracing::{error, info};
 
 mod operator;
+mod policies;
+mod tenancy;
 
 use operator::SpectonRegistry;
 use operator::reconcile::{
     OperatorCtx, error_policy as operator_error_policy, reconcile as reconcile_registry,
 };
-
-// ---------------------------------------------------------------------------
-// Shared types
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub struct Condition {
-    #[serde(rename = "type")]
-    pub type_: String,
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_transition_time: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-// ---------------------------------------------------------------------------
-// Tenant CRD
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub struct TenantQuotas {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_projects: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_repositories: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_storage_bytes: Option<u64>,
-}
-
-#[derive(CustomResource, Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[kube(
-    group = "spectoncr.io",
-    version = "v1alpha1",
-    kind = "Tenant",
-    plural = "tenants",
-    status = "TenantStatus",
-    namespaced = false
-)]
-pub struct TenantSpec {
-    pub display_name: String,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub storage_backend: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rate_limit_rps: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_ip_ranges: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quotas: Option<TenantQuotas>,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub struct TenantStatus {
-    #[serde(default)]
-    pub phase: String,
-    #[serde(default)]
-    pub project_count: u32,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub conditions: Vec<Condition>,
-}
-
-// ---------------------------------------------------------------------------
-// Project CRD
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub struct RetentionPolicy {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tag_count: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expire_days: Option<u32>,
-}
-
-#[derive(CustomResource, Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[kube(
-    group = "spectoncr.io",
-    version = "v1alpha1",
-    kind = "Project",
-    plural = "projects",
-    status = "ProjectStatus",
-    namespaced
-)]
-pub struct ProjectSpec {
-    pub tenant_ref: String,
-    pub display_name: String,
-    pub visibility: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub immutable_tags: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retention_policy: Option<RetentionPolicy>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub struct ProjectStatus {
-    #[serde(default)]
-    pub phase: String,
-    #[serde(default)]
-    pub repository_count: u32,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub conditions: Vec<Condition>,
-}
-
-// ---------------------------------------------------------------------------
-// AccessPolicy CRD
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub struct Subject {
-    /// One of "User", "Group", or "ServiceAccount".
-    pub kind: String,
-    pub name: String,
-}
-
-#[derive(CustomResource, Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[kube(
-    group = "spectoncr.io",
-    version = "v1alpha1",
-    kind = "AccessPolicy",
-    plural = "accesspolicies",
-    status = "AccessPolicyStatus",
-    namespaced
-)]
-pub struct AccessPolicySpec {
-    pub tenant_ref: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_ref: Option<String>,
-    pub subjects: Vec<Subject>,
-    /// One of "admin", "maintainer", or "reader".
-    pub role: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actions: Option<Vec<String>>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub struct AccessPolicyStatus {
-    #[serde(default)]
-    pub phase: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub conditions: Vec<Condition>,
-}
-
-// ---------------------------------------------------------------------------
-// TokenPolicy CRD
-// ---------------------------------------------------------------------------
-
-#[derive(CustomResource, Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[kube(
-    group = "spectoncr.io",
-    version = "v1alpha1",
-    kind = "TokenPolicy",
-    plural = "tokenpolicies",
-    status = "TokenPolicyStatus",
-    namespaced
-)]
-pub struct TokenPolicySpec {
-    pub tenant_ref: String,
-    pub max_ttl_seconds: u64,
-    pub default_ttl_seconds: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub allowed_ip_ranges: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub require_mfa: Option<bool>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub struct TokenPolicyStatus {
-    #[serde(default)]
-    pub phase: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub conditions: Vec<Condition>,
-}
-
-// ---------------------------------------------------------------------------
-// ImageVerificationPolicy CRD (design 001 B4)
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PolicyScopeSpec {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub projects: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub repositories: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct TrustedSignerSpec {
-    /// `Key` or `Keyless` (keyless is v1.1).
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub key_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub identity_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub issuer: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subject_pattern: Option<String>,
-}
-
-#[derive(CustomResource, Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[kube(
-    group = "spectoncr.io",
-    version = "v1alpha1",
-    kind = "ImageVerificationPolicy",
-    plural = "imageverificationpolicies",
-    shortname = "ivp",
-    status = "ImageVerificationPolicyStatus",
-    namespaced
-)]
-#[serde(rename_all = "camelCase")]
-pub struct ImageVerificationPolicySpec {
-    pub tenant_ref: String,
-    #[serde(default)]
-    pub scope: PolicyScopeSpec,
-    #[serde(default = "default_true")]
-    pub required: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub trusted_signers: Vec<TrustedSignerSpec>,
-    /// `block` | `warn` | `log`
-    #[serde(default = "default_on_violation")]
-    pub on_violation: String,
-}
-
-fn default_on_violation() -> String {
-    "block".into()
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub struct ImageVerificationPolicyStatus {
-    #[serde(default)]
-    pub phase: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub conditions: Vec<Condition>,
-}
-
-// ---------------------------------------------------------------------------
-// RebuildSubscription CRD (design 018 R2)
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct RebuildWatchSpec {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub bases: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub descendants: Vec<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct RebuildTriggersSpec {
-    #[serde(default = "default_true")]
-    pub on_cve_fix: bool,
-    #[serde(default)]
-    pub on_base_push: bool,
-    #[serde(default = "default_min_sev")]
-    pub min_severity_fixed: String,
-}
-
-fn default_min_sev() -> String {
-    "high".into()
-}
-
-impl Default for RebuildTriggersSpec {
-    fn default() -> Self {
-        Self {
-            on_cve_fix: true,
-            on_base_push: false,
-            min_severity_fixed: default_min_sev(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct RebuildEmitterSpec {
-    /// `github-dispatch` | `gitlab-trigger` | `webhook` | `tekton`
-    #[serde(rename = "type")]
-    pub type_: String,
-    // GitHub
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repo: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event_type: Option<String>,
-    /// Secret name holding the GitHub PAT (key `token` by default).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token_secret_ref: Option<String>,
-    // GitLab
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "ref")]
-    pub git_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trigger_token_secret_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_base: Option<String>,
-    // Webhook / Tekton
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hmac_secret_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub header_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_secret_ref: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_header_name: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct RebuildRateLimitSpec {
-    #[serde(default = "default_per_day")]
-    pub per_downstream_per_day: i32,
-}
-
-fn default_per_day() -> i32 {
-    1
-}
-
-impl Default for RebuildRateLimitSpec {
-    fn default() -> Self {
-        Self {
-            per_downstream_per_day: default_per_day(),
-        }
-    }
-}
-
-#[derive(CustomResource, Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[kube(
-    group = "spectoncr.io",
-    version = "v1alpha1",
-    kind = "RebuildSubscription",
-    plural = "rebuildsubscriptions",
-    shortname = "rsub",
-    status = "RebuildSubscriptionStatus",
-    namespaced
-)]
-#[serde(rename_all = "camelCase")]
-pub struct RebuildSubscriptionSpec {
-    pub tenant_ref: String,
-    #[serde(default)]
-    pub watch: RebuildWatchSpec,
-    #[serde(default)]
-    pub triggers: RebuildTriggersSpec,
-    pub emitter: RebuildEmitterSpec,
-    #[serde(default)]
-    pub rate_limit: RebuildRateLimitSpec,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub struct RebuildSubscriptionStatus {
-    #[serde(default)]
-    pub phase: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub conditions: Vec<Condition>,
-}
-
-// ---------------------------------------------------------------------------
-// AdmissionPolicy CRD (design 002 D2)
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct AdmissionSeverityRules {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub critical: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub high: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub medium: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub low: Option<String>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct AdmissionSeverityThreshold {
-    #[serde(default)]
-    pub block: AdmissionSeverityRules,
-    #[serde(default)]
-    pub warn: AdmissionSeverityRules,
-}
-
-#[derive(CustomResource, Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-#[kube(
-    group = "spectoncr.io",
-    version = "v1alpha1",
-    kind = "AdmissionPolicy",
-    plural = "admissionpolicies",
-    shortname = "admit",
-    status = "AdmissionPolicyStatus",
-    namespaced
-)]
-#[serde(rename_all = "camelCase")]
-pub struct AdmissionPolicySpec {
-    pub tenant_ref: String,
-    #[serde(default)]
-    pub scope: PolicyScopeSpec,
-    #[serde(default)]
-    pub signature_required: bool,
-    #[serde(default)]
-    pub severity_threshold: AdmissionSeverityThreshold,
-    #[serde(default = "default_on_unknown")]
-    pub on_unknown: String,
-    #[serde(default = "default_on_timeout")]
-    pub on_timeout: String,
-    #[serde(default = "default_scan_wait")]
-    pub scan_wait_secs: u64,
-}
-
-fn default_on_unknown() -> String {
-    "block".into()
-}
-fn default_on_timeout() -> String {
-    "block".into()
-}
-fn default_scan_wait() -> u64 {
-    5
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema)]
-pub struct AdmissionPolicyStatus {
-    #[serde(default)]
-    pub phase: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub conditions: Vec<Condition>,
-}
+use tenancy::{AccessPolicy, Project, Tenant, TokenPolicy};
 
 // ---------------------------------------------------------------------------
 // Context shared across reconcilers
 // ---------------------------------------------------------------------------
 
-struct Ctx {
-    client: Client,
-    http: reqwest::Client,
-    auth_service_url: String,
-    /// Registry base URL for ImageVerificationPolicy sync (optional).
-    registry_service_url: Option<String>,
+pub(crate) struct Ctx {
+    pub(crate) client: Client,
+    pub(crate) http: reqwest::Client,
+    pub(crate) auth_service_url: String,
+    /// Registry base URL for policy sync (optional).
+    pub(crate) registry_service_url: Option<String>,
     /// Bearer token for admin PUT to registry (optional).
-    registry_admin_token: Option<String>,
+    pub(crate) registry_admin_token: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -478,7 +39,7 @@ struct Ctx {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, thiserror::Error)]
-enum ControllerError {
+pub(crate) enum ControllerError {
     #[error("Kubernetes API error: {0}")]
     Kube(#[from] kube::Error),
 
@@ -493,32 +54,10 @@ enum ControllerError {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: update status subresource
-// ---------------------------------------------------------------------------
-
-async fn update_status<T>(
-    api: &Api<T>,
-    name: &str,
-    status: serde_json::Value,
-) -> Result<(), ControllerError>
-where
-    T: Resource<DynamicType = ()>
-        + Clone
-        + std::fmt::Debug
-        + serde::de::DeserializeOwned
-        + Serialize,
-{
-    let patch = serde_json::json!({ "status": status });
-    let pp = PatchParams::apply("specton-controller").force();
-    api.patch_status(name, &pp, &Patch::Merge(&patch)).await?;
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
 // Helper: publish a Kubernetes Event
 // ---------------------------------------------------------------------------
 
-struct EventInfo<'a> {
+pub(crate) struct EventInfo<'a> {
     namespace: Option<&'a str>,
     regarding_kind: &'a str,
     regarding_name: &'a str,
@@ -528,7 +67,7 @@ struct EventInfo<'a> {
     event_type: &'a str,
 }
 
-async fn publish_event(client: &Client, info: &EventInfo<'_>) -> Result<(), ControllerError> {
+pub(crate) async fn publish_event(client: &Client, info: &EventInfo<'_>) -> Result<(), ControllerError> {
     let events: Api<k8s_openapi::api::events::v1::Event> = match info.namespace {
         Some(ns) => Api::namespaced(client.clone(), ns),
         None => Api::default_namespaced(client.clone()),
@@ -567,903 +106,6 @@ async fn publish_event(client: &Client, info: &EventInfo<'_>) -> Result<(), Cont
 }
 
 // ---------------------------------------------------------------------------
-// Helper: sync state to the SpectonCR auth service
-// ---------------------------------------------------------------------------
-
-async fn sync_to_auth_service(
-    http: &reqwest::Client,
-    base_url: &str,
-    path: &str,
-    body: &serde_json::Value,
-) -> Result<(), ControllerError> {
-    let url = format!("{base_url}{path}");
-    let resp = http.put(&url).json(body).send().await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        warn!(
-            %url,
-            %status,
-            %text,
-            "auth-service sync returned non-success"
-        );
-    }
-    Ok(())
-}
-
-async fn sync_to_registry(
-    http: &reqwest::Client,
-    base_url: &str,
-    path: &str,
-    body: &serde_json::Value,
-    bearer: Option<&str>,
-) -> Result<(), ControllerError> {
-    let url = format!("{base_url}{path}");
-    let mut req = http.put(&url).json(body);
-    if let Some(token) = bearer {
-        req = req.bearer_auth(token);
-    }
-    let resp = req.send().await?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        return Err(ControllerError::Validation(format!(
-            "registry sync {url} → {status}: {text}"
-        )));
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Reconcile: Tenant
-// ---------------------------------------------------------------------------
-
-async fn reconcile_tenant(tenant: Arc<Tenant>, ctx: Arc<Ctx>) -> Result<Action, ControllerError> {
-    let name = tenant.name_any();
-    info!(%name, "reconciling Tenant");
-
-    // Validate spec
-    if tenant.spec.display_name.is_empty() {
-        return Err(ControllerError::Validation(
-            "display_name must not be empty".into(),
-        ));
-    }
-
-    // Ensure storage prefix
-    let storage_backend = tenant.spec.storage_backend.as_deref().unwrap_or("default");
-    info!(%name, %storage_backend, "storage backend verified");
-
-    // Sync to auth service
-    let body = serde_json::to_value(&tenant.spec)?;
-    if let Err(e) = sync_to_auth_service(
-        &ctx.http,
-        &ctx.auth_service_url,
-        &format!("/api/v1/tenants/{name}"),
-        &body,
-    )
-    .await
-    {
-        warn!(%name, error = %e, "failed to sync tenant to auth service; will retry");
-        return Ok(Action::requeue(Duration::from_secs(30)));
-    }
-
-    // Update status
-    let api: Api<Tenant> = Api::all(ctx.client.clone());
-    let now = Utc::now().to_rfc3339();
-    let status = serde_json::json!({
-        "phase": "Ready",
-        "project_count": 0,
-        "conditions": [{
-            "type": "Ready",
-            "status": "True",
-            "lastTransitionTime": now,
-            "reason": "Reconciled",
-            "message": "Tenant reconciled successfully",
-        }]
-    });
-    update_status(&api, &name, status).await?;
-
-    // Publish event
-    let uid = tenant.uid().unwrap_or_default();
-    let msg = format!("Tenant {name} reconciled successfully");
-    if let Err(e) = publish_event(
-        &ctx.client,
-        &EventInfo {
-            namespace: None,
-            regarding_kind: "Tenant",
-            regarding_name: &name,
-            regarding_uid: &uid,
-            reason: "Reconciled",
-            message: &msg,
-            event_type: "Normal",
-        },
-    )
-    .await
-    {
-        warn!(%name, error = %e, "failed to publish event");
-    }
-
-    Ok(Action::requeue(Duration::from_secs(300)))
-}
-
-fn tenant_error_policy(tenant: Arc<Tenant>, error: &ControllerError, _ctx: Arc<Ctx>) -> Action {
-    let name = tenant.name_any();
-    error!(%name, %error, "tenant reconciliation failed");
-    Action::requeue(Duration::from_secs(60))
-}
-
-// ---------------------------------------------------------------------------
-// Reconcile: Project
-// ---------------------------------------------------------------------------
-
-async fn reconcile_project(
-    project: Arc<Project>,
-    ctx: Arc<Ctx>,
-) -> Result<Action, ControllerError> {
-    let name = project.name_any();
-    let ns = project.namespace().unwrap_or_default();
-    info!(%name, %ns, "reconciling Project");
-
-    // Validate tenant_ref exists
-    let tenants: Api<Tenant> = Api::all(ctx.client.clone());
-    if tenants.get_opt(&project.spec.tenant_ref).await?.is_none() {
-        warn!(
-            %name,
-            tenant_ref = %project.spec.tenant_ref,
-            "referenced Tenant does not exist"
-        );
-        let api: Api<Project> = Api::namespaced(ctx.client.clone(), &ns);
-        let now = Utc::now().to_rfc3339();
-        let status = serde_json::json!({
-            "phase": "Error",
-            "repository_count": 0,
-            "conditions": [{
-                "type": "Ready",
-                "status": "False",
-                "lastTransitionTime": now,
-                "reason": "TenantNotFound",
-                "message": format!("Tenant '{}' not found", project.spec.tenant_ref),
-            }]
-        });
-        update_status(&api, &name, status).await?;
-        return Ok(Action::requeue(Duration::from_secs(60)));
-    }
-
-    // Validate visibility
-    if !matches!(project.spec.visibility.as_str(), "private" | "public") {
-        return Err(ControllerError::Validation(format!(
-            "visibility must be 'private' or 'public', got '{}'",
-            project.spec.visibility
-        )));
-    }
-
-    // Validate retention policy
-    if let Some(ref rp) = project.spec.retention_policy {
-        if rp.max_tag_count == Some(0) {
-            return Err(ControllerError::Validation(
-                "max_tag_count must be > 0".into(),
-            ));
-        }
-        if rp.expire_days == Some(0) {
-            return Err(ControllerError::Validation(
-                "expire_days must be > 0".into(),
-            ));
-        }
-    }
-
-    // Sync to auth service
-    let body = serde_json::to_value(&project.spec)?;
-    if let Err(e) = sync_to_auth_service(
-        &ctx.http,
-        &ctx.auth_service_url,
-        &format!(
-            "/api/v1/tenants/{}/projects/{name}",
-            project.spec.tenant_ref
-        ),
-        &body,
-    )
-    .await
-    {
-        warn!(%name, error = %e, "failed to sync project to auth service; will retry");
-        return Ok(Action::requeue(Duration::from_secs(30)));
-    }
-
-    // Update status
-    let api: Api<Project> = Api::namespaced(ctx.client.clone(), &ns);
-    let now = Utc::now().to_rfc3339();
-    let status = serde_json::json!({
-        "phase": "Ready",
-        "repository_count": 0,
-        "conditions": [{
-            "type": "Ready",
-            "status": "True",
-            "lastTransitionTime": now,
-            "reason": "Reconciled",
-            "message": "Project reconciled successfully",
-        }]
-    });
-    update_status(&api, &name, status).await?;
-
-    // Publish event
-    let uid = project.uid().unwrap_or_default();
-    let msg = format!("Project {name} reconciled successfully");
-    if let Err(e) = publish_event(
-        &ctx.client,
-        &EventInfo {
-            namespace: Some(&ns),
-            regarding_kind: "Project",
-            regarding_name: &name,
-            regarding_uid: &uid,
-            reason: "Reconciled",
-            message: &msg,
-            event_type: "Normal",
-        },
-    )
-    .await
-    {
-        warn!(%name, error = %e, "failed to publish event");
-    }
-
-    Ok(Action::requeue(Duration::from_secs(300)))
-}
-
-fn project_error_policy(project: Arc<Project>, error: &ControllerError, _ctx: Arc<Ctx>) -> Action {
-    let name = project.name_any();
-    error!(%name, %error, "project reconciliation failed");
-    Action::requeue(Duration::from_secs(60))
-}
-
-// ---------------------------------------------------------------------------
-// Reconcile: AccessPolicy
-// ---------------------------------------------------------------------------
-
-const VALID_ROLES: &[&str] = &["admin", "maintainer", "reader"];
-
-async fn reconcile_access_policy(
-    policy: Arc<AccessPolicy>,
-    ctx: Arc<Ctx>,
-) -> Result<Action, ControllerError> {
-    let name = policy.name_any();
-    let ns = policy.namespace().unwrap_or_default();
-    info!(%name, %ns, "reconciling AccessPolicy");
-
-    // Validate tenant_ref
-    let tenants: Api<Tenant> = Api::all(ctx.client.clone());
-    if tenants.get_opt(&policy.spec.tenant_ref).await?.is_none() {
-        return Err(ControllerError::Validation(format!(
-            "referenced Tenant '{}' not found",
-            policy.spec.tenant_ref
-        )));
-    }
-
-    // Validate project_ref if present
-    if let Some(ref project_ref) = policy.spec.project_ref {
-        let projects: Api<Project> = Api::namespaced(ctx.client.clone(), &ns);
-        if projects.get_opt(project_ref).await?.is_none() {
-            return Err(ControllerError::Validation(format!(
-                "referenced Project '{project_ref}' not found"
-            )));
-        }
-    }
-
-    // Validate role
-    if !VALID_ROLES.contains(&policy.spec.role.as_str()) {
-        return Err(ControllerError::Validation(format!(
-            "role must be one of {:?}, got '{}'",
-            VALID_ROLES, policy.spec.role
-        )));
-    }
-
-    // Validate subjects
-    for s in &policy.spec.subjects {
-        if !matches!(s.kind.as_str(), "User" | "Group" | "ServiceAccount") {
-            return Err(ControllerError::Validation(format!(
-                "subject kind must be User, Group, or ServiceAccount, got '{}'",
-                s.kind
-            )));
-        }
-    }
-
-    // Sync to auth service
-    let body = serde_json::to_value(&policy.spec)?;
-    if let Err(e) = sync_to_auth_service(
-        &ctx.http,
-        &ctx.auth_service_url,
-        &format!(
-            "/api/v1/tenants/{}/access-policies/{name}",
-            policy.spec.tenant_ref
-        ),
-        &body,
-    )
-    .await
-    {
-        warn!(%name, error = %e, "failed to sync access policy to auth service; will retry");
-        return Ok(Action::requeue(Duration::from_secs(30)));
-    }
-
-    // Update status
-    let api: Api<AccessPolicy> = Api::namespaced(ctx.client.clone(), &ns);
-    let now = Utc::now().to_rfc3339();
-    let status = serde_json::json!({
-        "phase": "Active",
-        "conditions": [{
-            "type": "Ready",
-            "status": "True",
-            "lastTransitionTime": now,
-            "reason": "Reconciled",
-            "message": "AccessPolicy reconciled and synced to auth service",
-        }]
-    });
-    update_status(&api, &name, status).await?;
-
-    // Publish event
-    let uid = policy.uid().unwrap_or_default();
-    let msg = format!("AccessPolicy {name} synced to auth service");
-    if let Err(e) = publish_event(
-        &ctx.client,
-        &EventInfo {
-            namespace: Some(&ns),
-            regarding_kind: "AccessPolicy",
-            regarding_name: &name,
-            regarding_uid: &uid,
-            reason: "Reconciled",
-            message: &msg,
-            event_type: "Normal",
-        },
-    )
-    .await
-    {
-        warn!(%name, error = %e, "failed to publish event");
-    }
-
-    Ok(Action::requeue(Duration::from_secs(300)))
-}
-
-fn access_policy_error_policy(
-    policy: Arc<AccessPolicy>,
-    error: &ControllerError,
-    _ctx: Arc<Ctx>,
-) -> Action {
-    let name = policy.name_any();
-    error!(%name, %error, "access-policy reconciliation failed");
-    Action::requeue(Duration::from_secs(60))
-}
-
-// ---------------------------------------------------------------------------
-// Reconcile: TokenPolicy
-// ---------------------------------------------------------------------------
-
-async fn reconcile_token_policy(
-    policy: Arc<TokenPolicy>,
-    ctx: Arc<Ctx>,
-) -> Result<Action, ControllerError> {
-    let name = policy.name_any();
-    let ns = policy.namespace().unwrap_or_default();
-    info!(%name, %ns, "reconciling TokenPolicy");
-
-    // Validate tenant_ref
-    let tenants: Api<Tenant> = Api::all(ctx.client.clone());
-    if tenants.get_opt(&policy.spec.tenant_ref).await?.is_none() {
-        return Err(ControllerError::Validation(format!(
-            "referenced Tenant '{}' not found",
-            policy.spec.tenant_ref
-        )));
-    }
-
-    // Validate constraints
-    if policy.spec.default_ttl_seconds > policy.spec.max_ttl_seconds {
-        return Err(ControllerError::Validation(
-            "default_ttl_seconds must be <= max_ttl_seconds".into(),
-        ));
-    }
-    if policy.spec.max_ttl_seconds == 0 {
-        return Err(ControllerError::Validation(
-            "max_ttl_seconds must be > 0".into(),
-        ));
-    }
-
-    // Sync to auth service
-    let body = serde_json::to_value(&policy.spec)?;
-    if let Err(e) = sync_to_auth_service(
-        &ctx.http,
-        &ctx.auth_service_url,
-        &format!(
-            "/api/v1/tenants/{}/token-policies/{name}",
-            policy.spec.tenant_ref
-        ),
-        &body,
-    )
-    .await
-    {
-        warn!(%name, error = %e, "failed to sync token policy to auth service; will retry");
-        return Ok(Action::requeue(Duration::from_secs(30)));
-    }
-
-    // Update status
-    let api: Api<TokenPolicy> = Api::namespaced(ctx.client.clone(), &ns);
-    let now = Utc::now().to_rfc3339();
-    let status = serde_json::json!({
-        "phase": "Active",
-        "conditions": [{
-            "type": "Ready",
-            "status": "True",
-            "lastTransitionTime": now,
-            "reason": "Reconciled",
-            "message": "TokenPolicy reconciled successfully",
-        }]
-    });
-    update_status(&api, &name, status).await?;
-
-    // Publish event
-    let uid = policy.uid().unwrap_or_default();
-    let msg = format!("TokenPolicy {name} reconciled successfully");
-    if let Err(e) = publish_event(
-        &ctx.client,
-        &EventInfo {
-            namespace: Some(&ns),
-            regarding_kind: "TokenPolicy",
-            regarding_name: &name,
-            regarding_uid: &uid,
-            reason: "Reconciled",
-            message: &msg,
-            event_type: "Normal",
-        },
-    )
-    .await
-    {
-        warn!(%name, error = %e, "failed to publish event");
-    }
-
-    Ok(Action::requeue(Duration::from_secs(300)))
-}
-
-fn token_policy_error_policy(
-    policy: Arc<TokenPolicy>,
-    error: &ControllerError,
-    _ctx: Arc<Ctx>,
-) -> Action {
-    let name = policy.name_any();
-    error!(%name, %error, "token-policy reconciliation failed");
-    Action::requeue(Duration::from_secs(60))
-}
-
-// ---------------------------------------------------------------------------
-// Reconcile: ImageVerificationPolicy
-// ---------------------------------------------------------------------------
-
-async fn reconcile_image_verification_policy(
-    policy: Arc<ImageVerificationPolicy>,
-    ctx: Arc<Ctx>,
-) -> Result<Action, ControllerError> {
-    let name = policy.name_any();
-    let ns = policy.namespace().unwrap_or_default();
-    info!(%name, %ns, "reconciling ImageVerificationPolicy");
-
-    let tenants: Api<Tenant> = Api::all(ctx.client.clone());
-    if tenants.get_opt(&policy.spec.tenant_ref).await?.is_none() {
-        return Err(ControllerError::Validation(format!(
-            "referenced Tenant '{}' not found",
-            policy.spec.tenant_ref
-        )));
-    }
-
-    let on_violation = match policy.spec.on_violation.as_str() {
-        "warn" | "log" | "block" => policy.spec.on_violation.clone(),
-        other => {
-            return Err(ControllerError::Validation(format!(
-                "onViolation must be block|warn|log, got '{other}'"
-            )));
-        }
-    };
-
-    let mut trusted_signers = Vec::new();
-    for s in &policy.spec.trusted_signers {
-        match s.kind.as_str() {
-            "Key" => {
-                let key_ref = s.key_ref.clone().ok_or_else(|| {
-                    ControllerError::Validation("Key signer requires keyRef".into())
-                })?;
-                trusted_signers.push(serde_json::json!({
-                    "key": { "key_ref": key_ref, "identity_name": s.identity_name }
-                }));
-            }
-            "Keyless" => {
-                trusted_signers.push(serde_json::json!({
-                    "keyless": {
-                        "issuer": s.issuer.clone().unwrap_or_default(),
-                        "subject_pattern": s.subject_pattern.clone().unwrap_or_default()
-                    }
-                }));
-            }
-            other => {
-                return Err(ControllerError::Validation(format!(
-                    "trustedSigner.kind must be Key or Keyless, got '{other}'"
-                )));
-            }
-        }
-    }
-
-    let uid = policy.uid().unwrap_or_default();
-    let body = serde_json::json!({
-        "id": uid.to_string(),
-        "enabled": true,
-        "on_violation": on_violation,
-        "spec": {
-            "scope": {
-                "projects": policy.spec.scope.projects,
-                "repositories": policy.spec.scope.repositories,
-            },
-            "required": policy.spec.required,
-            "trusted_signers": trusted_signers,
-            "on_violation": on_violation,
-        }
-    });
-
-    if let Some(ref registry_url) = ctx.registry_service_url {
-        if let Err(e) = sync_to_registry(
-            &ctx.http,
-            registry_url,
-            &format!(
-                "/v2/_signing/policies/{}/{}",
-                policy.spec.tenant_ref, name
-            ),
-            &body,
-            ctx.registry_admin_token.as_deref(),
-        )
-        .await
-        {
-            warn!(%name, error = %e, "failed to sync ImageVerificationPolicy; will retry");
-            return Ok(Action::requeue(Duration::from_secs(30)));
-        }
-    } else {
-        info!(
-            %name,
-            "REGISTRY_SERVICE_URL unset; ImageVerificationPolicy validated only"
-        );
-    }
-
-    let api: Api<ImageVerificationPolicy> = Api::namespaced(ctx.client.clone(), &ns);
-    let now = Utc::now().to_rfc3339();
-    let status = serde_json::json!({
-        "phase": "Active",
-        "conditions": [{
-            "type": "Ready",
-            "status": "True",
-            "lastTransitionTime": now,
-            "reason": "Reconciled",
-            "message": "ImageVerificationPolicy reconciled",
-        }]
-    });
-    update_status(&api, &name, status).await?;
-
-    let msg = format!("ImageVerificationPolicy {name} reconciled");
-    if let Err(e) = publish_event(
-        &ctx.client,
-        &EventInfo {
-            namespace: Some(&ns),
-            regarding_kind: "ImageVerificationPolicy",
-            regarding_name: &name,
-            regarding_uid: &uid,
-            reason: "Reconciled",
-            message: &msg,
-            event_type: "Normal",
-        },
-    )
-    .await
-    {
-        warn!(%name, error = %e, "failed to publish event");
-    }
-
-    Ok(Action::requeue(Duration::from_secs(300)))
-}
-
-fn image_verification_policy_error_policy(
-    policy: Arc<ImageVerificationPolicy>,
-    error: &ControllerError,
-    _ctx: Arc<Ctx>,
-) -> Action {
-    let name = policy.name_any();
-    error!(%name, %error, "image-verification-policy reconciliation failed");
-    Action::requeue(Duration::from_secs(60))
-}
-
-// ---------------------------------------------------------------------------
-// Reconcile: RebuildSubscription
-// ---------------------------------------------------------------------------
-
-async fn read_secret_key(
-    client: &Client,
-    ns: &str,
-    secret_name: &str,
-    key: &str,
-) -> Result<String, ControllerError> {
-    let secrets: Api<k8s_openapi::api::core::v1::Secret> = Api::namespaced(client.clone(), ns);
-    let secret = secrets.get(secret_name).await?;
-    let data = secret.data.unwrap_or_default();
-    let bytes = data.get(key).ok_or_else(|| {
-        ControllerError::Validation(format!("secret {secret_name} missing key '{key}'"))
-    })?;
-    Ok(String::from_utf8_lossy(&bytes.0).into_owned())
-}
-
-async fn build_rebuild_emitter_json(
-    sub: &RebuildSubscription,
-    ctx: &Ctx,
-    ns: &str,
-) -> Result<serde_json::Value, ControllerError> {
-    let emitter = &sub.spec.emitter;
-    match emitter.type_.as_str() {
-        "github-dispatch" => {
-            let repo = emitter
-                .repo
-                .clone()
-                .ok_or_else(|| ControllerError::Validation("emitter.repo required".into()))?;
-            let mut token: Option<String> = None;
-            if let Some(ref secret_name) = emitter.token_secret_ref {
-                token = Some(read_secret_key(&ctx.client, ns, secret_name, "token").await?);
-            }
-            Ok(serde_json::json!({
-                "type": "github-dispatch",
-                "repo": repo,
-                "event_type": emitter.event_type.clone()
-                    .unwrap_or_else(|| "rebuild-on-cve".into()),
-                "workflow": emitter.workflow,
-                "token": token,
-                "api_base": emitter.api_base,
-            }))
-        }
-        "gitlab-trigger" => {
-            let project = emitter
-                .project
-                .clone()
-                .ok_or_else(|| ControllerError::Validation("emitter.project required".into()))?;
-            let mut trigger_token: Option<String> = None;
-            if let Some(ref secret_name) = emitter.trigger_token_secret_ref {
-                trigger_token =
-                    Some(read_secret_key(&ctx.client, ns, secret_name, "token").await?);
-            }
-            Ok(serde_json::json!({
-                "type": "gitlab-trigger",
-                "project": project,
-                "ref": emitter.git_ref.clone().unwrap_or_else(|| "main".into()),
-                "trigger_token": trigger_token,
-                "api_base": emitter.api_base,
-            }))
-        }
-        "webhook" => {
-            let url = emitter
-                .url
-                .clone()
-                .ok_or_else(|| ControllerError::Validation("emitter.url required".into()))?;
-            let mut hmac_secret: Option<String> = None;
-            if let Some(ref secret_name) = emitter.hmac_secret_ref {
-                hmac_secret =
-                    Some(read_secret_key(&ctx.client, ns, secret_name, "secret").await?);
-            }
-            Ok(serde_json::json!({
-                "type": "webhook",
-                "url": url,
-                "hmac_secret": hmac_secret,
-                "header_name": emitter.header_name,
-            }))
-        }
-        "tekton" => {
-            let url = emitter
-                .url
-                .clone()
-                .ok_or_else(|| ControllerError::Validation("emitter.url required".into()))?;
-            let mut auth_header_value: Option<String> = None;
-            if let Some(ref secret_name) = emitter.auth_secret_ref {
-                auth_header_value =
-                    Some(read_secret_key(&ctx.client, ns, secret_name, "token").await?);
-            }
-            Ok(serde_json::json!({
-                "type": "tekton",
-                "url": url,
-                "auth_header_name": emitter.auth_header_name,
-                "auth_header_value": auth_header_value,
-            }))
-        }
-        other => Err(ControllerError::Validation(format!(
-            "emitter.type must be github-dispatch|gitlab-trigger|webhook|tekton (got '{other}')"
-        ))),
-    }
-}
-
-async fn reconcile_rebuild_subscription(
-    sub: Arc<RebuildSubscription>,
-    ctx: Arc<Ctx>,
-) -> Result<Action, ControllerError> {
-    let name = sub.name_any();
-    let ns = sub.namespace().unwrap_or_default();
-    info!(%name, %ns, "reconciling RebuildSubscription");
-
-    let tenants: Api<Tenant> = Api::all(ctx.client.clone());
-    if tenants.get_opt(&sub.spec.tenant_ref).await?.is_none() {
-        return Err(ControllerError::Validation(format!(
-            "referenced Tenant '{}' not found",
-            sub.spec.tenant_ref
-        )));
-    }
-
-    let emitter_json = build_rebuild_emitter_json(&sub, &ctx, &ns).await?;
-
-    let uid = sub.uid().unwrap_or_default();
-    let body = serde_json::json!({
-        "id": uid.to_string(),
-        "enabled": true,
-        "spec": {
-            "watch": {
-                "bases": sub.spec.watch.bases,
-                "descendants": sub.spec.watch.descendants,
-            },
-            "triggers": {
-                "on_cve_fix": sub.spec.triggers.on_cve_fix,
-                "on_base_push": sub.spec.triggers.on_base_push,
-                "min_severity_fixed": sub.spec.triggers.min_severity_fixed,
-            },
-            "emitter": emitter_json,
-            "rate_limit": {
-                "per_downstream_per_day": sub.spec.rate_limit.per_downstream_per_day,
-            },
-        }
-    });
-
-    if let Some(ref registry_url) = ctx.registry_service_url {
-        if let Err(e) = sync_to_registry(
-            &ctx.http,
-            registry_url,
-            &format!(
-                "/v2/_rebuild/subscriptions/{}/{}",
-                sub.spec.tenant_ref, name
-            ),
-            &body,
-            ctx.registry_admin_token.as_deref(),
-        )
-        .await
-        {
-            warn!(%name, error = %e, "failed to sync RebuildSubscription; will retry");
-            return Ok(Action::requeue(Duration::from_secs(30)));
-        }
-    } else {
-        info!(%name, "REGISTRY_SERVICE_URL unset; RebuildSubscription validated only");
-    }
-
-    let api: Api<RebuildSubscription> = Api::namespaced(ctx.client.clone(), &ns);
-    let now = Utc::now().to_rfc3339();
-    let status = serde_json::json!({
-        "phase": "Active",
-        "conditions": [{
-            "type": "Ready",
-            "status": "True",
-            "lastTransitionTime": now,
-            "reason": "Reconciled",
-            "message": "RebuildSubscription reconciled",
-        }]
-    });
-    update_status(&api, &name, status).await?;
-    Ok(Action::requeue(Duration::from_secs(300)))
-}
-
-fn rebuild_subscription_error_policy(
-    sub: Arc<RebuildSubscription>,
-    error: &ControllerError,
-    _ctx: Arc<Ctx>,
-) -> Action {
-    let name = sub.name_any();
-    error!(%name, %error, "rebuild-subscription reconciliation failed");
-    Action::requeue(Duration::from_secs(60))
-}
-
-async fn reconcile_admission_policy(
-    policy: Arc<AdmissionPolicy>,
-    ctx: Arc<Ctx>,
-) -> Result<Action, ControllerError> {
-    let name = policy.name_any();
-    let ns = policy.namespace().unwrap_or_default();
-    info!(%name, %ns, "reconciling AdmissionPolicy");
-
-    let tenants: Api<Tenant> = Api::all(ctx.client.clone());
-    if tenants.get_opt(&policy.spec.tenant_ref).await?.is_none() {
-        return Err(ControllerError::Validation(format!(
-            "referenced Tenant '{}' not found",
-            policy.spec.tenant_ref
-        )));
-    }
-    if !matches!(
-        policy.spec.on_unknown.as_str(),
-        "block" | "scan" | "allow"
-    ) {
-        return Err(ControllerError::Validation(format!(
-            "onUnknown must be block|scan|allow, got '{}'",
-            policy.spec.on_unknown
-        )));
-    }
-    if !matches!(policy.spec.on_timeout.as_str(), "block" | "warn" | "allow") {
-        return Err(ControllerError::Validation(format!(
-            "onTimeout must be block|warn|allow, got '{}'",
-            policy.spec.on_timeout
-        )));
-    }
-
-    let uid = policy.uid().unwrap_or_default();
-    let body = serde_json::json!({
-        "id": uid.to_string(),
-        "enabled": true,
-        "spec": {
-            "scope": {
-                "projects": policy.spec.scope.projects,
-                "repositories": policy.spec.scope.repositories,
-            },
-            "signature_required": policy.spec.signature_required,
-            "severity_threshold": {
-                "block": {
-                    "critical": policy.spec.severity_threshold.block.critical,
-                    "high": policy.spec.severity_threshold.block.high,
-                    "medium": policy.spec.severity_threshold.block.medium,
-                    "low": policy.spec.severity_threshold.block.low,
-                },
-                "warn": {
-                    "critical": policy.spec.severity_threshold.warn.critical,
-                    "high": policy.spec.severity_threshold.warn.high,
-                    "medium": policy.spec.severity_threshold.warn.medium,
-                    "low": policy.spec.severity_threshold.warn.low,
-                },
-            },
-            "on_unknown": policy.spec.on_unknown,
-            "on_timeout": policy.spec.on_timeout,
-            "scan_wait_secs": policy.spec.scan_wait_secs,
-        }
-    });
-
-    if let Some(ref registry_url) = ctx.registry_service_url {
-        if let Err(e) = sync_to_registry(
-            &ctx.http,
-            registry_url,
-            &format!(
-                "/v2/_admit/policies/{}/{}",
-                policy.spec.tenant_ref, name
-            ),
-            &body,
-            ctx.registry_admin_token.as_deref(),
-        )
-        .await
-        {
-            warn!(%name, error = %e, "failed to sync AdmissionPolicy; will retry");
-            return Ok(Action::requeue(Duration::from_secs(30)));
-        }
-    } else {
-        info!(%name, "REGISTRY_SERVICE_URL unset; AdmissionPolicy validated only");
-    }
-
-    let api: Api<AdmissionPolicy> = Api::namespaced(ctx.client.clone(), &ns);
-    let now = Utc::now().to_rfc3339();
-    let status = serde_json::json!({
-        "phase": "Active",
-        "conditions": [{
-            "type": "Ready",
-            "status": "True",
-            "lastTransitionTime": now,
-            "reason": "Reconciled",
-            "message": "AdmissionPolicy reconciled",
-        }]
-    });
-    update_status(&api, &name, status).await?;
-    Ok(Action::requeue(Duration::from_secs(300)))
-}
-
-fn admission_policy_error_policy(
-    policy: Arc<AdmissionPolicy>,
-    error: &ControllerError,
-    _ctx: Arc<Ctx>,
-) -> Action {
-    let name = policy.name_any();
-    error!(%name, %error, "admission-policy reconciliation failed");
-    Action::requeue(Duration::from_secs(60))
-}
-
-// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -1498,9 +140,9 @@ async fn main() -> anyhow::Result<()> {
 
     let auth_service_url = std::env::var("AUTH_SERVICE_URL")
         .unwrap_or_else(|_| "http://specton-auth:8080".to_string());
+
     let registry_service_url = std::env::var("REGISTRY_SERVICE_URL").ok();
     let registry_admin_token = std::env::var("REGISTRY_ADMIN_TOKEN").ok();
-
     let ctx = Arc::new(Ctx {
         client: client.clone(),
         http: reqwest::Client::builder()
@@ -1515,7 +157,11 @@ async fn main() -> anyhow::Result<()> {
     let tenants: Api<Tenant> = Api::all(client.clone());
     let tenant_ctrl = Controller::new(tenants, WatcherConfig::default())
         .shutdown_on_signal()
-        .run(reconcile_tenant, tenant_error_policy, ctx.clone())
+        .run(
+            tenancy::reconcile_tenant,
+            tenancy::error_policy,
+            ctx.clone(),
+        )
         .for_each(|res| async move {
             match res {
                 Ok(o) => info!(resource = ?o, "tenant reconciled"),
@@ -1527,7 +173,11 @@ async fn main() -> anyhow::Result<()> {
     let projects: Api<Project> = Api::all(client.clone());
     let project_ctrl = Controller::new(projects, WatcherConfig::default())
         .shutdown_on_signal()
-        .run(reconcile_project, project_error_policy, ctx.clone())
+        .run(
+            tenancy::reconcile_project,
+            tenancy::error_policy,
+            ctx.clone(),
+        )
         .for_each(|res| async move {
             match res {
                 Ok(o) => info!(resource = ?o, "project reconciled"),
@@ -1540,8 +190,8 @@ async fn main() -> anyhow::Result<()> {
     let access_ctrl = Controller::new(access_policies, WatcherConfig::default())
         .shutdown_on_signal()
         .run(
-            reconcile_access_policy,
-            access_policy_error_policy,
+            tenancy::reconcile_access_policy,
+            tenancy::error_policy,
             ctx.clone(),
         )
         .for_each(|res| async move {
@@ -1556,8 +206,8 @@ async fn main() -> anyhow::Result<()> {
     let token_ctrl = Controller::new(token_policies, WatcherConfig::default())
         .shutdown_on_signal()
         .run(
-            reconcile_token_policy,
-            token_policy_error_policy,
+            tenancy::reconcile_token_policy,
+            tenancy::error_policy,
             ctx.clone(),
         )
         .for_each(|res| async move {
@@ -1568,12 +218,12 @@ async fn main() -> anyhow::Result<()> {
         });
 
     // --- ImageVerificationPolicy controller (001 B4) ---
-    let ivp: Api<ImageVerificationPolicy> = Api::all(client.clone());
+    let ivp: Api<policies::ImageVerificationPolicy> = Api::all(client.clone());
     let ivp_ctrl = Controller::new(ivp, WatcherConfig::default())
         .shutdown_on_signal()
         .run(
-            reconcile_image_verification_policy,
-            image_verification_policy_error_policy,
+            policies::reconcile_image_verification_policy,
+            policies::image_verification_policy_error_policy,
             ctx.clone(),
         )
         .for_each(|res| async move {
@@ -1584,12 +234,12 @@ async fn main() -> anyhow::Result<()> {
         });
 
     // --- RebuildSubscription controller (018 R2) ---
-    let rsubs: Api<RebuildSubscription> = Api::all(client.clone());
+    let rsubs: Api<policies::RebuildSubscription> = Api::all(client.clone());
     let rsub_ctrl = Controller::new(rsubs, WatcherConfig::default())
         .shutdown_on_signal()
         .run(
-            reconcile_rebuild_subscription,
-            rebuild_subscription_error_policy,
+            policies::reconcile_rebuild_subscription,
+            policies::rebuild_subscription_error_policy,
             ctx.clone(),
         )
         .for_each(|res| async move {
@@ -1600,12 +250,12 @@ async fn main() -> anyhow::Result<()> {
         });
 
     // --- AdmissionPolicy controller (002 D2) ---
-    let admits: Api<AdmissionPolicy> = Api::all(client.clone());
+    let admits: Api<policies::AdmissionPolicy> = Api::all(client.clone());
     let admit_ctrl = Controller::new(admits, WatcherConfig::default())
         .shutdown_on_signal()
         .run(
-            reconcile_admission_policy,
-            admission_policy_error_policy,
+            policies::reconcile_admission_policy,
+            policies::admission_policy_error_policy,
             ctx.clone(),
         )
         .for_each(|res| async move {
