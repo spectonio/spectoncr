@@ -410,6 +410,10 @@ Both services run with hardened security contexts:
 | `Project` | `spectoncr.io/v1alpha1` | Namespace | Repository group with visibility and retention |
 | `AccessPolicy` | `spectoncr.io/v1alpha1` | Namespace | RBAC rules with conditions (IP, time, MFA) |
 | `TokenPolicy` | `spectoncr.io/v1alpha1` | Namespace | Token lifecycle, rotation, robot accounts |
+| `ImageVerificationPolicy` | `spectoncr.io/v1alpha1` | Namespace | Cosign verify-on-pull (`block` / `warn` / `log`) |
+
+Image signing is off by default. Enable with `--set signing.enabled=true`
+(see `values.yaml` → `signing`).
 
 ---
 
