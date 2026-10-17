@@ -71,6 +71,18 @@ pub enum RegistryError {
     /// Pull blocked by admission / signature policy (design 002).
     #[error("manifest unverified: {reason}")]
     ManifestUnverified { reason: String },
+
+    /// Tag immutability violation (design 003).
+    #[error("tag {tag} is immutable (existing {existing_digest}, attempted {attempted_digest})")]
+    ManifestTagImmutable {
+        tag: String,
+        existing_digest: String,
+        attempted_digest: String,
+    },
+
+    /// Tag quarantined — pull blocked (design 003).
+    #[error("tag {tag} quarantined: {reason}")]
+    ManifestQuarantined { tag: String, reason: String },
 }
 
 /// OCI error response envelope.
@@ -108,6 +120,8 @@ impl RegistryError {
             Self::RetriesExhausted(_) => "RETRIES_EXHAUSTED",
             Self::FailoverError(_) => "FAILOVER_ERROR",
             Self::ManifestUnverified { .. } => "MANIFEST_UNVERIFIED",
+            Self::ManifestTagImmutable { .. } => "MANIFEST_TAG_IMMUTABLE",
+            Self::ManifestQuarantined { .. } => "MANIFEST_QUARANTINED",
         }
     }
 
@@ -124,6 +138,10 @@ impl RegistryError {
             }
             Self::Unauthorized | Self::TokenExpired | Self::TokenInvalid { .. } => {
                 StatusCode::UNAUTHORIZED
+            }
+            Self::ManifestTagImmutable { .. } => StatusCode::CONFLICT,
+            Self::ManifestQuarantined { .. } => {
+                StatusCode::from_u16(451).unwrap_or(StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS)
             }
             Self::Forbidden { .. } | Self::ManifestUnverified { .. } => StatusCode::FORBIDDEN,
             Self::RateLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
@@ -160,6 +178,11 @@ impl IntoResponse for RegistryError {
             }
         }
         if let Self::ManifestUnverified { reason } = &self
+            && let Ok(val) = axum::http::HeaderValue::from_str(reason)
+        {
+            response.headers_mut().insert("www-spectoncr-reason", val);
+        }
+        if let Self::ManifestQuarantined { reason, .. } = &self
             && let Ok(val) = axum::http::HeaderValue::from_str(reason)
         {
             response.headers_mut().insert("www-spectoncr-reason", val);

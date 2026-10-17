@@ -138,10 +138,21 @@ pub struct RetentionPolicy {
     /// e.g. "30d", "12w", "6m", "1y".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tag_age: Option<String>,
+    /// Explicit expire window in days (overrides `max_tag_age` when set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expire_days: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_last_n: Option<i32>,
     #[serde(default = "default_true")]
     pub keep_semver: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_regex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub always_keep: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dry_run: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respect_promotion: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq)]
@@ -175,6 +186,9 @@ pub struct ProjectSpec {
     pub visibility: String,
     #[serde(default)]
     pub immutable_tags: bool,
+    /// When true, new tags enter pending until approved (design 003).
+    #[serde(default)]
+    pub quarantine_default: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vulnerability_scanning: Option<VulnerabilityScanning>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -2,6 +2,9 @@
 /target-docker
 /.cargo-home
 
+# Local IDE / agent state (Serena)
+.serena/
+
 # Unpacked Helm subchart artefacts. `helm dependency update` writes
 # the tarball + extracted dir into deploy/helm/spectoncr/charts/. The
 # Chart.lock IS committed so the resolved version is pinned.

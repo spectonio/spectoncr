@@ -1,5 +1,9 @@
 # 008 — Customer-Managed Key (CMK) Envelope Encryption At Rest
 
+> **Status:** in-progress (slice 1 landed: `specton-crypto`, schema `0023_cmk.sql`,
+> `[encryption]` config, local provider, `/v2/_keys/*`, blob put/get wiring when enabled.
+> Slice 2: remaining blob paths, KMS providers, rewrap jobs.)
+
 > **Summary.** Per-tenant Key Encryption Key (KEK) lives in an external
 > KMS behind a new `KeyProvider` trait (AWS KMS, GCP KMS, Azure Key
 > Vault, HashiCorp Vault). Each blob gets a fresh Data Encryption Key

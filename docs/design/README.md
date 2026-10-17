@@ -24,21 +24,21 @@ telemetry, auto-rebuild, AI agent).
 | --- | -------------------------------- | ---------------------------------------------- | -------- | -------- |
 | 001 | Cosign/Notation image signing    | [001-image-signing.md](./001-image-signing.md) | in-progress (B1–B4) | 4 slices |
 | 002 | Pull-time admission gate         | [002-admission-gate.md](./002-admission-gate.md) | in-progress (D1–D3) | 3 slices |
-| 003 | Tag immutability + quarantine    | [003-tag-immutability-quarantine.md](./003-tag-immutability-quarantine.md) | proposed | 3 slices |
-| 004 | Garbage collection + retention   | [004-gc-retention.md](./004-gc-retention.md)   | proposed | 4 slices |
+| 003 | Tag immutability + quarantine    | [003-tag-immutability-quarantine.md](./003-tag-immutability-quarantine.md) | in-progress | 3 slices |
+| 004 | Garbage collection + retention   | [004-gc-retention.md](./004-gc-retention.md)   | in-progress | 4 slices |
 | 005 | Append-only signed audit log     | [005-audit-log.md](./005-audit-log.md)         | shipped (A1–A3) | 3 slices |
 | 006 | Atomic promotion API             | [006-promotion-api.md](./006-promotion-api.md) | in-progress (C1–C3; cross-backend dest_storage) | 3 slices |
-| 007 | Web UI parity                    | [007-web-ui-parity.md](./007-web-ui-parity.md) | in-progress (pilot chat sidebar) | 4 slices |
-| 008 | CMK / envelope encryption at rest | [008-cmk-encryption-at-rest.md](./008-cmk-encryption-at-rest.md) | proposed | 4 slices |
+| 007 | Web UI parity                    | [007-web-ui-parity.md](./007-web-ui-parity.md) | in-progress (pilot sidebar + browse) | 4 slices |
+| 008 | CMK / envelope encryption at rest | [008-cmk-encryption-at-rest.md](./008-cmk-encryption-at-rest.md) | in-progress (crypto crate + local KEK) | 4 slices |
 
 ### Open-source-launch differentiators (009–019)
 
 | #   | Feature                          | Doc                                            | Status   | Effort   |
 | --- | -------------------------------- | ---------------------------------------------- | -------- | -------- |
-| 009 | Online GC (zero RO window)       | [009-online-gc.md](./009-online-gc.md)         | proposed | 4 slices |
+| 009 | Online GC (zero RO window)       | [009-online-gc.md](./009-online-gc.md)         | in-progress (refcount + reaper + reconciler) | 4 slices |
 | 010 | Lazy pulling (eStargz / SOCI)    | [010-lazy-pull.md](./010-lazy-pull.md)         | proposed | 4 slices |
 | 011 | P2P pull mesh                    | [011-p2p-pull.md](./011-p2p-pull.md)           | proposed | 5 slices |
-| 012 | Migration importer (Nexus/Harbor/ACR) | [012-migration-importer.md](./012-migration-importer.md) | proposed | 5 slices |
+| 012 | Migration importer (Nexus/Harbor/ACR) | [012-migration-importer.md](./012-migration-importer.md) | in-progress | 5 slices |
 | 013 | Ephemeral repos + TTL tags       | [013-ephemeral-repos.md](./013-ephemeral-repos.md) | proposed | 3 slices |
 | 014 | License / secret / malware scan  | [014-extended-scanning.md](./014-extended-scanning.md) | proposed | 4 slices |
 | 015 | SLSA provenance + in-toto        | [015-slsa-provenance.md](./015-slsa-provenance.md) | proposed | 3 slices |

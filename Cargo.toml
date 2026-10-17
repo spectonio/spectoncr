@@ -22,6 +22,7 @@ members = [
     "crates/specton-pilot",
     "crates/specton-audit",
     "crates/specton-signing",
+    "crates/specton-crypto",
 ]
 resolver = "3"
 
@@ -62,6 +63,8 @@ hex = "0.4"
 base64 = "0.22"
 uuid = { version = "1", features = ["v4", "serde"] }
 rand = "0.9"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+aes-gcm = "0.10"
 
 # Storage
 object_store = { version = "0.11", features = ["aws", "gcp", "azure"] }
@@ -125,6 +128,7 @@ specton-rebuild = { path = "crates/specton-rebuild" }
 specton-pilot = { path = "crates/specton-pilot" }
 specton-audit = { path = "crates/specton-audit" }
 specton-signing = { path = "crates/specton-signing" }
+specton-crypto = { path = "crates/specton-crypto" }
 
 # Scanner deps
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "migrate"] }

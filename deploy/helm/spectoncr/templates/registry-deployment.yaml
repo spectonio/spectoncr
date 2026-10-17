@@ -269,6 +269,10 @@ spec:
             - name: SPECTONCR_GC__REAPER_QPS
               value: {{ .Values.gc.online.reaper.qps | quote }}
             {{- end }}
+            {{- if .Values.retention.enabled }}
+            - name: SPECTONCR_RETENTION__ENABLED
+              value: "true"
+            {{- end }}
             {{- with .Values.registry.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

@@ -10,6 +10,9 @@
 use crate::source::ImportError;
 use async_trait::async_trait;
 use bytes::Bytes;
+use object_store::path::Path as StorePath;
+use object_store::ObjectStore;
+use specton_common::storage::{blob_path, manifest_path, sha256_digest, tag_link_path};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -87,6 +90,73 @@ impl RegistryDestination for InMemoryDestination {
             .write()
             .unwrap()
             .insert(key, (bytes, media_type.to_string()));
+        Ok(())
+    }
+}
+
+/// Writes blobs/manifests/tag links into the registry object store using
+/// the same path layout as `specton-registry`.
+pub struct ObjectStoreDestination {
+    store: Arc<dyn ObjectStore>,
+}
+
+impl ObjectStoreDestination {
+    pub fn new(store: Arc<dyn ObjectStore>) -> Self {
+        Self { store }
+    }
+
+    async fn exists(&self, path: &str) -> Result<bool, ImportError> {
+        match self.store.head(&StorePath::from(path)).await {
+            Ok(_) => Ok(true),
+            Err(object_store::Error::NotFound { .. }) => Ok(false),
+            Err(e) => Err(ImportError::Parse(format!("object store head: {e}"))),
+        }
+    }
+}
+
+#[async_trait]
+impl RegistryDestination for ObjectStoreDestination {
+    async fn put_blob(
+        &self,
+        tenant: &str,
+        project: &str,
+        repository: &str,
+        digest: &str,
+        bytes: Bytes,
+    ) -> Result<(), ImportError> {
+        let path = blob_path(tenant, project, repository, digest);
+        if self.exists(&path).await? {
+            return Ok(());
+        }
+        self.store
+            .put(&StorePath::from(path), bytes.into())
+            .await
+            .map_err(|e| ImportError::Parse(format!("object store put blob: {e}")))?;
+        Ok(())
+    }
+
+    async fn put_manifest(
+        &self,
+        tenant: &str,
+        project: &str,
+        repository: &str,
+        tag: &str,
+        bytes: Bytes,
+        _media_type: &str,
+    ) -> Result<(), ImportError> {
+        let digest = sha256_digest(&bytes);
+        let man_path = manifest_path(tenant, project, repository, &digest);
+        if !self.exists(&man_path).await? {
+            self.store
+                .put(&StorePath::from(man_path), bytes.into())
+                .await
+                .map_err(|e| ImportError::Parse(format!("object store put manifest: {e}")))?;
+        }
+        let tag_path = tag_link_path(tenant, project, repository, tag);
+        self.store
+            .put(&StorePath::from(tag_path), digest.into())
+            .await
+            .map_err(|e| ImportError::Parse(format!("object store put tag link: {e}")))?;
         Ok(())
     }
 }

@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { fetchLiveScan, ScanResult, Vulnerability } from './api';
-import { PilotSidebar } from './PilotSidebar';
-import { Header, SevBadge, SEVERITIES, SeverityBar, sortBySeverity, CopyButton } from './ui';
+import { SevBadge, SEVERITIES, SeverityBar, sortBySeverity, CopyButton } from './ui';
 
 // Scan drill-down: subscribes to /v2/ws/scan/{digest} and streams results.
 // Panels are ordered by what an operator decides on first: the policy verdict
@@ -71,16 +70,13 @@ export function ScanDetail() {
   );
 
   return (
-    <div className="shell">
-      <Header right={statusPill} />
-      <PilotSidebar />
-
       <main className="page">
         <div className="page-head">
           <div className="crumb">
             <span>scan</span>
             <code>{digest.length > 24 ? `${digest.slice(0, 24)}…` : digest || '—'}</code>
             {digest && <CopyButton value={digest} label="digest" />}
+            <span style={{ marginLeft: 'auto' }}>{statusPill}</span>
           </div>
           <h1>Scan report</h1>
           {result && (
@@ -208,6 +204,5 @@ export function ScanDetail() {
           </div>
         )}
       </main>
-    </div>
   );
 }

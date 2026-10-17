@@ -1,5 +1,7 @@
 # 003 — Tag Immutability + Quarantine State Machine
 
+> **Status:** in-progress (schema + hooks + routes; scanner callback pending slice 3).
+
 > **Summary.** Promote tags from a free-for-all rename target to a
 > first-class object with a state machine: `pending → scanning →
 > approved | quarantined → promoted`. Immutability is a per-Project

@@ -85,6 +85,10 @@ spec:
                   type: boolean
                   description: Whether tags in this project are immutable once pushed.
                   default: false
+                quarantineDefault:
+                  type: boolean
+                  description: New tags start pending and are blocked from pull until approved.
+                  default: false
                 vulnerabilityScanning:
                   type: object
                   description: Vulnerability scanning configuration.
@@ -119,6 +123,27 @@ spec:
                     keepSemver:
                       type: boolean
                       description: Always keep tags matching semver patterns.
+                      default: true
+                    expireDays:
+                      type: integer
+                      format: int32
+                      description: Drop tags older than this many days (unless kept by other rules).
+                      minimum: 0
+                    keepRegex:
+                      type: string
+                      description: Perl-compatible regex; matching tags are never deleted.
+                    alwaysKeep:
+                      type: array
+                      description: Tag names always retained (e.g. latest, stable).
+                      items:
+                        type: string
+                    dryRun:
+                      type: boolean
+                      description: Log deletions without removing tags.
+                      default: false
+                    respectPromotion:
+                      type: boolean
+                      description: Skip tags in promoted state (design 003).
                       default: true
                 quotas:
                   type: object
