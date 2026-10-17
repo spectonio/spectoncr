@@ -98,6 +98,9 @@ pub enum Action {
     Delete,
     Tag,
     Manage,
+    /// Explicit scope only — never granted via default roles (design 003).
+    #[serde(rename = "bypassquarantine")]
+    BypassQuarantine,
 }
 
 impl Role {

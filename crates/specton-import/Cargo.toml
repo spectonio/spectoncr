@@ -21,3 +21,4 @@ tracing.workspace = true
 bytes.workspace = true
 futures.workspace = true
 reqwest.workspace = true
+object_store.workspace = true

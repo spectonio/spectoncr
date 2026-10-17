@@ -35,9 +35,43 @@ pub struct RegistryConfig {
     /// Pull-time admission gate (design 002). Kill-switch OFF by default.
     #[serde(default)]
     pub admission: AdmissionConfig,
+    /// Tag immutability + quarantine (design 003). Kill-switch OFF by default.
+    #[serde(default)]
+    pub tagstate: TagStateConfig,
     /// AI agent HTTP chat surface (design 019). Kill-switch OFF by default.
     #[serde(default)]
     pub pilot: PilotConfig,
+    /// Migration importer HTTP API (design 012). Kill-switch OFF by default.
+    #[serde(default)]
+    pub import: ImportConfig,
+    /// Tag retention runner (design 004). Kill-switch OFF by default.
+    #[serde(default)]
+    pub retention: RetentionConfig,
+    /// CMK envelope encryption at rest (design 008). Kill-switch OFF by default.
+    #[serde(default)]
+    pub encryption: EncryptionConfig,
+}
+
+/// `[encryption]` — design 008; kill-switch OFF by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EncryptionConfig {
+    /// Master kill-switch. When false, blob IO uses the raw object store.
+    pub enabled: bool,
+    /// Key provider: `local` (dev) in slice 1.
+    pub provider: String,
+    /// Optional path to a 32-byte KEK file for `local` provider.
+    pub local_key_path: Option<String>,
+}
+
+impl Default for EncryptionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: "local".into(),
+            local_key_path: None,
+        }
+    }
 }
 
 /// `[admission]` — design 002; kill-switch OFF by default.
@@ -55,6 +89,25 @@ impl Default for AdmissionConfig {
         Self {
             enabled: false,
             cache_ttl_secs: 30,
+        }
+    }
+}
+
+/// `[tagstate]` — design 003; kill-switch OFF by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TagStateConfig {
+    /// Master kill-switch. When false, tag state is not tracked or enforced.
+    pub enabled: bool,
+    /// `fail` (default) rejects pushes on DB errors; `degrade` logs and continues.
+    pub on_db_error: String,
+}
+
+impl Default for TagStateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            on_db_error: "fail".into(),
         }
     }
 }
@@ -92,6 +145,36 @@ impl Default for PilotConfig {
             backend: "echo".into(),
             model: "echo".into(),
             tokens_per_day: 500_000,
+        }
+    }
+}
+
+/// `[import]` — design 012 migration importer; kill-switch OFF by default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImportConfig {
+    /// Master kill-switch. When false, `/v2/_import/*` returns forbidden.
+    pub enabled: bool,
+}
+
+/// `[retention]` — design 004; kill-switch OFF by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RetentionConfig {
+    /// Master kill-switch. When false, `/v2/_retention/*` is not mounted.
+    pub enabled: bool,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
+}
+
+impl RetentionConfig {
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(v) = std::env::var("SPECTONCR_RETENTION__ENABLED") {
+            self.enabled = matches!(v.as_str(), "true" | "1" | "yes");
         }
     }
 }
@@ -835,7 +918,22 @@ impl Default for RegistryConfig {
             rebuild: RebuildConfig::default(),
             promotion: PromotionConfig::default(),
             admission: AdmissionConfig::default(),
+            tagstate: TagStateConfig::default(),
             pilot: PilotConfig::default(),
+            import: ImportConfig::default(),
+            retention: RetentionConfig::default(),
+            encryption: EncryptionConfig::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod import_config_tests {
+    use super::{ImportConfig, RegistryConfig};
+
+    #[test]
+    fn import_config_defaults_disabled() {
+        assert!(!ImportConfig::default().enabled);
+        assert!(!RegistryConfig::default().import.enabled);
     }
 }

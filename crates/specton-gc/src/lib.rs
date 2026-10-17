@@ -22,13 +22,20 @@
 //! They share these traits.
 
 pub mod manifest;
+pub mod mark_sweep;
 pub mod reaper;
 pub mod reconciler;
 pub mod refcount;
+pub mod retention;
 
 pub use manifest::{
     BlobDescriptor, ManifestParseError, extract_blob_digests, extract_config_digest,
 };
 pub use reaper::{ContinuousReaper, CycleResult, ReaperConfig, ReaperControl, ReaperStats};
+pub use mark_sweep::GcRunner;
 pub use reconciler::{ReconcileConfig, ReconcileStats, Reconciler};
 pub use refcount::{BlobRefCounter, GcError, NoopBlobRefCounter, PgBlobRefCounter};
+pub use retention::{
+    RetentionPolicy, RetentionReport, RetentionRunner, TagInfo, compute_deletes,
+    parse_max_tag_age_days,
+};

@@ -152,11 +152,25 @@ data:
       enabled: {{ .Values.admission.enabled }}
       cache_ttl_secs: {{ .Values.admission.cacheTtlSecs }}
 
+    tagstate:
+      enabled: {{ .Values.tagstate.enabled }}
+      on_db_error: {{ .Values.tagstate.onDbError | quote }}
+
     pilot:
       enabled: {{ .Values.pilot.enabled }}
       backend: {{ .Values.pilot.backend | quote }}
       model: {{ .Values.pilot.model | quote }}
       tokens_per_day: {{ .Values.pilot.tokensPerDay }}
+
+    import:
+      enabled: {{ .Values.import.enabled }}
+
+    encryption:
+      enabled: {{ .Values.encryption.enabled }}
+      provider: {{ .Values.encryption.provider | quote }}
+      {{- if .Values.encryption.localKeyPath }}
+      local_key_path: {{ .Values.encryption.localKeyPath | quote }}
+      {{- end }}
 
   auth.yaml: |
     server:

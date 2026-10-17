@@ -1,5 +1,11 @@
 # 007 — Web UI Parity
 
+> **Implementation status (2026-10):** Slices 1–3 (read-only) landed in
+> `dashboard/`: routing skeleton (`/browse`, tenant → project → repo → tags →
+> manifest), shared layout with nav + API key + Pilot sidebar, audit timeline,
+> admission policy list. CVE search (`/`) and `/scan/:digest` preserved. Slice 4
+> (policy editor, admin pages) not started.
+
 > **Summary.** Extend the existing skeleton React + Vite app at
 > `dashboard/` (currently a CVE-search single page; see
 > `dashboard/src/App.tsx`) into a full registry browser. Auth via the

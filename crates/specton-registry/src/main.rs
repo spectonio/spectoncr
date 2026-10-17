@@ -6,8 +6,10 @@
 mod admission;
 mod audit;
 mod dashboard;
+mod import_http;
 mod pilot_http;
 mod promote;
+mod tagstate;
 mod webhook;
 
 use std::collections::HashMap;
@@ -189,8 +191,12 @@ struct AppState {
     admission_cache: Arc<admission::DecisionCache>,
     /// Optional second object store for cross-backend promote (006).
     promote_dest_store: Option<Arc<dyn ObjectStore>>,
+    /// Tag immutability + quarantine (003). Present when `[tagstate] enabled`.
+    tagstate: Option<Arc<tagstate::TagStateService>>,
     /// Per-tenant LLM spend tracker for `/v2/_pilot/chat` (019).
     pilot_budget: Option<Arc<specton_pilot::BudgetTracker>>,
+    /// Envelope-encrypted blob layer (008). None when `[encryption].enabled=false`.
+    encrypted_store: Option<Arc<dyn specton_crypto::EncryptedStore>>,
     /// Process start time for uptime tracking.
     #[allow(dead_code)]
     start_time: Instant,
@@ -586,6 +592,44 @@ fn is_store_not_found(err: &object_store::Error) -> bool {
     matches!(err, object_store::Error::NotFound { .. })
 }
 
+enum FetchLocalBlobOutcome {
+    Miss,
+    Storage(RegistryError),
+}
+
+/// Read a blob from the primary backend, decrypting when CMK is enabled.
+async fn fetch_local_blob(
+    state: &AppState,
+    tenant: &str,
+    path: &str,
+    store_path: &StorePath,
+) -> Result<Bytes, FetchLocalBlobOutcome> {
+    if let Some(enc) = state.encrypted_store.as_ref() {
+        return match enc.get_blob(tenant, path).await {
+            Ok(b) => Ok(b),
+            Err(specton_crypto::CryptoError::BlobNotFound)
+            | Err(specton_crypto::CryptoError::WrappedDekNotFound { .. }) => {
+                Err(FetchLocalBlobOutcome::Miss)
+            }
+            Err(e) => Err(FetchLocalBlobOutcome::Storage(RegistryError::Storage(
+                e.to_string(),
+            ))),
+        };
+    }
+    match state.store.get(store_path).await {
+        Ok(result) => match result.bytes().await {
+            Ok(b) => Ok(b),
+            Err(e) => Err(FetchLocalBlobOutcome::Storage(RegistryError::Storage(
+                e.to_string(),
+            ))),
+        },
+        Err(store_err) if is_store_not_found(&store_err) => Err(FetchLocalBlobOutcome::Miss),
+        Err(store_err) => Err(FetchLocalBlobOutcome::Storage(RegistryError::Storage(
+            store_err.to_string(),
+        ))),
+    }
+}
+
 /// Translate the common-config `MirrorScopeConfig` (string-tagged,
 /// forward-compatible) into the strongly-typed `MirrorScope` the
 /// mirror service consumes. Unknown or missing modes fall back to
@@ -707,6 +751,27 @@ struct UploadRef2 {
     project: String,
     name: String,
     uuid: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TagstateTagPath {
+    tenant: String,
+    project: String,
+    name: String,
+    tag: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TagstateTagPath2 {
+    project: String,
+    name: String,
+    tag: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TagstateSettingsPath {
+    tenant: String,
+    project: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -901,6 +966,18 @@ async fn head_manifest(
     let digest = sha256_digest(&data);
     let media_type = detect_manifest_media_type(&data);
 
+    if state.config.tagstate.enabled && !params.reference.starts_with("sha256:") {
+        enforce_tagstate_pull(
+            &state,
+            &claims,
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &params.reference,
+        )
+        .await?;
+    }
+
     let mut headers = HeaderMap::new();
     headers.insert(
         "Docker-Content-Digest",
@@ -1030,6 +1107,18 @@ async fn get_manifest(
         .await?;
     }
 
+    if state.config.tagstate.enabled && !params.reference.starts_with("sha256:") {
+        enforce_tagstate_pull(
+            &state,
+            &claims,
+            &params.tenant,
+            &params.project,
+            &params.name,
+            &params.reference,
+        )
+        .await?;
+    }
+
     // Admission gate (002). Skip cosign `.sig` tags.
     if state.config.admission.enabled && !specton_signing::is_cosign_sig_tag(&params.reference) {
         enforce_admission(
@@ -1144,6 +1233,60 @@ async fn put_manifest(
     // If reference is a tag (not a digest), create a tag link
     let mut response_headers_extra: Vec<(String, String)> = Vec::new();
     if !params.reference.starts_with("sha256:") {
+        if state.config.tagstate.enabled {
+            if let Some(svc) = state.tagstate.as_ref() {
+                let settings = match svc
+                    .project_settings(&params.tenant, &params.project)
+                    .await
+                {
+                    Ok(s) => s,
+                    Err(e) if state.config.tagstate.on_db_error == "degrade" => {
+                        warn!(error = %e, "tagstate project_settings degraded");
+                        tagstate::ProjectSettings::default()
+                    }
+                    Err(e) => return Err(e),
+                };
+                if settings.immutable_tags {
+                    if let Some(existing) = read_tag_link_digest(
+                        &state,
+                        &params.tenant,
+                        &params.project,
+                        &params.name,
+                        &params.reference,
+                    )
+                    .await
+                    {
+                        if existing != digest {
+                            return Err(RegistryError::ManifestTagImmutable {
+                                tag: params.reference.clone(),
+                                existing_digest: existing,
+                                attempted_digest: digest.clone(),
+                            });
+                        }
+                    }
+                }
+                match svc
+                    .check_immutable(
+                        &tagstate::TagRef {
+                            tenant: params.tenant.clone(),
+                            project: params.project.clone(),
+                            repository: params.name.clone(),
+                            tag: params.reference.clone(),
+                        },
+                        &digest,
+                        settings.immutable_tags,
+                    )
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(e) if state.config.tagstate.on_db_error == "degrade" => {
+                        warn!(error = %e, "tagstate check_immutable degraded");
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
         let tag_p = tag_link_path(
             &params.tenant,
             &params.project,
@@ -1156,6 +1299,35 @@ async fn put_manifest(
             .put(&tag_store_path, Bytes::from(digest.clone()).into())
             .await
             .map_err(|e| RegistryError::Storage(e.to_string()))?;
+
+        if state.config.tagstate.enabled {
+            if let Some(svc) = state.tagstate.as_ref() {
+                let settings = svc
+                    .project_settings(&params.tenant, &params.project)
+                    .await
+                    .unwrap_or_default();
+                match svc
+                    .on_push(
+                        &tagstate::TagRef {
+                            tenant: params.tenant.clone(),
+                            project: params.project.clone(),
+                            repository: params.name.clone(),
+                            tag: params.reference.clone(),
+                        },
+                        &digest,
+                        &claims.sub,
+                        settings.quarantine_default,
+                    )
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(e) if state.config.tagstate.on_db_error == "degrade" => {
+                        warn!(error = %e, tag = %params.reference, "tagstate on_push degraded");
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
 
         // 013 TTL header — record an `expires_at` on the tag row
         // when X-SpectonCR-TTL is set. Mirrors the design's project-
@@ -1733,22 +1905,11 @@ async fn get_blob(
         &params.name,
         &params.digest,
     );
-    let store_path = StorePath::from(path);
+    let store_path = StorePath::from(path.as_str());
 
-    let data = match state.store.get(&store_path).await {
-        Ok(result) => result
-            .bytes()
-            .await
-            .map_err(|e| RegistryError::Storage(e.to_string()))?,
-        Err(store_err) => {
-            // Distinguish a true "blob not present" from a genuine
-            // backend failure. Only the former should fall through to
-            // the mirror path or return 404; a real IO error must
-            // still surface as 5xx (R4).
-            if !is_store_not_found(&store_err) {
-                return Err(RegistryError::Storage(store_err.to_string()));
-            }
-
+    let data = match fetch_local_blob(&state, &params.tenant, &path, &store_path).await {
+        Ok(bytes) => bytes,
+        Err(FetchLocalBlobOutcome::Miss) => {
             if let Some(ref mirror) = state.mirror_service {
                 // R3: scope check happens inside fetch_blob, which
                 // returns MirrorError::NotInScope for private projects
@@ -1798,6 +1959,7 @@ async fn get_blob(
                 });
             }
         }
+        Err(FetchLocalBlobOutcome::Storage(err)) => return Err(err),
     };
 
     let mut headers = HeaderMap::new();
@@ -1908,6 +2070,17 @@ async fn initiate_blob_upload(
         HeaderValue::from_static("registry/2.0"),
     );
 
+    if let Some(pool) = state.gc_pool.as_ref() {
+        register_pending_upload(
+            pool,
+            &upload_id,
+            &params.tenant,
+            &params.project,
+            &params.name,
+        )
+        .await;
+    }
+
     Ok((StatusCode::ACCEPTED, headers).into_response())
 }
 
@@ -1977,6 +2150,10 @@ async fn upload_blob_chunk(
         HeaderValue::from_static("registry/2.0"),
     );
 
+    if let Some(pool) = state.gc_pool.as_ref() {
+        touch_pending_upload(pool, &params.uuid).await;
+    }
+
     Ok((StatusCode::ACCEPTED, headers).into_response())
 }
 
@@ -2045,18 +2222,32 @@ async fn complete_blob_upload(
         &params.name,
         &expected_digest,
     );
-    let final_store_path = StorePath::from(final_blob_path);
-    put_chunked(
-        state.store.as_ref(),
-        &final_store_path,
-        Bytes::from(final_data),
-        chunked_put_config(&state.config),
-    )
-    .await
-    .map_err(|e| RegistryError::Storage(e.to_string()))?;
+    let final_store_path = StorePath::from(final_blob_path.clone());
+    if let Some(ref enc) = state.encrypted_store {
+        enc.put_blob(
+            &params.tenant,
+            &final_blob_path,
+            Bytes::from(final_data),
+        )
+        .await
+        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+    } else {
+        put_chunked(
+            state.store.as_ref(),
+            &final_store_path,
+            Bytes::from(final_data),
+            chunked_put_config(&state.config),
+        )
+        .await
+        .map_err(|e| RegistryError::Storage(e.to_string()))?;
+    }
 
     // Clean up the upload session
     let _ = state.store.delete(&up_store_path).await;
+
+    if let Some(pool) = state.gc_pool.as_ref() {
+        clear_pending_upload(pool, &params.uuid).await;
+    }
 
     // Emit replication event if configured
     if let Some(ref repl) = state.replication_handle {
@@ -2605,6 +2796,147 @@ async fn gc_reconcile(
         })),
     )
         .into_response())
+}
+
+// ── Retention routes (004 slice 3) ───────────────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+struct RetentionApplyBody {
+    tenant: String,
+    project: String,
+    #[serde(default)]
+    dry_run: Option<bool>,
+}
+
+#[instrument(name = "retention_apply", skip(state, claims))]
+async fn retention_apply(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    axum::Json(body): axum::Json<RetentionApplyBody>,
+) -> Result<Response, RegistryError> {
+    gc_admin_authorize(&claims)?;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("retention requires postgres (gc.online)".into()))?;
+
+    let runner = specton_gc::RetentionRunner::new(pool);
+    let mut policy = runner
+        .get_policy(&body.tenant, &body.project)
+        .await
+        .map_err(|e| RegistryError::Internal(format!("retention policy load: {e}")))?
+        .unwrap_or_default();
+    if let Some(dry) = body.dry_run {
+        policy.dry_run = dry;
+    }
+
+    let report = runner
+        .apply(&body.tenant, &body.project, &policy)
+        .await
+        .map_err(|e| RegistryError::Internal(format!("retention apply: {e}")))?;
+
+    Ok((StatusCode::OK, axum::Json(report)).into_response())
+}
+
+#[instrument(name = "retention_get_policy", skip(state, claims))]
+async fn retention_get_policy(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path((tenant, project)): Path<(String, String)>,
+) -> Result<Response, RegistryError> {
+    gc_admin_authorize(&claims)?;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("retention requires postgres (gc.online)".into()))?;
+
+    let policy = specton_gc::RetentionRunner::new(pool)
+        .get_policy(&tenant, &project)
+        .await
+        .map_err(|e| RegistryError::Internal(format!("retention policy load: {e}")))?;
+
+    Ok((
+        StatusCode::OK,
+        axum::Json(policy.unwrap_or_default()),
+    )
+        .into_response())
+}
+
+#[instrument(name = "retention_put_policy", skip(state, claims))]
+async fn retention_put_policy(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path((tenant, project)): Path<(String, String)>,
+    axum::Json(policy): axum::Json<specton_gc::RetentionPolicy>,
+) -> Result<Response, RegistryError> {
+    gc_admin_authorize(&claims)?;
+    let pool = state
+        .gc_pool
+        .clone()
+        .ok_or_else(|| RegistryError::Internal("retention requires postgres (gc.online)".into()))?;
+
+    specton_gc::RetentionRunner::new(pool)
+        .upsert_policy(&tenant, &project, &policy)
+        .await
+        .map_err(|e| RegistryError::Internal(format!("retention policy upsert: {e}")))?;
+
+    Ok((StatusCode::NO_CONTENT, ()).into_response())
+}
+
+async fn register_pending_upload(
+    pool: &sqlx::PgPool,
+    upload_id: &str,
+    tenant: &str,
+    project: &str,
+    repository: &str,
+) {
+    let Ok(id) = uuid::Uuid::parse_str(upload_id) else {
+        warn!(upload_id, "pending_uploads: invalid upload uuid");
+        return;
+    };
+    if let Err(e) = sqlx::query(
+        "INSERT INTO pending_uploads
+             (upload_id, tenant, project, repository)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (upload_id) DO UPDATE SET last_chunk_at = NOW()",
+    )
+    .bind(id)
+    .bind(tenant)
+    .bind(project)
+    .bind(repository)
+    .execute(pool)
+    .await
+    {
+        warn!(error = %e, upload_id, "pending_uploads insert failed");
+    }
+}
+
+async fn touch_pending_upload(pool: &sqlx::PgPool, upload_id: &str) {
+    let Ok(id) = uuid::Uuid::parse_str(upload_id) else {
+        return;
+    };
+    if let Err(e) = sqlx::query(
+        "UPDATE pending_uploads SET last_chunk_at = NOW() WHERE upload_id = $1",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    {
+        warn!(error = %e, upload_id, "pending_uploads touch failed");
+    }
+}
+
+async fn clear_pending_upload(pool: &sqlx::PgPool, upload_id: &str) {
+    let Ok(id) = uuid::Uuid::parse_str(upload_id) else {
+        return;
+    };
+    if let Err(e) = sqlx::query("DELETE FROM pending_uploads WHERE upload_id = $1")
+        .bind(id)
+        .execute(pool)
+        .await
+    {
+        warn!(error = %e, upload_id, "pending_uploads delete failed");
+    }
 }
 
 // ── TTL reaper admin routes (013 slice 2) ────────────────────────────────────
@@ -3727,6 +4059,125 @@ async fn delete_verification_policy(
     }
 }
 
+// ── CMK encryption (008 slice 1) ─────────────────────────────────────────────
+
+fn encryption_enabled(state: &AppState) -> Result<(), RegistryError> {
+    if !state.config.encryption.enabled {
+        return Err(RegistryError::Forbidden {
+            reason: "encryption disabled ([encryption].enabled=false)".into(),
+        });
+    }
+    if state.encrypted_store.is_none() {
+        return Err(RegistryError::Internal(
+            "encryption enabled but encrypted store not initialized".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn keys_tenant_read_authorize(claims: &TokenClaims, tenant: &str) -> Result<(), RegistryError> {
+    if claims.role == Role::Admin {
+        return Ok(());
+    }
+    if !claims.role.can(Action::Pull) {
+        return Err(RegistryError::Forbidden {
+            reason: "tenant key read requires pull permission".into(),
+        });
+    }
+    let prefix = format!("{tenant}/");
+    let ok = claims.scopes.iter().any(|s| {
+        s.actions.contains(&Action::Pull)
+            && (s.repository == "*"
+                || s.repository.starts_with(&prefix)
+                || s.repository == format!("{tenant}/*"))
+    });
+    if !ok {
+        return Err(RegistryError::Forbidden {
+            reason: format!("token scopes do not grant read on tenant {tenant}"),
+        });
+    }
+    Ok(())
+}
+
+fn keys_admin_authorize(claims: &TokenClaims, tenant: &str) -> Result<(), RegistryError> {
+    if claims.role == Role::Admin {
+        return Ok(());
+    }
+    if !claims.role.can(Action::Manage) {
+        return Err(RegistryError::Forbidden {
+            reason: "key rotation requires manage permission".into(),
+        });
+    }
+    let prefix = format!("{tenant}/");
+    let ok = claims
+        .scopes
+        .iter()
+        .any(|s| s.actions.contains(&Action::Manage) && s.repository.starts_with(&prefix));
+    if !ok {
+        return Err(RegistryError::Forbidden {
+            reason: format!("token scopes do not grant admin on tenant {tenant}"),
+        });
+    }
+    Ok(())
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct TenantKeyPath {
+    tenant: String,
+}
+
+/// GET /v2/_keys/{tenant}
+#[instrument(name = "get_tenant_key", skip(state, claims))]
+async fn get_tenant_key(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(p): Path<TenantKeyPath>,
+) -> Result<Response, RegistryError> {
+    encryption_enabled(&state)?;
+    keys_tenant_read_authorize(&claims, &p.tenant)?;
+    let enc = state.encrypted_store.as_ref().unwrap();
+    match enc.tenant_key_status(&p.tenant).await {
+        Ok(row) => Ok((
+            StatusCode::OK,
+            axum::Json(serde_json::json!({
+                "tenant": row.tenant,
+                "provider": row.provider,
+                "current_key_id": row.current_key_id,
+                "rotated_at": row.rotated_at,
+                "wrapped_dek_count": row.wrapped_dek_count,
+            })),
+        )
+            .into_response()),
+        Err(specton_crypto::CryptoError::TenantKeyNotFound { .. }) => {
+            Err(RegistryError::TenantNotFound {
+                tenant: p.tenant,
+            })
+        }
+        Err(e) => Err(RegistryError::Internal(e.to_string())),
+    }
+}
+
+/// POST /v2/_keys/{tenant}/rotate
+#[instrument(name = "rotate_tenant_key", skip(state, claims))]
+async fn rotate_tenant_key(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(p): Path<TenantKeyPath>,
+) -> Result<Response, RegistryError> {
+    encryption_enabled(&state)?;
+    keys_admin_authorize(&claims, &p.tenant)?;
+    let enc = state.encrypted_store.as_ref().unwrap();
+    let key_id = enc
+        .rotate_tenant_kek(&p.tenant)
+        .await
+        .map_err(|e| RegistryError::Internal(e.to_string()))?;
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "current_key_id": key_id })),
+    )
+        .into_response())
+}
+
 // ── Auto-rebuild (018 R2) ────────────────────────────────────────────────────
 
 fn rebuild_enabled(state: &AppState) -> Result<(), RegistryError> {
@@ -3779,6 +4230,349 @@ struct RebuildSubUpsert {
     #[serde(default)]
     enabled: Option<bool>,
     spec: specton_rebuild::SubscriptionSpec,
+}
+
+// ── Tag state (003) ──────────────────────────────────────────────────────────
+
+fn tagstate_enabled(state: &AppState) -> Result<(), RegistryError> {
+    if state.config.tagstate.enabled {
+        Ok(())
+    } else {
+        Err(RegistryError::Forbidden {
+            reason: "tagstate disabled ([tagstate] enabled=false)".into(),
+        })
+    }
+}
+
+fn claims_bypass_quarantine(claims: &TokenClaims) -> bool {
+    if claims.sub.contains("bypass-quarantine") {
+        return true;
+    }
+    claims.scopes.iter().any(|s| {
+        s.actions.contains(&Action::BypassQuarantine)
+            || (s.repository == "*" && s.actions.contains(&Action::BypassQuarantine))
+    })
+}
+
+async fn read_tag_link_digest(
+    state: &AppState,
+    tenant: &str,
+    project: &str,
+    repository: &str,
+    tag: &str,
+) -> Option<String> {
+    let path = StorePath::from(tag_link_path(tenant, project, repository, tag));
+    let result = state.store.get(&path).await.ok()?;
+    let bytes = result.bytes().await.ok()?;
+    String::from_utf8(bytes.to_vec()).ok().map(|s| s.trim().to_string())
+}
+
+async fn enforce_tagstate_pull(
+    state: &AppState,
+    claims: &TokenClaims,
+    tenant: &str,
+    project: &str,
+    repository: &str,
+    tag: &str,
+) -> Result<(), RegistryError> {
+    if specton_signing::is_cosign_sig_tag(tag) {
+        return Ok(());
+    }
+    let Some(svc) = state.tagstate.as_ref() else {
+        return Ok(());
+    };
+    if claims_bypass_quarantine(claims) {
+        return Ok(());
+    }
+    let t = tagstate::TagRef {
+        tenant: tenant.to_string(),
+        project: project.to_string(),
+        repository: repository.to_string(),
+        tag: tag.to_string(),
+    };
+    let rec = match svc.current(&t).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return Ok(()),
+        Err(e) if state.config.tagstate.on_db_error == "degrade" => {
+            warn!(error = %e, "tagstate pull check degraded");
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+    if rec.state.pull_allowed() {
+        return Ok(());
+    }
+    if rec.state == tagstate::TagState::Quarantined {
+        return Err(RegistryError::ManifestQuarantined {
+            tag: tag.to_string(),
+            reason: rec
+                .state_reason
+                .unwrap_or_else(|| "quarantined".into()),
+        });
+    }
+    Err(RegistryError::Forbidden {
+        reason: format!(
+            "tag `{tag}` not approved for pull (state: {:?})",
+            rec.state
+        ),
+    })
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TagstateQuarantineBody {
+    reason: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TagstateSettingsBody {
+    immutable_tags: bool,
+    quarantine_default: bool,
+}
+
+#[instrument(name = "list_tagstate", skip(state, claims))]
+async fn list_tagstate(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(p): Path<RepoPath>,
+) -> Result<Response, RegistryError> {
+    tagstate_enabled(&state)?;
+    authorize(
+        &claims,
+        &p.tenant,
+        &p.project,
+        &p.name,
+        Action::Pull,
+    )?;
+    let svc = state
+        .tagstate
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("tagstate requires Postgres".into()))?;
+    let items = svc.list(&p.tenant, &p.project, &p.name).await?;
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "items": items })),
+    )
+        .into_response())
+}
+
+#[instrument(name = "get_tagstate", skip(state, claims))]
+async fn get_tagstate(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(p): Path<TagstateTagPath>,
+) -> Result<Response, RegistryError> {
+    tagstate_enabled(&state)?;
+    authorize(
+        &claims,
+        &p.tenant,
+        &p.project,
+        &p.name,
+        Action::Pull,
+    )?;
+    let svc = state
+        .tagstate
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("tagstate requires Postgres".into()))?;
+    let t = tagstate::TagRef {
+        tenant: p.tenant.clone(),
+        project: p.project.clone(),
+        repository: p.name.clone(),
+        tag: p.tag.clone(),
+    };
+    let current = svc.current(&t).await?;
+    let history = svc.history(&t).await?;
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "current": current, "history": history })),
+    )
+        .into_response())
+}
+
+#[instrument(name = "approve_tagstate", skip(state, claims))]
+async fn approve_tagstate(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(p): Path<TagstateTagPath>,
+) -> Result<Response, RegistryError> {
+    tagstate_enabled(&state)?;
+    authorize(
+        &claims,
+        &p.tenant,
+        &p.project,
+        &p.name,
+        Action::Manage,
+    )?;
+    let svc = state
+        .tagstate
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("tagstate requires Postgres".into()))?;
+    let t = tagstate::TagRef {
+        tenant: p.tenant.clone(),
+        project: p.project.clone(),
+        repository: p.name.clone(),
+        tag: p.tag.clone(),
+    };
+    let rec = svc
+        .transition(&t, tagstate::TagState::Approved, "manual approve", &claims.sub)
+        .await?;
+    Ok((StatusCode::OK, axum::Json(rec)).into_response())
+}
+
+#[instrument(name = "quarantine_tagstate", skip(state, claims, body))]
+async fn quarantine_tagstate(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(p): Path<TagstateTagPath>,
+    axum::Json(body): axum::Json<TagstateQuarantineBody>,
+) -> Result<Response, RegistryError> {
+    tagstate_enabled(&state)?;
+    authorize(
+        &claims,
+        &p.tenant,
+        &p.project,
+        &p.name,
+        Action::Manage,
+    )?;
+    let svc = state
+        .tagstate
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("tagstate requires Postgres".into()))?;
+    let t = tagstate::TagRef {
+        tenant: p.tenant.clone(),
+        project: p.project.clone(),
+        repository: p.name.clone(),
+        tag: p.tag.clone(),
+    };
+    let rec = svc
+        .transition(
+            &t,
+            tagstate::TagState::Quarantined,
+            &body.reason,
+            &claims.sub,
+        )
+        .await?;
+    Ok((StatusCode::OK, axum::Json(rec)).into_response())
+}
+
+#[instrument(name = "get_tagstate_settings", skip(state, claims))]
+async fn get_tagstate_settings(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(p): Path<TagstateSettingsPath>,
+) -> Result<Response, RegistryError> {
+    tagstate_enabled(&state)?;
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "admin required for tagstate settings".into(),
+        });
+    }
+    let svc = state
+        .tagstate
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("tagstate requires Postgres".into()))?;
+    let settings = svc.project_settings(&p.tenant, &p.project).await?;
+    Ok((StatusCode::OK, axum::Json(settings)).into_response())
+}
+
+#[instrument(name = "put_tagstate_settings", skip(state, claims, body))]
+async fn put_tagstate_settings(
+    State(state): State<AppState>,
+    AuthenticatedClaims(claims): AuthenticatedClaims,
+    Path(p): Path<TagstateSettingsPath>,
+    axum::Json(body): axum::Json<TagstateSettingsBody>,
+) -> Result<Response, RegistryError> {
+    tagstate_enabled(&state)?;
+    if claims.role != Role::Admin {
+        return Err(RegistryError::Forbidden {
+            reason: "admin required for tagstate settings".into(),
+        });
+    }
+    let svc = state
+        .tagstate
+        .as_ref()
+        .ok_or_else(|| RegistryError::Internal("tagstate requires Postgres".into()))?;
+    let settings = svc
+        .upsert_project_settings(
+            &p.tenant,
+            &p.project,
+            body.immutable_tags,
+            body.quarantine_default,
+        )
+        .await?;
+    Ok((StatusCode::OK, axum::Json(settings)).into_response())
+}
+
+async fn list_tagstate_2seg(
+    state: State<AppState>,
+    claims: AuthenticatedClaims,
+    Path(p): Path<RepoPath2>,
+) -> Result<Response, RegistryError> {
+    list_tagstate(
+        state,
+        claims,
+        Path(RepoPath {
+            tenant: DEFAULT_TENANT.to_string(),
+            project: p.project,
+            name: p.name,
+        }),
+    )
+    .await
+}
+
+async fn get_tagstate_2seg(
+    state: State<AppState>,
+    claims: AuthenticatedClaims,
+    Path(p): Path<TagstateTagPath2>,
+) -> Result<Response, RegistryError> {
+    get_tagstate(
+        state,
+        claims,
+        Path(TagstateTagPath {
+            tenant: DEFAULT_TENANT.to_string(),
+            project: p.project,
+            name: p.name,
+            tag: p.tag,
+        }),
+    )
+    .await
+}
+
+async fn approve_tagstate_2seg(
+    state: State<AppState>,
+    claims: AuthenticatedClaims,
+    Path(p): Path<TagstateTagPath2>,
+) -> Result<Response, RegistryError> {
+    approve_tagstate(
+        state,
+        claims,
+        Path(TagstateTagPath {
+            tenant: DEFAULT_TENANT.to_string(),
+            project: p.project,
+            name: p.name,
+            tag: p.tag,
+        }),
+    )
+    .await
+}
+
+async fn quarantine_tagstate_2seg(
+    state: State<AppState>,
+    claims: AuthenticatedClaims,
+    Path(p): Path<TagstateTagPath2>,
+    body: axum::Json<TagstateQuarantineBody>,
+) -> Result<Response, RegistryError> {
+    quarantine_tagstate(
+        state,
+        claims,
+        Path(TagstateTagPath {
+            tenant: DEFAULT_TENANT.to_string(),
+            project: p.project,
+            name: p.name,
+            tag: p.tag,
+        }),
+        body,
+    )
+    .await
 }
 
 // ── Admission (002) ──────────────────────────────────────────────────────────
@@ -5441,6 +6235,7 @@ async fn main() -> anyhow::Result<()> {
         let mut config = config;
         config.rate_limit.apply_env_overrides();
         config.storage.apply_env_overrides();
+        config.retention.apply_env_overrides();
         config
     };
 
@@ -6266,6 +7061,40 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
+    let tagstate = if config.tagstate.enabled {
+        Some(Arc::new(tagstate::TagStateService::new(
+            gc_pool.clone(),
+            config.tagstate.on_db_error.clone(),
+        )))
+    } else {
+        None
+    };
+    let encrypted_store: Option<Arc<dyn specton_crypto::EncryptedStore>> =
+        if config.encryption.enabled {
+            if config.encryption.provider != "local" {
+                anyhow::bail!(
+                    "unsupported [encryption].provider '{}'; slice 1 supports 'local' only",
+                    config.encryption.provider
+                );
+            }
+            let provider = Arc::new(
+                specton_crypto::LocalDevProvider::from_env(
+                    true,
+                    config.encryption.local_key_path.as_deref(),
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("encryption provider: {e}"))?,
+            );
+            let enc = Arc::new(specton_crypto::EnvelopeEncryptedStore::new(
+                store.clone(),
+                provider,
+                gc_pool.clone(),
+            ));
+            info!("CMK envelope encryption enabled ([encryption].provider=local)");
+            Some(enc)
+        } else {
+            None
+        };
     let state = AppState {
         store,
         config: Arc::new(config),
@@ -6289,7 +7118,9 @@ async fn main() -> anyhow::Result<()> {
         scan_store,
         admission_cache: Arc::new(admission::DecisionCache::new(admission_ttl)),
         promote_dest_store,
+        tagstate,
         pilot_budget,
+        encrypted_store,
         start_time,
     };
 
@@ -6392,6 +7223,39 @@ async fn main() -> anyhow::Result<()> {
             get(image_status_2seg),
         )
         .route("/v2/{project}/{name}/tags/list", get(list_tags_2seg))
+        // Tag state (003)
+        .route(
+            "/v2/{tenant}/{project}/{name}/_tagstate",
+            get(list_tagstate),
+        )
+        .route(
+            "/v2/{tenant}/{project}/{name}/_tagstate/{tag}",
+            get(get_tagstate),
+        )
+        .route(
+            "/v2/{tenant}/{project}/{name}/_tagstate/{tag}/approve",
+            post(approve_tagstate),
+        )
+        .route(
+            "/v2/{tenant}/{project}/{name}/_tagstate/{tag}/quarantine",
+            post(quarantine_tagstate),
+        )
+        .route(
+            "/v2/{project}/{name}/_tagstate",
+            get(list_tagstate_2seg),
+        )
+        .route(
+            "/v2/{project}/{name}/_tagstate/{tag}",
+            get(get_tagstate_2seg),
+        )
+        .route(
+            "/v2/{project}/{name}/_tagstate/{tag}/approve",
+            post(approve_tagstate_2seg),
+        )
+        .route(
+            "/v2/{project}/{name}/_tagstate/{tag}/quarantine",
+            post(quarantine_tagstate_2seg),
+        )
         // Referrers (OCI 1.1) — 010 integration
         .route(
             "/v2/{tenant}/{project}/{name}/referrers/{digest}",
@@ -6436,12 +7300,38 @@ async fn main() -> anyhow::Result<()> {
         .route("/v2/_promote/{id}", get(promote_status))
         .route("/v2/_pilot/chat", post(pilot_http::pilot_chat))
         .route("/v2/_pilot/tools", get(pilot_http::pilot_tools))
+        // CMK tenant keys (008 slice 1)
+        .route("/v2/_keys/{tenant}", get(get_tenant_key))
+        .route("/v2/_keys/{tenant}/rotate", post(rotate_tenant_key))
+        // Migration importer (012)
+        .route(
+            "/v2/_import/sources",
+            get(import_http::list_import_sources),
+        )
+        .route("/v2/_import/jobs", post(import_http::create_import_job))
+        .route(
+            "/v2/_import/jobs/{id}",
+            get(import_http::get_import_job),
+        )
+        .route(
+            "/v2/_import/jobs/{id}/abort",
+            post(import_http::abort_import_job),
+        )
+        .route(
+            "/v2/_import/jobs/{id}/resume",
+            post(import_http::resume_import_job),
+        )
+        .route("/v2/_import/dry-run", post(import_http::import_dry_run))
         // Admission gate (002)
         .route("/v2/_admit/test", post(admit_test))
         .route("/v2/_admit/policies", get(list_admission_policies))
         .route(
             "/v2/_admit/policies/{tenant}/{name}",
             put(upsert_admission_policy),
+        )
+        .route(
+            "/v2/_tagstate/settings/{tenant}/{project}",
+            get(get_tagstate_settings).put(put_tagstate_settings),
         )
         // Catalog
         .route("/v2/_catalog", get(catalog))
@@ -6462,6 +7352,19 @@ async fn main() -> anyhow::Result<()> {
         .route("/v2/_audit/verify", post(audit_verify))
         .route("/v2/_audit/export", post(audit_export_handler))
         .route("/v2/_audit/{id}", get(audit_get));
+
+    let registry_routes =
+        if state.config.retention.enabled && state.gc_pool.is_some() {
+            info!("retention HTTP routes enabled");
+            registry_routes
+                .route("/v2/_retention/apply", post(retention_apply))
+                .route(
+                    "/v2/_retention/policies/{tenant}/{project}",
+                    get(retention_get_policy).put(retention_put_policy),
+                )
+        } else {
+            registry_routes
+        };
 
     // Internal replication routes — served on both the main port (for cross-cluster
     // access via proxy) and the dedicated internal port (for intra-cluster use).

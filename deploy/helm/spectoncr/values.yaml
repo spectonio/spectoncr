@@ -659,6 +659,12 @@ admission:
   enabled: false
   cacheTtlSecs: 30
 
+## -- Tag immutability + quarantine (design 003) --
+## Kill-switch OFF by default.
+tagstate:
+  enabled: false
+  onDbError: fail   # fail | degrade
+
 ## -- AI agent HTTP chat (design 019) --
 ## Kill-switch OFF by default. Enables /v2/_pilot/chat + dashboard sidebar.
 pilot:
@@ -666,6 +672,18 @@ pilot:
   backend: echo   # echo | anthropic | openai | ollama
   model: echo
   tokensPerDay: 500000
+
+## -- Migration importer (design 012) --
+## Kill-switch OFF by default. Enables /v2/_import/* HTTP API.
+import:
+  enabled: false
+
+## -- CMK envelope encryption at rest (design 008) --
+## Kill-switch OFF by default. Slice 1: local dev KEK only.
+encryption:
+  enabled: false
+  provider: local
+  # localKeyPath: /var/lib/spectoncr/kek.bin
 
 ## -- Scanner (CVE scanning — runs in-process inside the registry) --
 ## When enabled, every manifest push enqueues a scan; workers materialize
@@ -764,6 +782,12 @@ gc:
       idleSleepSecs: 30
       # Token-bucket cap on storage delete operations per second.
       qps: 100
+
+## -- Tag retention (004) --
+## Requires gc.online.enabled and a Postgres pool. When false, retention
+## HTTP routes are not mounted on the registry.
+retention:
+  enabled: false
 
 ## -- Postgres (scanner metadata store) --
 ## In-chart singleton StatefulSet. Set enabled=false + point scanner at an

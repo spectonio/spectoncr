@@ -197,6 +197,16 @@ a:hover { color: var(--primary-hover); }
 .brand-name b { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
 .brand-name span { font-size: 10.5px; color: var(--steel-ink-dim); text-transform: uppercase; letter-spacing: .09em; }
 
+.header-nav {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+}
+.header-nav a {
+  color: var(--steel-ink-dim); font-size: 13px; font-weight: 550;
+  padding: 6px 10px; border-radius: 8px; transition: color .12s, background .12s;
+}
+.header-nav a:hover { color: var(--steel-ink); background: var(--steel-raised); }
+.header-nav a.active { color: #fff; background: rgba(67, 176, 167, .22); }
+
 .header-spacer { flex: 1; }
 
 /* Connection control (API key) lives in the steel bar. */
@@ -236,8 +246,48 @@ a:hover { color: var(--primary-hover); }
 .page-head p { margin: 5px 0 0; color: var(--ink-muted); font-size: 13.5px; max-width: 62ch; }
 .page-head .crumb {
   font-family: var(--font-mono); font-size: 12px; color: var(--ink-faint);
-  margin-bottom: 8px; display: flex; align-items: center; gap: 7px;
+  margin-bottom: 8px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
 }
+.page-head .crumb a { color: var(--primary); }
+.page-head .crumb a:hover { color: var(--primary-hover); }
+
+.grid-cards {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+.nav-card {
+  display: block; padding: 18px 18px 16px; color: inherit;
+  transition: border-color .15s, box-shadow .15s, transform .05s;
+}
+.nav-card:hover { border-color: var(--primary-ring); box-shadow: var(--shadow); color: inherit; }
+.nav-card:active { transform: translateY(1px); }
+.nav-card h2 {
+  margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -.01em;
+}
+.nav-card p { margin: 8px 0 0; font-size: 13px; }
+
+.filter-row {
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end;
+}
+.filter-row label {
+  display: flex; flex-direction: column; gap: 5px; font-size: 11px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-faint);
+}
+.filter-row input {
+  height: 38px; min-width: 120px; padding: 0 11px;
+  border: 1px solid var(--line-strong); border-radius: 9px;
+  background: var(--surface); color: var(--ink); font: 14px var(--font-sans);
+}
+
+.meta-grid {
+  display: grid; gap: 14px 24px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+.meta-lbl {
+  display: block; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--ink-faint); margin-bottom: 4px;
+}
+.meta-val { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* --------------------------------------------------------------------------
    Card
@@ -586,7 +636,8 @@ tr.suppressed .id code { text-decoration: line-through; }
    Responsive
 -------------------------------------------------------------------------- */
 @media (max-width: 680px) {
-  .header-inner { height: 56px; gap: 10px; }
+  .header-inner { height: auto; min-height: 56px; padding: 10px 16px; gap: 10px; flex-wrap: wrap; }
+  .header-nav { order: 3; flex-basis: 100%; }
   .conn input { width: 120px; }
   .brand-name span { display: none; }
   .search { flex-wrap: wrap; }

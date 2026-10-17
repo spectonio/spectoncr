@@ -1,5 +1,7 @@
 # 012 — Migration Importer (Nexus / Harbor / ACR / Distribution)
 
+> **Status:** in-progress (HTTP API + ObjectStore destination; job progress columns pending).
+
 > **Summary.** A streaming importer that mirrors a source registry's
 > repositories, tags, manifests, blobs, retention rules, and
 > permissions into SpectonCR with content-addressable dedup, restartable

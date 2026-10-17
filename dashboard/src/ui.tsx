@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 import { ReactNode, useEffect, useState } from 'react';
 
 // Shared chrome for both routes: the steel header (the app's signature,
@@ -59,16 +59,34 @@ export function Header({ right }: { right?: ReactNode }) {
     theme === 'dark' ||
     (theme === null && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
+  const nav = (
+    <nav className="header-nav" aria-label="Primary">
+      <NavLink to="/browse" className={({ isActive }) => (isActive ? 'active' : undefined)}>
+        Browse
+      </NavLink>
+      <NavLink to="/audit" className={({ isActive }) => (isActive ? 'active' : undefined)}>
+        Audit
+      </NavLink>
+      <NavLink to="/policies" className={({ isActive }) => (isActive ? 'active' : undefined)}>
+        Policies
+      </NavLink>
+      <NavLink to="/" end className={({ isActive }) => (isActive ? 'active' : undefined)}>
+        CVE Search
+      </NavLink>
+    </nav>
+  );
+
   return (
     <header className="header">
       <div className="header-inner">
-        <Link to="/" className="brand" aria-label="SpectonCR home">
+        <Link to="/browse" className="brand" aria-label="SpectonCR home">
           <span className="brand-mark"><ShieldIcon /></span>
           <span className="brand-name">
             <b>SpectonCR</b>
             <span>Registry &amp; scanner</span>
           </span>
         </Link>
+        {nav}
         <div className="header-spacer" />
         {right}
         <button className="icon-btn" onClick={toggle} aria-label="Toggle color theme" title="Toggle theme">

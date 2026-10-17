@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
-import { getApiKey, searchCves, setApiKey, CveHit } from './api';
-import { PilotSidebar } from './PilotSidebar';
-import { Header, SevBadge, SearchIcon, CopyButton } from './ui';
+import { useState } from 'react';
+import { searchCves, CveHit } from './api';
+import { SevBadge, SearchIcon, CopyButton } from './ui';
 
 // Common starting points so the empty state invites action instead of
 // staring back blankly.
@@ -11,15 +10,10 @@ const SUGGESTIONS = ['openssl', 'log4j', 'curl', 'glibc', 'CVE-2024'];
 // CVE database to sanity-check population. Results render as scannable cards.
 // Scan drill-down moves to /scan/{digest} so links share as-is.
 export function App() {
-  const [key, setKey] = useState(getApiKey() || '');
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<CveHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
-
-  useEffect(() => {
-    setApiKey(key);
-  }, [key]);
 
   async function doSearch(q: string) {
     if (!q.trim()) return;
@@ -46,24 +40,7 @@ export function App() {
     doSearch(s);
   }
 
-  const conn = (
-    <div className="conn" title={key ? 'API key set' : 'No API key — some queries may be rejected'}>
-      <span className={`conn-dot ${key ? 'on' : ''}`} aria-hidden="true" />
-      <input
-        type="password"
-        value={key}
-        onChange={(e) => setKey(e.target.value)}
-        placeholder="API key (nck_…)"
-        aria-label="API key"
-      />
-    </div>
-  );
-
   return (
-    <div className="shell">
-      <Header right={conn} />
-      <PilotSidebar />
-
       <main className="page">
         <div className="page-head">
           <h1>Vulnerability database</h1>
@@ -172,6 +149,5 @@ export function App() {
           WebSocket, with the severity breakdown and policy verdict.
         </p>
       </main>
-    </div>
   );
 }

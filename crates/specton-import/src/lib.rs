@@ -15,7 +15,7 @@ pub mod runner;
 pub mod source;
 
 pub use acr::AcrSource;
-pub use destination::{InMemoryDestination, RegistryDestination};
+pub use destination::{InMemoryDestination, ObjectStoreDestination, RegistryDestination};
 pub use distribution::DistributionSource;
 pub use harbor::HarborSource;
 pub use jobs::{ImportJobRow, ImportJobStore, ImportPhase, PgImportJobStore};
